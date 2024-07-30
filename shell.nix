@@ -6,5 +6,7 @@ pkgs.mkShellNoCC {
   packages = with pkgs; [
     # Java build tool
     maven
+    # OpenJDK 21
+    jdk21
   ];
 }
