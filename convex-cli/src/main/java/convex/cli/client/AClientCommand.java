@@ -1,106 +1,115 @@
 package convex.cli.client;
 
-import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-
 import convex.api.Convex;
 import convex.cli.ATopCommand;
 import convex.cli.CLIError;
-import convex.cli.Constants;
-import convex.core.Result;
+import convex.cli.ExitCodes;
+import convex.cli.mixins.AddressMixin;
+import convex.cli.mixins.KeyMixin;
+import convex.cli.mixins.RemotePeerMixin;
+import convex.cli.mixins.StoreMixin;
 import convex.core.crypto.AKeyPair;
-import convex.core.data.ABlob;
-import convex.core.data.ACell;
+import convex.core.data.AccountKey;
 import convex.core.data.Address;
+import picocli.CommandLine.Mixin;
 import picocli.CommandLine.Option;
 
 public abstract class AClientCommand extends ATopCommand {
+	
+	@Mixin
+	protected StoreMixin storeMixin; 
+	
+	@Mixin
+	protected KeyMixin keyMixin;
+
+	@Mixin
+	protected RemotePeerMixin peerMixin;
+	
+	@Mixin
+	protected AddressMixin addressMixin;
+	
 	@Option(names={"--timeout"},
 			description="Timeout in miliseconds.")
-	protected long timeout = Constants.DEFAULT_TIMEOUT_MILLIS;
+	protected Long timeout;
 
-	@Option(names={"-a", "--address"},
-			defaultValue="${env:CONVEX_ADDRESS}",
-			description = "Account address to use. Default: ${DEFAULT-VALUE}")
-	protected String addressValue = null;
+	/**
+	 * Connect as a client to the convex network
+	 * @return
+	 */
+	protected Convex clientConnect() {
+		Convex convex= peerMixin.connect();
+		if (timeout!=null) {
+			convex.setTimeout(timeout);
+		}
+		return convex;
+	}
 	
-	@Option(names={"--port"},
-			defaultValue="${env:CONVEX_PORT}",
-			description="Port number to connect to a peer.")
-	private Integer port;
-
-	@Option(names={"--host"},
-		defaultValue=Constants.HOSTNAME_PEER,
-		description="Hostname to connect to a peer. Default: ${DEFAULT-VALUE}")
-	private String hostname;
-
+	/**
+	 * Connect to Convex ready to query
+	 * @return
+	 */
+	protected Convex connectQuery() {
+		Convex convex=clientConnect();
+		Address a=getUserAddress();
+		convex.setAddress(a);
+		return convex;
+	}
 	
+	/**
+	 * Connect to Convex ready to transact
+	 * @return
+	 */
+	protected Convex connectTransact() {
+		Convex convex=connectQuery();
+		ensureKeyPair(convex);
+		return convex;
+	}
+	
+	/**
+	 * Gets user address, prompting of not provided.
+	 * @return Valid Address or null if Address not valid
+	 */
 	public Address getUserAddress() {
-		Address result= Address.parse(addressValue);	
-		return result;
+		return addressMixin.getAddress("Enter Convex user account address: ");	
 	}
 	
-	protected boolean ensureAddress(Convex convex) {
-		Address a = convex.getAddress();
-		if (a!=null) return true;
-		if (cli().isInteractive()) {
-			String s=System.console().readLine("Enter origin address: ");
-			a=Address.parse(s);
-		}
-		if (a!=null) {
-			convex.setAddress(a);
-			return true;
-		}
-		return false;
-	}
 	
-	protected boolean ensureKeyPair(Convex convex) {
+	protected void ensureKeyPair(Convex convex) {
+		Address a=convex.getAddress();
 		AKeyPair keyPair = convex.getKeyPair();
-		if (keyPair!=null) return true;
+		if (keyPair!=null) return;
 
-		Address address=convex.getAddress();
-		try {
-			// Try to identify the required keypair
-			Result ar=convex.query("*key*").get(1000,TimeUnit.MILLISECONDS);
-			if (ar.isError()) throw new CLIError("Unable to determine *key* for Address "+address+" : "+ar);
+		String pk=keyMixin.getPublicKey();
+		if (pk==null) {
+			paranoia("You must set --key explicitly in strict security mode");
 			
-			ACell v=ar.getValue();
-			if (v instanceof ABlob) {
-				String pk=((ABlob)v).toHexString();
-				keyPair=mainParent.loadKeyFromStore(pk);
-				if (keyPair==null) {
-					// We didn't find required keypair
-					throw new CLIError("Unable to find keypair with public key "+v+" for Address "+address+" : "+ar);
-				}
-				convex.setKeyPair(keyPair);
-				return true;
+			AccountKey k=convex.getAccountKey(a);
+			if (k!=null) {
+				pk=k.toHexString();
+				inform("Address "+a+" requires public key "+pk);
+			} else if (isInteractive()) {
+				pk=prompt("Enter public key for Address "+a+": ");
+			} else {
+				throw new CLIError(ExitCodes.USAGE,"Public key required.");
 			}
-		} catch(Exception e) {
-			return false;
 		}
-		return false;
+		
+		storeMixin.loadKeyStore();
+		int c=storeMixin.keyCount(pk);
+		if (c==0) {
+			throw new CLIError(ExitCodes.CONFIG,"Can't find keypair with public key: "+pk);
+		} else if (c>1) {
+			throw new CLIError(ExitCodes.CONFIG,"Multiple key pairs found");
+		}
+		
+		keyPair=storeMixin.loadKeyFromStore(pk,keyMixin.getKeyPassword());
+		if (keyPair==null) {
+			// We didn't find required keypair
+			throw new CLIError(ExitCodes.CONFIG,"Can't find keypair with public key: "+pk);
+		}
+		convex.setKeyPair(keyPair);
 	}
 
-	protected convex.api.Convex connect() throws IOException,TimeoutException {
-		if (port==null) port=convex.core.Constants.DEFAULT_PEER_PORT;
-		if (hostname==null) hostname="localhost";
-		try {
-			InetSocketAddress sa=new InetSocketAddress(hostname,port);
-			Convex c;
-			c=Convex.connect(sa);
-			
-			if (addressValue!=null) {
-				Address a=Address.parse(addressValue);
-				if (a!=null) {
-					c.setAddress(a);
-				}
-			}
-			
-			return c;
-		} catch (Exception e) {
-			throw e;
-		}
-	}
+
+
 }

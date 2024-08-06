@@ -18,7 +18,7 @@ import convex.core.data.AccountKey;
 public class KeyImportTest {
 
 	private static final char[] KEYSTORE_PASSWORD = "testPassword".toCharArray();
-	private static final char[] IMPORT_PASSWORD = "testImportPassword".toCharArray();
+	private static final char[] IMPORT_PASSPHRASE = "testImportPassphrase".toCharArray();
 	
 	private static final String KEY_PASSWORD="testPass";
 	
@@ -30,31 +30,32 @@ public class KeyImportTest {
 	}	
 
 	@Test
-	public void testKeyImportPEM() {
+	public void testKeyImportPEM() throws Exception {
 	 
 		AKeyPair keyPair = SodiumKeyPair.generate();
 		AccountKey accountKey=keyPair.getAccountKey();
-		String pemText = PEMTools.encryptPrivateKeyToPEM(keyPair.getPrivate(), IMPORT_PASSWORD);
+		String pemText = PEMTools.encryptPrivateKeyToPEM(keyPair, IMPORT_PASSPHRASE);
  
 		CLTester tester =  CLTester.run(
 			"key", 
 			"import",
-			"pem",
+			"--type","pem",
 			"-n",
-			"--keystore-password", new String(KEYSTORE_PASSWORD), 
+			"--storepass", new String(KEYSTORE_PASSWORD), 
 			"--keystore", KEYSTORE_FILENAME, 
 			"--text", pemText, 
-			"--import-password", new String(IMPORT_PASSWORD)
+			"--passphrase",new String(IMPORT_PASSPHRASE),
+			"--keypass", new String(KEY_PASSWORD)
 		);
-		assertEquals(ExitCodes.SUCCESS,tester.getResult());
+		tester.assertExitCode(ExitCodes.SUCCESS);
 
 		CLTester t2=CLTester.run(
 				"key" , 
 				"list",
-				"--keystore-password", new String(KEYSTORE_PASSWORD), 
+				"--storepass", new String(KEYSTORE_PASSWORD), 
 				"--keystore", KEYSTORE_FILENAME);
 		
-		assertEquals(ExitCodes.SUCCESS,t2.getResult());
+		tester.assertExitCode(ExitCodes.SUCCESS);
 		assertTrue(t2.getOutput().contains(accountKey.toHexString()));
 	}
 	
@@ -66,25 +67,24 @@ public class KeyImportTest {
 		CLTester tester =  CLTester.run(
 			"key", 
 			"import",
-			"seed",
-			"--keystore-password", new String(KEYSTORE_PASSWORD), 
+			"--type","seed",
+			"--storepass", new String(KEYSTORE_PASSWORD), 
 			"--keystore", KEYSTORE_FILENAME, 
 			"--text", keyPair.getSeed().toString(), 
-			"--password", KEY_PASSWORD, 
-			"--import-password", new String("") // BIP39 password
+			"--keypass", KEY_PASSWORD, 
+			"--passphrase", new String("") // BIP39 password, ignored
 		);
-		assertEquals(ExitCodes.SUCCESS,tester.getResult());
+		tester.assertExitCode(ExitCodes.SUCCESS);
 		
 		// Should give Ed25519 Seed: 616421a4ea27c65919faa5555e923f6005d76695c7d9ba0fe2a484b90e23de89
 
 		CLTester t2=CLTester.run(
 				"key" , 
 				"list",
-				"--password",KEY_PASSWORD,
-				"--keystore-password", new String(KEYSTORE_PASSWORD), 
+				"--storepass", new String(KEYSTORE_PASSWORD), 
 				"--keystore", KEYSTORE_FILENAME);
 		
-		assertEquals(ExitCodes.SUCCESS,t2.getResult());
+		tester.assertExitCode(ExitCodes.SUCCESS);
 		assertTrue(t2.getOutput().contains(accountKey.toHexString()));
 	}
 	
@@ -98,12 +98,12 @@ public class KeyImportTest {
 		CLTester tester =  CLTester.run(
 			"key", 
 			"import",
-			"bip39",
-			"--keystore-password", new String(KEYSTORE_PASSWORD), 
+			"--type","bip39",
+			"--storepass", new String(KEYSTORE_PASSWORD), 
 			"--keystore", KEYSTORE_FILENAME, 
-			"--password",KEY_PASSWORD,
+			"--keypass",KEY_PASSWORD,
 			"--text", "elder mail trick garage hour enjoy attack fringe problem motion poem security caught false penalty", 
-			"--import-password", new String("")
+			"--passphrase", new String("")
 		);
 		assertEquals(ExitCodes.SUCCESS,tester.getResult());
 		
@@ -112,8 +112,7 @@ public class KeyImportTest {
 		CLTester t2=CLTester.run(
 				"key" , 
 				"list",
-				"--password",KEY_PASSWORD,
-				"--keystore-password", new String(KEYSTORE_PASSWORD), 
+				"--storepass", new String(KEYSTORE_PASSWORD), 
 				"--keystore", KEYSTORE_FILENAME);
 		
 		assertEquals(ExitCodes.SUCCESS,t2.getResult());

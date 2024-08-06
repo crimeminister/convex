@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
+import java.nio.file.Files;
 
 import org.junit.jupiter.api.Test;
 
@@ -19,7 +20,7 @@ import convex.core.util.Utils;
 
 public class KeyExportTest {
 	private static final char[] KEYSTORE_PASSWORD = "testPassword".toCharArray();
-	private static final char[] KEY_PASSWORD = "testKeytPassword".toCharArray();
+	private static final char[] KEY_PASSWORD = "testKeyPassword".toCharArray();
 	private static final char[] EXPORT_PASSWORD = "testExportPassword".toCharArray();
 
 	private static final File TEMP_FILE;
@@ -36,19 +37,21 @@ public class KeyExportTest {
 	}
 
 	@Test
-	public void testKeyGenerateAndExport() {
+	public void testKeyGenerateAndExport() throws Exception {
 
 		// command key.generate
 		CLTester tester =  CLTester.run(
 			"key", "generate",
-			"--keystore-password", new String(KEYSTORE_PASSWORD),
-			"--password", new String(KEY_PASSWORD),
+			"--storepass", new String(KEYSTORE_PASSWORD),
+			"--keypass", new String(KEY_PASSWORD),
 			"--keystore", KEYSTORE_FILENAME
 		);
 		assertEquals(ExitCodes.SUCCESS,tester.getResult());
 
 		File fp = TEMP_FILE;
 		assertTrue(fp.exists());
+		
+		assertTrue(Files.exists(Utils.getPath(KEYSTORE_FILENAME).toPath()));
 		
 		// Check output is hex key
 		String output=tester.getOutput().trim();
@@ -62,30 +65,31 @@ public class KeyExportTest {
 		tester =  CLTester.run(
 			"key",
 			"export",
-			"--keystore-password", new String(KEYSTORE_PASSWORD),
-			"--password", new String(KEY_PASSWORD),
+			"--type","pem",
+			"--storepass", new String(KEYSTORE_PASSWORD),
+			"--keypass", new String(KEY_PASSWORD),
 			"--keystore", KEYSTORE_FILENAME,
-			"--public-key", publicKey,
+			"--key", publicKey,
 			"--export-password", new String(EXPORT_PASSWORD)
 		);
+		tester.assertExitCode(ExitCodes.SUCCESS);
 		String s=tester.getOutput();
 		assertEquals("",tester.getError());
-		assertEquals(ExitCodes.SUCCESS,tester.getResult());
-		AKeyPair kp=AKeyPair.create(PEMTools.decryptPrivateKeyFromPEM(s, EXPORT_PASSWORD));
+		AKeyPair kp=PEMTools.decryptPrivateKeyFromPEM(s, EXPORT_PASSWORD);
 		assertEquals(ak,kp.getAccountKey());
 		
 		// export publicKey as pem
 		tester =  CLTester.run(
 			"key",
 			"export",
-			"seed",
-			"--keystore-password", new String(KEYSTORE_PASSWORD),
-			"--password", new String(KEY_PASSWORD),
+			"--type","seed",
+			"--storepass", new String(KEYSTORE_PASSWORD),
+			"--keypass", new String(KEY_PASSWORD),
 			"--keystore", KEYSTORE_FILENAME,
-			"--public-key", publicKey
+			"--key", publicKey
 		);
+		tester.assertExitCode(ExitCodes.SUCCESS);
 		String s2=tester.getOutput();
-		assertEquals(ExitCodes.SUCCESS,tester.getResult());
 		assertTrue(s2.contains(kp.getSeed().toHexString()));
 	}
 }

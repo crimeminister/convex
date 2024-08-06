@@ -1,6 +1,5 @@
 package convex.cli.peer;
 
-import java.io.File;
 import java.security.KeyStore;
 
 import org.slf4j.Logger;
@@ -10,6 +9,7 @@ import convex.api.Convex;
 import convex.cli.CLIError;
 import convex.cli.Constants;
 import convex.cli.Main;
+import convex.cli.mixins.RemotePeerMixin;
 import convex.cli.output.RecordOutput;
 import convex.core.Result;
 import convex.core.crypto.AKeyPair;
@@ -20,6 +20,7 @@ import convex.core.lang.Reader;
 import convex.core.transactions.ATransaction;
 import convex.core.transactions.Invoke;
 import picocli.CommandLine.Command;
+import picocli.CommandLine.Mixin;
 import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Spec;
@@ -36,28 +37,15 @@ import picocli.CommandLine.Spec;
 
 @Command(name="create",
 	aliases={"cr"},
-	description="Creates a keypair, new account and a funding stake: to run a local peer.")
+	description="Creates a peer ready to join a Convex network.")
 public class PeerCreate extends APeerCommand {
 
 	private static final Logger log = LoggerFactory.getLogger(PeerCreate.class);
 
 	@Spec CommandSpec spec;
 
-	@Option(names={"--public-key"},
-		defaultValue="",
-		description="Hex string of the public key in the Keystore to use for the peer.%n"
-			+ "You only need to enter in the first distinct hex values of the public key.%n"
-			+ "For example: 0xf0234 or f0234")
-	private String keystorePublicKey;
-
-	@Option(names={"--port"},
-		description="Port number of nearest peer to connect too.")
-	private int port = 0;
-
-	@Option(names={"--host"},
-		defaultValue=Constants.HOSTNAME_PEER,
-		description="Hostname to connect to a peer. Default: ${DEFAULT-VALUE}")
-	private String hostname;
+	@Mixin
+	RemotePeerMixin peerMixin;
 
 	@Option(names={"-t", "--timeout"},
 		description="Timeout in miliseconds.")
@@ -76,7 +64,7 @@ public class PeerCreate extends APeerCommand {
 
 		try {
 			// create a keystore if it does not exist
-			keyStore = mainParent.loadKeyStore();
+			keyStore = storeMixin.ensureKeyStore();
 		} catch (Error e) {
 			log.info(e.getMessage());
 			return;
@@ -86,15 +74,11 @@ public class PeerCreate extends APeerCommand {
 			keyPair = AKeyPair.generate();
 
 			// save the new keypair in the keystore
-			PFXTools.setKeyPair(keyStore, keyPair, mainParent.getKeyPassword());
-
-			File keyFile = mainParent.getKeyStoreFile();
-
-			// save the store to a file
-			PFXTools.saveStore(keyStore, keyFile, mainParent.getStorePassword());
+			PFXTools.setKeyPair(keyStore, keyPair, keyMixin.getKeyPassword());
+			storeMixin.saveKeyStore();
 
 			// connect using the default first user
-			Convex convex = mainParent.connect();
+			Convex convex = peerMixin.connect();
 			// create an account
 			Address address = convex.createAccountSync(keyPair.getAccountKey());
 			convex.transferSync(address, peerStake);

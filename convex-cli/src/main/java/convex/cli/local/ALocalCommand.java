@@ -1,4 +1,4 @@
-package convex.cli.key;
+package convex.cli.local;
 
 import convex.cli.ACommand;
 import convex.cli.Main;
@@ -7,23 +7,21 @@ import convex.cli.mixins.StoreMixin;
 import picocli.CommandLine.Mixin;
 import picocli.CommandLine.ParentCommand;
 
-/**
- * Base class for commands working with the configured key store
- */
-public abstract class AKeyCommand extends ACommand {
+public abstract class ALocalCommand extends ACommand {
 
-	@ParentCommand
-	protected Key keyParent;
-	
 	@Mixin
 	protected StoreMixin storeMixin; 
-	
-	@Mixin
-	protected KeyMixin keyMixin;
 
+	@Mixin
+	protected KeyMixin keyMixin; 
+
+	
+	@ParentCommand
+	private ACommand parent;
 	
 	@Override
 	public Main cli() {
-		return keyParent.cli();
+		return parent.cli();
 	}
+
 }

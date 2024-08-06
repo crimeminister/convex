@@ -4,8 +4,10 @@ import java.util.HashMap;
 import java.util.List;
 
 import convex.cli.CLIError;
+import convex.cli.ExitCodes;
 import convex.core.State;
 import convex.core.crypto.AKeyPair;
+import convex.core.data.AccountKey;
 import convex.core.data.Keyword;
 import convex.core.data.Keywords;
 import convex.core.init.Init;
@@ -16,6 +18,7 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.ParentCommand;
+import picocli.CommandLine.ScopeType;
 import picocli.CommandLine.Spec;
 
 /**
@@ -32,44 +35,42 @@ public class PeerGenesis extends APeerCommand {
 
 	@Spec
 	CommandSpec spec;
-
-	@Option(names = {"--public-key" }, 
-			description = "Hex string of the public key in the Keystore to use for the genesis peer.%n"
-					+ "You only need to enter in the first distinct hex values of the public key.%n"
-					+ "For example: 0xf0234 or f0234")
-	private String genesisKey;
+	
+	@Option(names = { "--governance-key" }, 
+			defaultValue = "${env:CONVEX_GOVERNANCE_KEY}", 
+			scope = ScopeType.INHERIT, 
+			description = "Network Governance Key. Must be a valid Ed25519 public key. Genesis key will be used if not specified (unless security is strict).")
+	protected String governanceKey;
 
 	@Override
 	public void run() {
+		storeMixin.loadKeyStore();
 
-		AKeyPair keyPair = null;
-		if (genesisKey!=null) {
-			keyPair = cli().loadKeyFromStore(genesisKey);
-			if (keyPair == null) {
-				throw new CLIError("Cannot find specified key pair to perform peer start: "+genesisKey);
+		AKeyPair peerKey = ensurePeerKey();
+		AKeyPair genesisKey=ensureControllerKey();
+		
+		AccountKey govKey=AccountKey.parse(governanceKey);
+		if (govKey==null) {
+			paranoia("--gioverannce-key must be specified in strict security mode");
+			if (governanceKey==null) {
+				govKey=genesisKey.getAccountKey();
+			} else {
+				throw new CLIError(ExitCodes.DATAERR,"Unable to parse --governance-key argument. Should be a 32-byte hex key.");
 			}
-		} else {
-//			if (cli().prompt("No key pair specified. Continue by creating a new one? (Y/N)")) {
-//				throw new CLIError("Unable to obtain genersis key pair, aborting");
-//			}
-			if (cli().isParanoid()) throw new CLIError("Aborting due to strict security: no key pair specified");
-			keyPair=AKeyPair.generate();
-			cli().addKeyPairToStore(keyPair,cli().getKeyPassword());
-			cli().saveKeyStore();
-			cli().inform(2,"Generated new Keypair with public key: "+keyPair.getAccountKey());
 		}
 
 		EtchStore store=getEtchStore();
 		
-		State genesisState=Init.createState(List.of(keyPair.getAccountKey()));
-		cli().inform(1, "Created genersis state with hash: "+genesisState.getHash());
+		State genesisState=Init.createState(List.of(peerKey.getAccountKey()));
+		inform("Created genesis state with hash: "+genesisState.getHash());
 		
+		inform(2,"Testing genesis state peer initialisation");
 		HashMap<Keyword,Object> config=new HashMap<>();
 		config.put(Keywords.STORE, store);
 		config.put(Keywords.STATE, genesisState);
-		config.put(Keywords.KEYPAIR, keyPair);
+		config.put(Keywords.KEYPAIR, peerKey);
 		Server s=API.launchPeer(config);
 		s.close();
-		cli().inform(1, "Convex genesis succeeded!");
+		informSuccess("Convex genesis succeeded!");
 	}
 }

@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.IOException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.Test;
@@ -39,9 +40,9 @@ public class KeyTest {
 				"key", 
 				"generate", 
 				"-p", KEY_PASSWORD, 
-				"--keystore-password", KEYSTORE_PASSWORD, 
+				"--storepass", KEYSTORE_PASSWORD, 
 				"--keystore", fileName);
-		tester.assertResult(0);
+		tester.assertExitCode(ExitCodes.SUCCESS);
 		String key = tester.getOutput().trim();
 		assertEquals(64,key.length());
 		
@@ -50,12 +51,22 @@ public class KeyTest {
 		assertTrue(fp.exists());
 
 		// command key.list
-		tester =  CLTester.run("key", "list", "--keystore-password", KEYSTORE_PASSWORD, "--keystore", fileName);
-		//tester.assertOutputMatch("^Index Public Key\\s+1");
+		tester =  CLTester.run("key", "list", "--storepass", KEYSTORE_PASSWORD, "--keystore", fileName);
+		tester.assertExitCode(ExitCodes.SUCCESS);
+		assertTrue(tester.getOutput().contains(key));
 
 		// command key.list with non-existant keystore
-		tester =  CLTester.run("key", "list", "--keystore-password", KEYSTORE_PASSWORD, "--keystore","bad-keystore.pfx");
+		tester =  CLTester.run("key", "list", "--storepass", KEYSTORE_PASSWORD, "--keystore","bad-keystore.pfx");
 		assertNotEquals(ExitCodes.SUCCESS,tester.getResult());
+
+		// command key.list
+		tester =  CLTester.run("key", "delete", "--storepass", KEYSTORE_PASSWORD, "--keystore", fileName, "+");
+		tester.assertExitCode(ExitCodes.SUCCESS);
+
+		// command key.list
+		tester =  CLTester.run("key", "list", "-v0", "--storepass", KEYSTORE_PASSWORD, "--keystore", fileName);
+		tester.assertExitCode(ExitCodes.SUCCESS);
+		assertFalse(tester.getOutput().contains(key));
 
 	}
 }

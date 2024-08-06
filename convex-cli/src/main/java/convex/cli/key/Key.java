@@ -17,17 +17,18 @@ import picocli.CommandLine.Command;
 		KeyGenerate.class,
 		KeyList.class,
 		KeyExport.class,
+		KeyDelete.class,
 		CommandLine.HelpCommand.class
 	},
 	mixinStandardHelpOptions=false,
-	description="Manage local Convex key store.")
+	description="Manage keys in a local Convex PKCS #12 key store.")
 public class Key extends ATopCommand {
 
 
 	@Override
 	public void run() {
 		// sub command run with no command provided
-		CommandLine.usage(new Key(), System.out);
+		showUsage();
 	}
 
 

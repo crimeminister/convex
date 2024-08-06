@@ -8,7 +8,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import convex.cli.CLIError;
-import convex.cli.output.TableOutput;
 import picocli.CommandLine.Command;
 
 /**
@@ -27,20 +26,16 @@ public class KeyList extends AKeyCommand {
 
 	@Override
 	public void run() {
-		KeyStore keyStore = cli().loadKeyStore();
-		if (keyStore==null) throw new CLIError("Keystore does not exist. Specify a valid keystore or use `convex key gen` to create one.");
+		KeyStore keyStore = storeMixin.loadKeyStore();
+		if (keyStore==null) throw new CLIError("Keystore does not exist. Specify a valid --keystore or use `convex key gen` to create one.");
 		
 		Enumeration<String> aliases;
 		try {
 			aliases = keyStore.aliases();
-			TableOutput output=new TableOutput("Index","Public Key");
-			int index = 1;
 			while (aliases.hasMoreElements()) {
 				String alias = aliases.nextElement();
-				output.addRow(String.format("%5d", index), alias);
-				index ++;
+				println(alias);
 			}
-			cli().println(output);
 		} catch (KeyStoreException e) {
 			throw new CLIError("Unexpected error reading keystore",e);
 		}
