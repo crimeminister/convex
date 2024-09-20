@@ -3,9 +3,11 @@ package convex.api;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -16,19 +18,23 @@ import org.junit.jupiter.api.Test;
 
 import convex.core.ErrorCodes;
 import convex.core.Result;
+import convex.core.SourceCodes;
 import convex.core.crypto.AKeyPair;
 import convex.core.crypto.Ed25519Signature;
 import convex.core.data.Address;
+import convex.core.data.Blobs;
 import convex.core.data.Ref;
 import convex.core.data.SignedData;
 import convex.core.data.prim.CVMLong;
+import convex.core.exceptions.ResultException;
 import convex.core.lang.RT;
 import convex.core.lang.Reader;
 import convex.core.lang.ops.Constant;
 import convex.core.transactions.ATransaction;
 import convex.core.transactions.Invoke;
-import convex.core.util.Utils;
 import convex.net.Connection;
+import convex.net.Message;
+import convex.net.MessageType;
 import convex.peer.TestNetwork;
 
 /**
@@ -42,17 +48,12 @@ public class ConvexRemoteTest {
 	private static TestNetwork network;
 
 	@BeforeAll
-	public static void init() {
+	public static void init() throws InterruptedException, ResultException, ExecutionException, TimeoutException {
 		network =  TestNetwork.getInstance();
 		synchronized(network.SERVER) {
-			try {
-				ADDRESS=network.CONVEX.createAccountSync(KEYPAIR.getAccountKey());
-				Result r=network.CONVEX.transfer(ADDRESS, 1000000000L).get(5000,TimeUnit.MILLISECONDS);
-				assertFalse(r.isError(),()->"Error transferring init funds: "+r);
-			} catch (Throwable e) {
-				e.printStackTrace();
-				throw Utils.sneakyThrow(e);
-			}
+			ADDRESS=network.CONVEX.createAccountSync(KEYPAIR.getAccountKey());
+			Result r=network.CONVEX.transfer(ADDRESS, 1000000000L).get(5000,TimeUnit.MILLISECONDS);
+			assertFalse(r.isError(),()->"Error transferring init funds: "+r);
 		}
 	}
 
@@ -68,9 +69,21 @@ public class ConvexRemoteTest {
 			assertTrue(convex.isConnected());
 		}
 	}
+	
+	@Test
+	public void testBadQueryMessage() throws IOException, TimeoutException {
+		ConvexRemote convex = Convex.connect(network.SERVER.getHostAddress());
+		Connection conn=convex.connection;
+		conn.sendMessage(Message.create(MessageType.QUERY, Blobs.empty()));
+	}
 
 	@Test
-	public void testConvex() throws IOException, TimeoutException {
+	public void testBadConnect() throws IOException, TimeoutException {
+		assertThrows(IOException.class,()->Convex.connect(new InetSocketAddress("localhost", 0)));
+	}
+	
+	@Test
+	public void testConvex() throws IOException, TimeoutException, InterruptedException {
 		synchronized (network.SERVER) {
 			Convex convex = Convex.connect(network.SERVER.getHostAddress(), ADDRESS, KEYPAIR);
 			Result r = convex.transactSync(Invoke.create(ADDRESS, 0, Reader.read("*address*")), 5000);
@@ -80,12 +93,40 @@ public class ConvexRemoteTest {
 	}
 
 	@Test
-	public void testBadSignature() throws IOException, TimeoutException, InterruptedException, ExecutionException {
+	public void testBadSignature() throws IOException, TimeoutException, InterruptedException, ExecutionException, ResultException {
 		synchronized (network.SERVER) {
 			Convex convex = Convex.connect(network.SERVER.getHostAddress(), ADDRESS, KEYPAIR);
 			Ref<ATransaction> tr = Invoke.create(ADDRESS, convex.getSequence()+1, Reader.read("*address*")).getRef();
 			Result r = convex.transact(SignedData.create(KEYPAIR.getAccountKey(), Ed25519Signature.ZERO, tr)).get();
 			assertEquals(ErrorCodes.SIGNATURE, r.getErrorCode());
+		}
+	}
+	
+	/**
+	 * Test for sending a "transaction" that is actually not a transaction, i.e. clearly the wrong format
+	 */
+	@Test
+	public void testBadTransaction() throws IOException, TimeoutException, InterruptedException, ExecutionException, ResultException {
+		synchronized (network.SERVER) {
+			Convex convex = Convex.connect(network.SERVER.getHostAddress(), ADDRESS, KEYPAIR);
+			@SuppressWarnings({ "unchecked", "rawtypes" })
+			SignedData<ATransaction> tr = (SignedData)KEYPAIR.signData(CVMLong.ONE); // clearly not an ATransaction...
+			Result r = convex.transact(tr).get();
+			assertEquals(ErrorCodes.FORMAT, r.getErrorCode());
+			assertEquals(SourceCodes.PEER, r.getSource());
+		}
+	}
+	
+	/**
+	 * Test for sending a "transaction" for an account that does not exist. Peer should catch this!
+	 */
+	@Test
+	public void testNobody() throws IOException, TimeoutException, InterruptedException, ExecutionException  {
+		synchronized (network.SERVER) {
+			Convex convex = Convex.connect(network.SERVER.getHostAddress(), Address.create(666666), KEYPAIR);
+			Result r = convex.transact(CVMLong.ONE).get();
+			assertEquals(ErrorCodes.NOBODY, r.getErrorCode());
+			assertEquals(SourceCodes.PEER, r.getSource());
 		}
 	}
 	
@@ -96,6 +137,7 @@ public class ConvexRemoteTest {
 			ATransaction tr = Invoke.create(convex.getAddress(), 10, Reader.read("*address*"));
 			Result r = convex.transactSync(tr);
 			assertEquals(ErrorCodes.SEQUENCE, r.getErrorCode());
+			assertEquals(SourceCodes.CVM, r.getSource()); // currently gets as far as :CVM. OK, but cost to peer?
 			
 			// Sequence should recover
 			r=convex.transactSync("(+ 2 3)");
@@ -122,7 +164,7 @@ public class ConvexRemoteTest {
 	}
 	
 	@Test
-	public void testReceivedCount() throws IOException, TimeoutException, InterruptedException, ExecutionException {
+	public void testReceivedCount() throws IOException, TimeoutException, InterruptedException, ResultException {
 		synchronized (network.SERVER) {
 			ConvexRemote convex = Convex.connect(network.SERVER.getHostAddress(), ADDRESS, KEYPAIR);
 			Connection conn=convex.connection;

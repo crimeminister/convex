@@ -2,11 +2,9 @@ package convex.cli.peer;
 
 import convex.cli.ATopCommand;
 import convex.cli.Constants;
-import convex.cli.Main;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
-import picocli.CommandLine.ParentCommand;
 import picocli.CommandLine.ScopeType;
 
 
@@ -21,6 +19,7 @@ import picocli.CommandLine.ScopeType;
 	subcommands = {
 		PeerCreate.class,
 		PeerStart.class,
+		PeerList.class,
 		PeerGenesis.class,
 		CommandLine.HelpCommand.class
 	},
@@ -34,12 +33,8 @@ public class Peer extends ATopCommand {
 			description="Use the specified config file. If not specified, will default to CONVEX_PEER_CONFIG or "+Constants.CONFIG_FILENAME)
 	private String configFilename;
 
-
-	@ParentCommand
-	protected Main mainParent;
-
 	@Override
-	public void run() {
+	public void execute() {
 		showUsage();
 	}
 

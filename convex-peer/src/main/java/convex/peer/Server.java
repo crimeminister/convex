@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.HashMap;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -38,6 +39,7 @@ import convex.core.data.Strings;
 import convex.core.data.Vectors;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
+import convex.core.exceptions.InvalidDataException;
 import convex.core.exceptions.MissingDataException;
 import convex.core.init.Init;
 import convex.core.lang.RT;
@@ -134,12 +136,13 @@ public class Server implements Closeable {
 	 */
 	private NIOServer nio = NIOServer.create(this);
 
-	private Server(HashMap<Keyword, Object> config) throws TimeoutException, IOException {
+	private Server(HashMap<Keyword, Object> config) throws ConfigException, InterruptedException {
 		this.config = config;
 		final AStore savedStore=Stores.current();
 
-		AStore configStore = (AStore) config.get(Keywords.STORE);
-		this.store = (configStore == null) ? savedStore : configStore;
+		AStore configStore = Config.ensureStore(config);
+		this.store=configStore;
+		// this.store = (configStore == null) ? savedStore : configStore;
 		
 		// Switch to use the configured store for setup
 		try {
@@ -153,11 +156,15 @@ public class Server implements Closeable {
 			if (rk==null) rk=peer.getPeerKey();
 			rootKey=rk;
 
-			// Ensure Peer is stored in executor and persisted
+			// Ensure Peer is stored in executor and initially persisted prior to launch
 			executor.setPeer(peer);
 			executor.persistPeerData();
 			
 			establishController();
+		} catch (TimeoutException e) {
+			throw new ConfigException("Timeout trying to configure peer",e);
+		} catch (IOException e) {
+			throw new ConfigException("IO Error while trying to configure peer",e);
 		} finally {
 			Stores.setCurrent(savedStore);
 		}
@@ -184,53 +191,45 @@ public class Server implements Closeable {
 		}
 	}
 
-	private Peer establishPeer() throws TimeoutException, IOException {
+	private Peer establishPeer() throws ConfigException, TimeoutException, IOException, InterruptedException {
 		log.debug("Establishing Peer with store: {}",Stores.current());
-		try {
-			AKeyPair keyPair = (AKeyPair) getConfig().get(Keywords.KEYPAIR);
-			if (keyPair==null) {
-				log.warn("No keypair provided for Server, deafulting to generated keypair for testing purposes");
-				keyPair=AKeyPair.generate();
-				log.warn("Generated keypair with public key: "+keyPair.getAccountKey());
-			}
-
-			// TODO: should probably move acquisition to launch phase?
-			Object source=getConfig().get(Keywords.SOURCE);
-			if (Utils.bool(source)) {
-				InetSocketAddress sourceAddr=Utils.toInetSocketAddress(source);
-				if (sourceAddr==null) throw new IllegalStateException("Bad SOURCE for peer sync, should be an internet socket address: "+source);
-				return syncPeer(keyPair,sourceAddr);
-
-			} else if (Utils.bool(getConfig().get(Keywords.RESTORE))) {
-				// Restore from storage case
-				try {
-					ACell rk=RT.cvm(config.get(Keywords.ROOT_KEY));
-					if (rk==null) rk=keyPair.getAccountKey();
-
-					Peer peer = Peer.restorePeer(store, keyPair, rk);
-					if (peer != null) {
-						log.info("Restored Peer with root data hash: {}",store.getRootHash());
-						return peer;
-					}
-				} catch (Throwable e) {
-					log.error("Can't restore Peer from store: {}",e);
-				}
-			}
-			State genesisState = (State) config.get(Keywords.STATE);
-			if (genesisState!=null) {
-				log.debug("Defaulting to standard Peer startup with genesis state: "+genesisState.getHash());
-			} else {
-				AccountKey peerKey=keyPair.getAccountKey();
-				genesisState=Init.createState(List.of(peerKey));
-				log.debug("Created new genesis state: "+genesisState.getHash()+ " with initial peer: "+peerKey);
-			}
-			return Peer.createGenesisPeer(keyPair,genesisState);
-		} finally {
-			
+		AKeyPair keyPair = Config.ensurePeerKey(config);
+		if (keyPair==null) {
+			log.warn("No keypair provided for Server, deafulting to generated keypair for testing purposes");
+			keyPair=AKeyPair.generate();
+			config.put(Keywords.KEYPAIR,keyPair);
+			log.warn("Generated keypair with public key: "+keyPair.getAccountKey());
 		}
+
+		// TODO: should probably move acquisition to launch phase?
+		Object source=getConfig().get(Keywords.SOURCE);
+		if (Utils.bool(source)) {
+			InetSocketAddress sourceAddr=Utils.toInetSocketAddress(source);
+			if (sourceAddr==null) throw new ConfigException("Bad SOURCE for peer sync, should be an internet socket address: "+source);
+			return syncPeer(keyPair,sourceAddr);
+
+		} else if (Utils.bool(getConfig().get(Keywords.RESTORE))) {
+			ACell rk=RT.cvm(config.get(Keywords.ROOT_KEY));
+			if (rk==null) rk=keyPair.getAccountKey();
+
+			Peer peer = Peer.restorePeer(store, keyPair, rk);
+			if (peer != null) {
+				log.info("Restored Peer with root data hash: {}",store.getRootHash());
+				return peer;
+			}
+		}
+		State genesisState = (State) config.get(Keywords.STATE);
+		if (genesisState!=null) {
+			log.debug("Defaulting to standard Peer startup with genesis state: "+genesisState.getHash());
+		} else {
+			AccountKey peerKey=keyPair.getAccountKey();
+			genesisState=Init.createState(List.of(peerKey));
+			log.debug("Created new genesis state: "+genesisState.getHash()+ " with initial peer: "+peerKey);
+		}
+		return Peer.createGenesisPeer(keyPair,genesisState);
 	}
 
-	private Peer syncPeer(AKeyPair keyPair, InetSocketAddress sourceAddr) throws IOException, TimeoutException {
+	private Peer syncPeer(AKeyPair keyPair, InetSocketAddress sourceAddr) throws IOException, TimeoutException, InterruptedException {
 		// Peer sync case
 		try {
 			Convex convex = Convex.connect(sourceAddr);
@@ -247,12 +246,12 @@ public class Server implements Closeable {
 			AccountKey remoteKey=RT.ensureAccountKey(status.get(3));
 			Hash genesisHash=RT.ensureHash(status.get(2));
 			Hash stateHash=RT.ensureHash(status.get(4));
-			log.info("Attempting to sync remote state: "+stateHash + " on network: "+genesisHash);
+			log.debug("Attempting to sync remote state: "+stateHash + " on network: "+genesisHash);
 			State genF=(State) convex.acquire(genesisHash).get(timeout,TimeUnit.MILLISECONDS);
-			log.info("Retrieved Consensus State: "+genesisHash);
+			log.debug("Retrieved Genesis State: "+genesisHash);
 			
 			// Belief acquisition
-			log.info("Attempting to obtain peer Belief: "+beliefHash);
+			log.debug("Attempting to obtain peer Belief: "+beliefHash);
 			Belief belF=null;
 			long timeElapsed=0;
 			while (belF==null) {
@@ -275,7 +274,7 @@ public class Server implements Closeable {
 			}
 			Peer peer=Peer.create(keyPair, genF, belF);
 			return peer;
-		} catch (ExecutionException|InterruptedException e) {
+		} catch (ExecutionException | InvalidDataException e) {
 			throw Utils.sneakyThrow(e);
 		}
 	}
@@ -293,10 +292,10 @@ public class Server implements Closeable {
 	 * @param config Server configuration map. Will be defensively copied.
 	 *
 	 * @return New Server instance
-	 * @throws IOException If an IO Error occurred establishing the Peer
-	 * @throws TimeoutException If Peer creation timed out
+	 * @throws ConfigException If Peer configuration failed, possible multiple causes
+	 * @throws InterruptedException 
 	 */
-	public static Server create(HashMap<Keyword, Object> config) throws TimeoutException, IOException {
+	public static Server create(HashMap<Keyword, Object> config) throws ConfigException, InterruptedException {
 		return new Server(new HashMap<>(config));
 	}
 
@@ -339,8 +338,9 @@ public class Server implements Closeable {
 
 	/**
 	 * Launch the Peer Server, including all main server threads
+	 * @throws InterruptedException 
 	 */
-	public void launch() {
+	public void launch() throws IOException, InterruptedException {
 		AStore savedStore=Stores.current();
 		try {
 			Stores.setCurrent(store);
@@ -365,7 +365,6 @@ public class Server implements Closeable {
 			propagator.start();
 			transactionHandler.start();
 			executor.start();
-			
 
 			// Connect to source peer if specified
 			if (getConfig().containsKey(Keywords.SOURCE)) {
@@ -383,10 +382,7 @@ public class Server implements Closeable {
 			}
 
 			goLive();
-			log.info( "Peer Server started at "+nio.getHostAddress()+" with Peer Address: {}",getPeerKey());
-		} catch (Exception e) {
-			close();
-			throw new Error("Failed to launch Server", e);
+			log.info( "Peer server started on port "+nio.getPort()+" with peer key: {}",getPeerKey());
 		} finally {
 			Stores.setCurrent(savedStore);
 		}
@@ -448,12 +444,9 @@ public class Server implements Closeable {
 				m.returnResult(r);
 				break;
 			}
-
 		} catch (MissingDataException e) {
 			Hash missingHash = e.getMissingHash();
 			log.trace("Missing data: {} in message of type {}" , missingHash,type);
-		} catch (Throwable e) {
-			log.warn("Error processing client message: {}", e);
 		} finally {
 			Stores.setCurrent(tempStore);
 		}
@@ -476,7 +469,7 @@ public class Server implements Closeable {
 			}
 		} catch (BadFormatException e) {
 			log.warn("Unable to deliver missing data due badly formatted DATA_REQUEST: {}", m);
-		} catch (Exception e) {
+		} catch (RuntimeException e) {
 			log.warn("Unable to deliver missing data due to exception:", e);
 		}
 	}
@@ -538,16 +531,10 @@ public class Server implements Closeable {
 	}
 	
 	protected void processStatus(Message m) {
-		try {
-			// We can ignore payload
-
-			AVector<ACell> reply = getStatusVector();
-			Result r=Result.create(m.getID(), reply);
-
-			m.returnResult(r);
-		} catch (Throwable t) {
-			log.warn("Status Request Error:", t);
-		}
+		// We can ignore payload
+		AVector<ACell> reply = getStatusVector();
+		Result r=Result.create(m.getID(), reply);
+		m.returnResult(r);
 	}
 
 	/**
@@ -606,19 +593,21 @@ public class Server implements Closeable {
 		ACell payload;
 		try {
 			payload = m.getPayload();
-		} catch (BadFormatException e) {
+			Counters.peerDataReceived++;
+			
+			// Note: partial messages are handled in Connection now
+			Ref<?> r = Ref.get(payload);
+			if (r.isEmbedded()) {
+				log.warn("DATA with embedded value: "+payload);
+				return;
+			}
+			r = r.persistShallow();
+		} catch (BadFormatException | IOException e) {
+			log.debug("Error processing data: "+e.getMessage());
 			m.closeConnection();
 			return;
 		}
-		Counters.peerDataReceived++;
-		
-		// Note: partial messages are handled in Connection now
-		Ref<?> r = Ref.get(payload);
-		if (r.isEmbedded()) {
-			log.warn("DATA with embedded value: "+payload);
-			return;
-		}
-		r = r.persistShallow();
+
 	}
 
 	/**
@@ -651,7 +640,7 @@ public class Server implements Closeable {
 	 * Note: Does not flush buffers to disk. 
 	 *
 	 * This will overwrite any previously persisted peer data.
-	 * @return Updater Peer value with persisted data
+	 * @return Updated Peer value with persisted data
 	 * @throws IOException In case of any IO Error
 	 */
 	@SuppressWarnings("unchecked")
@@ -667,21 +656,32 @@ public class Server implements Closeable {
 
 			newRootData=store.setRootData(newRootData).getValue();
 			peerData=(AMap<Keyword, ACell>) newRootData.get(rootKey);
-			log.debug( "Stored peer data for Server with hash: {}", peerData.getHash().toHexString());
+			log.debug( "Stored peer data with hash: {}", peerData.getHash().toHexString());
 			return Peer.fromData(getKeyPair(), peerData);
 		}  finally {
 			Stores.setCurrent(tempStore);
 		}
 	}
 
+	/**
+	 * Future to complete with timestamp at time of shutdown
+	 */
+	private CompletableFuture<Long> shutdownFuture=new CompletableFuture<Long>(); 
+	
 	@Override
 	public void close() {
+		
 		if (!isRunning) return; // already shut down
+		log.debug("Peer shutdown starting for "+getPeerKey());
 		isLive=false;
 		isRunning = false;
-		
-		// Shut down propagator first, no point sending any more Beliefs
+
+		// Close manager, we don't want any management actions during shutdown!
+		manager.close();
+
+		// Shut down propagator, no point sending any more Beliefs
 		propagator.close();
+		
 		
 		queryHandler.close();
 		transactionHandler.close();
@@ -697,10 +697,10 @@ public class Server implements Closeable {
 			}
 		}
 
-		manager.close();
 		nio.close();
 		// Note we don't do store.close(); because we don't own the store.
 		log.info("Peer shutdown complete for "+getPeerKey());
+		shutdownFuture.complete(Utils.getCurrentTimestamp());
 	}
 
 	/**
@@ -820,10 +820,10 @@ public class Server implements Closeable {
 
 	/**
 	 * Shut down the Server, as gracefully as possible.
-	 * @throws TimeoutException If shitdown attempt times out
+	 * @throws TimeoutException If shutdown attempt times out
 	 * @throws IOException  In case of IO Error
 	 */
-	public void shutdown() throws IOException, TimeoutException {
+	public void shutdown()  {
 		try {
 			AKeyPair kp= getKeyPair();
 			AccountKey key=kp.getAccountKey();
@@ -832,12 +832,11 @@ public class Server implements Closeable {
 			if (r.isError()) {
 				log.warn("Unable to remove Peer stake: "+r);
 			}
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
 		} finally {
 			isLive=false;
 			close();
 		}
 	}
-
-
-
 }

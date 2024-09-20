@@ -1,9 +1,9 @@
 package convex.core.data;
 
+import java.io.IOException;
 import java.lang.reflect.Array;
 import java.util.function.Consumer;
 
-import convex.core.data.prim.CVMLong;
 import convex.core.store.AStore;
 import convex.core.store.Stores;
 
@@ -126,9 +126,11 @@ public class Cells {
 	 * Persist a cell in the current store
 	 * @param a Cell to persist
 	 * @return Cell after persisting (may be the same Cell if no change in cell hierarchy)
+	 * @throws IOException in case of IO error during persistence
 	 */
-	public static <T extends ACell> T persist(T a) {
-		return persist(a,Stores.current());
+	public static <T extends ACell> T persist(T a) throws IOException {
+		AStore store=Stores.current();
+		return persist(a,store);
 	}
 
 	/**
@@ -136,8 +138,9 @@ public class Cells {
 	 * @param a Cell to persist
 	 * @param store Store instance to persist in
 	 * @return Cell after persisting (may be the same Cell if no change in cell hierarchy)
+	 * @throws IOException in case of IO error during persistence
 	 */
-	public static <T extends ACell> T persist(T a, AStore store) {
+	public static <T extends ACell> T persist(T a, AStore store) throws IOException {
 		Ref<T> ref=Ref.get(a);
 		Ref<T> sref=store.storeTopRef(ref, Ref.PERSISTED, null);
 		return sref.getValue();
@@ -148,8 +151,9 @@ public class Cells {
 	 * @param a Cell to persist
 	 * @param store Store instance to persist in
 	 * @return Cell after persisting (may be the same Cell if no change in cell hierarchy)
+	 * @throws IOException in case of IO error during persistence
 	 */
-	public static <T extends ACell> T store(T a, AStore store) {
+	public static <T extends ACell> T store(T a, AStore store) throws IOException {
 		Ref<T> ref=Ref.get(a);
 		Ref<T> sref=store.storeTopRef(ref, Ref.STORED, null);
 		return sref.getValue();
@@ -160,8 +164,9 @@ public class Cells {
 	 * @param a Cell to announce
 	 * @param noveltyHandler Handler for novelty values
 	 * @return Cell after announcing (may be the same Cell if no change in cell hierarchy)
+	 * @throws IOException in case of IO error during persistence
 	 */
-	public static <T extends ACell> T announce(T a, Consumer<Ref<ACell>> noveltyHandler) {
+	public static <T extends ACell> T announce(T a, Consumer<Ref<ACell>> noveltyHandler) throws IOException {
 		if (a==null) {
 			return null; // null is never "novelty"
 		};
@@ -179,7 +184,7 @@ public class Cells {
 		return a.getHash();
 	}
 
-	public static ABlobLike<CVMLong> getEncoding(ACell a) {
+	public static Blob getEncoding(ACell a) {
 		if (a==null) return Blob.NULL_ENCODING;
 		return a.getEncoding();
 	}
@@ -240,6 +245,23 @@ public class Cells {
 			}
 		}
 		return;
+	}
+
+	/**
+	 * Intern a Cell permanently in memory (for JVM lifetime). 
+	 * 
+	 * SECURITY: do not do this for any generated structure from external sources. The could DoS your memory.
+	 * 
+	 * @param <T> Type of Cell
+	 * @param value Value to intern
+	 * @return Interned Cell
+	 */
+	public static <T extends ACell> T intern(T value) {
+		Ref<T> ref=Ref.get(value);
+		if (ref.isInternal()) return value;
+		
+		ref.setFlags(Ref.mergeFlags(ref.getFlags(), Ref.INTERNAL));
+		return value;
 	}
 
 }

@@ -1,5 +1,6 @@
 package convex.api;
 
+import java.io.IOException;
 import java.util.HashSet;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -15,6 +16,7 @@ import convex.core.data.Cells;
 import convex.core.data.Hash;
 import convex.core.data.Ref;
 import convex.core.data.prim.CVMLong;
+import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.MissingDataException;
 import convex.core.lang.RT;
 import convex.core.store.AStore;
@@ -49,8 +51,12 @@ public class Acquiror {
 		return new Acquiror(hash, store, source);
 	}
 	
-	
-	
+	/**
+	 * Gets a future for the result of a virtual task attempting to acquire data from a remote source.
+	 * 
+	 * @param <T> Type of data acquired
+	 * @return Future for the acquired data value
+	 */
 	public <T extends ACell> CompletableFuture<T> getFuture() {
 		CompletableFuture<T> f = new CompletableFuture<T>();
 		Ref<T> checkRef = store.refForHash(hash);
@@ -138,8 +144,9 @@ public class Acquiror {
 					}
 				}
 			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt(); // set interrupt flag since an interruption has occurred	
 				f.completeExceptionally(e);
-			} catch (Throwable t) {
+			} catch (BadFormatException | IOException t) {
 				log.warn("UNEXPECTED acquire fail: ",t);
 				f.completeExceptionally(t);
 			}

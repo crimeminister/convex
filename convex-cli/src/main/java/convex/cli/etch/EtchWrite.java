@@ -1,9 +1,13 @@
 package convex.cli.etch;
 
+import java.io.IOException;
+
+import convex.cli.CLIError;
 import convex.core.data.ACell;
+import convex.core.data.Hash;
 import convex.core.data.Ref;
 import convex.core.lang.Reader;
-import etch.EtchStore;
+import convex.etch.EtchStore;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
@@ -17,7 +21,7 @@ public class EtchWrite extends AEtchCommand{
 	private String cvxData;
 
 	@Override
-	public void run() {
+	public void execute() {
 		
 		if ((cvxData==null)) {
 			cli().inform("No data provided. Suggestion: use arg --cvx <data>");
@@ -25,10 +29,18 @@ public class EtchWrite extends AEtchCommand{
 		}
 		
 		EtchStore store=store();
-		ACell cell=Reader.read(cvxData);
-		
-		store.storeTopRef(Ref.get(cell), Ref.PERSISTED, null);
-		
-		cli().inform("Data saved with hash: "+Ref.get(cell).getHash());
+		try {
+			ACell cell=Reader.read(cvxData);
+			
+			store.storeTopRef(Ref.get(cell), Ref.PERSISTED, null);
+			
+			Hash h=Ref.get(cell).getHash();
+			println(h.toString());
+			informSuccess("Data saved with hash: "+h);
+		} catch (IOException e) {
+			throw new CLIError("Unable to write to store",e);
+		} finally {
+			store.close();
+		}
 	}
 }

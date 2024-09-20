@@ -7,6 +7,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.io.IOException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,6 +18,7 @@ import convex.core.Constants;
 import convex.core.ErrorCodes;
 import convex.core.Peer;
 import convex.core.Result;
+import convex.core.SourceCodes;
 import convex.core.State;
 import convex.core.data.ACell;
 import convex.core.data.AString;
@@ -33,6 +35,7 @@ import convex.core.data.SignedData;
 import convex.core.data.Strings;
 import convex.core.data.Vectors;
 import convex.core.data.prim.CVMLong;
+import convex.core.exceptions.BadFormatException;
 import convex.core.lang.RT;
 import convex.core.lang.Reader;
 import convex.core.transactions.ATransaction;
@@ -47,7 +50,7 @@ import convex.net.Message;
  * Main loop for this component handles client transaction messages, validates them and 
  * prepares them for inclusion in a Block
  */
-public class TransactionHandler extends AThreadedComponent{
+public class TransactionHandler extends AThreadedComponent {
 	
 	static final Logger log = LoggerFactory.getLogger(BeliefPropagator.class.getName());
 	
@@ -105,7 +108,7 @@ public class TransactionHandler extends AThreadedComponent{
 		interests.put(signedTransactionHash, m);
 	}
 	
-	protected void processMessage(Message m) {
+	protected void processMessage(Message m) throws InterruptedException {
 		try {
 			this.receivedTransactionCount++;
 			
@@ -117,7 +120,7 @@ public class TransactionHandler extends AThreadedComponent{
 			// Check our transaction is valid and we want to process it
 			Result error=checkTransaction(sd);
 			if (error!=null) {
-				m.returnResult(error);
+				m.returnResult(error.withSource(SourceCodes.PEER));
 				return;
 			}
 
@@ -133,49 +136,47 @@ public class TransactionHandler extends AThreadedComponent{
 			this.clientTransactionCount++;
 			
 			registerInterest(sd.getHash(), m);		
-		} catch (Throwable e) {
+		} catch (BadFormatException | IOException e) {
 			log.warn("Unandled exception in transaction handler",e);
+			m.closeConnection();
 		}
 	}
 	
 	private Result checkTransaction(SignedData<ATransaction> sd) {
-		try {
-			// TODO: throttle?
-			ATransaction tx=RT.ensureTransaction(sd.getValue());
-			
-			// System.out.println("transact: "+v);
-			if (tx==null) {
-				return Result.error(ErrorCodes.FORMAT,Strings.BAD_FORMAT);
-			}
-			
-			State s=server.getPeer().getConsensusState();
-			AccountStatus as=s.getAccount(tx.getOrigin());
-			if (as==null) {
-				return Result.error(ErrorCodes.NOBODY, Strings.NO_SUCH_ACCOUNT);
-			}
-			
-			if (tx.getSequence()<=as.getSequence()) {
-				return Result.error(ErrorCodes.SEQUENCE, Strings.OLD_SEQUENCE);
-			}
-			
-			AccountKey expectedKey=as.getAccountKey();
-			if (expectedKey==null) {
-				return Result.error(ErrorCodes.STATE, Strings.NO_TX_FOR_ACTOR);
-			}
-			
-			AccountKey pubKey=sd.getAccountKey();
-			if (!expectedKey.equals(pubKey)) {
-				return Result.error(ErrorCodes.SIGNATURE, Strings.WRONG_KEY );
-			}
-			
-			if (!sd.checkSignature()) {
-				// SECURITY: Client tried to send a badly signed transaction!
-				return Result.error(ErrorCodes.SIGNATURE, Strings.BAD_SIGNATURE);
-			}
-		} catch (Exception e) {
-			log.warn("Unexpected exception while checking transaction",e);
-			return Result.error(ErrorCodes.UNEXPECTED, Strings.BAD_SIGNATURE);
+
+		// TODO: throttle?
+		ATransaction tx=RT.ensureTransaction(sd.getValue());
+		
+		// System.out.println("transact: "+v);
+		if (tx==null) {
+			return Result.error(ErrorCodes.FORMAT,Strings.BAD_FORMAT);
 		}
+		
+		State s=server.getPeer().getConsensusState();
+		AccountStatus as=s.getAccount(tx.getOrigin());
+		if (as==null) {
+			return Result.error(ErrorCodes.NOBODY, Strings.NO_SUCH_ACCOUNT);
+		}
+		
+		if (tx.getSequence()<=as.getSequence()) {
+			return Result.error(ErrorCodes.SEQUENCE, Strings.OLD_SEQUENCE);
+		}
+		
+		AccountKey expectedKey=as.getAccountKey();
+		if (expectedKey==null) {
+			return Result.error(ErrorCodes.STATE, Strings.NO_TX_FOR_ACTOR);
+		}
+		
+		AccountKey pubKey=sd.getAccountKey();
+		if (!expectedKey.equals(pubKey)) {
+			return Result.error(ErrorCodes.SIGNATURE, Strings.WRONG_KEY );
+		}
+		
+		if (!sd.checkSignature()) {
+			// SECURITY: Client tried to send a badly signed transaction!
+			return Result.error(ErrorCodes.SIGNATURE, Strings.BAD_SIGNATURE);
+		}
+
 		// All checks passed OK!
 		return null;
 	}
@@ -222,30 +223,25 @@ public class TransactionHandler extends AThreadedComponent{
 		int nTrans = block.length();
 		HashMap<Keyword,ACell> extInfo=new HashMap<>(5);
 		for (long j = 0; j < nTrans; j++) {
-			try {
-				SignedData<ATransaction> t = block.getTransactions().get(j);
-				Hash h = t.getHash();
-				Message m = interests.get(h);
-				if (m != null) {
-					ACell id = m.getID();
-					log.trace("Returning transaction result ID {}", id);
-					Result res = br.getResults().get(j);
-					
-					extInfo.put(Keywords.LOC,Vectors.of(blockNum,j));
-					extInfo.put(Keywords.TX,t.getHash());
-					
-					res=res.withExtraInfo(extInfo);
+			SignedData<ATransaction> t = block.getTransactions().get(j);
+			Hash h = t.getHash();
+			Message m = interests.get(h);
+			if (m != null) {
+				ACell id = m.getID();
+				log.trace("Returning transaction result ID {}", id);
+				Result res = br.getResults().get(j);
+				
+				extInfo.put(Keywords.LOC,Vectors.of(blockNum,j));
+				extInfo.put(Keywords.TX,t.getHash());
+				
+				res=res.withExtraInfo(extInfo);
 
-					boolean reported = m.returnResult(res);
-					if (!reported) {
-						// ignore?
-					}
-					observeTransactionResponse(t,res);
-					interests.remove(h);
+				boolean reported = m.returnResult(res);
+				if (!reported) {
+					// ignore?
 				}
-			} catch (Throwable e) {
-				log.warn("Exception while reporting transaction Result: ",e);
-				// ignore
+				observeTransactionResponse(t,res);
+				interests.remove(h);
 			}
 		}
 	}

@@ -1,6 +1,10 @@
 package convex.core;
 
+import java.io.IOException;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
 import convex.core.data.ACell;
@@ -21,21 +25,24 @@ import convex.core.data.Vectors;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.InvalidDataException;
+import convex.core.exceptions.MissingDataException;
+import convex.core.exceptions.ResultException;
 import convex.core.lang.Context;
-import convex.core.lang.impl.AExceptional;
-import convex.core.lang.impl.ErrorValue;
-import convex.core.lang.impl.RecordFormat;
+import convex.core.lang.RT;
+import convex.core.lang.RecordFormat;
+import convex.core.lang.exception.AExceptional;
+import convex.core.lang.exception.ErrorValue;
 
 /**
- * Class representing the result of a Query or Transaction.
+ * Class representing the result of a Convex interaction (typically a query or transaction).
  * 
- * A Result is typically used to communicate the outcome of a Query or a Transaction from a Peer to a Client.
+ * A Result is typically used to communicate the outcome of a query or a transaction from a peer to a client.
  * 
  * Contains:
  * <ol>
- * <li>Message ID</li>
- * <li>Result value</li>
- * <li>Error Code</li>
+ * <li>Message ID - used for message correlation</li>
+ * <li>Result value - Any CVM value as the result (may be an error message)</li>
+ * <li>Error Code - Error Code, or null if the Result was a success</li>
  * <li>Log Records</li>
  * <li>Additional info</li>
  * </ol>
@@ -81,6 +88,19 @@ public final class Result extends ARecordGeneric {
 	 * @param id ID of Result message
 	 * @param value Result Value
 	 * @param errorCode Error Code (may be null for success)
+	 * @param log Log entries created during transaction
+	 * @param info Additional info
+	 * @return Result instance
+	 */
+	public static Result create(CVMLong id, ACell value, ACell errorCode, AVector<AVector<ACell>> log,AHashMap<Keyword,ACell> info) {
+		return buildFromVector(Vectors.of(id,value,errorCode,log,info));
+	}
+	
+	/**
+	 * Create a Result
+	 * @param id ID of Result message
+	 * @param value Result Value
+	 * @param errorCode Error Code (may be null for success)
 	 * @return Result instance
 	 */
 	public static Result create(CVMLong id, ACell value, ACell errorCode) {
@@ -99,6 +119,10 @@ public final class Result extends ARecordGeneric {
 	
 	public static Result error(Keyword errorCode, AString message) {
 		return error(errorCode,message,null);
+	}
+	
+	public static Result error(Keyword errorCode, String message) {
+		return error(errorCode,Strings.create(message),null);
 	}
 
 	private static Result error(Keyword errorCode, AString message, AHashMap<Keyword,ACell> info) {
@@ -151,6 +175,25 @@ public final class Result extends ARecordGeneric {
 	}
 	
 	/**
+	 * Returns this Result with extra info field
+	 * @param k Information field key
+	 * @param v Information field value
+	 * @return Updated result
+	 */
+	public Result withInfo(Keyword k, ACell v) {
+		AMap<Keyword, ACell> info = getInfo();
+		if (info==null) info=Maps.empty();
+		AMap<Keyword, ACell> newInfo=info.assoc(k, v);
+		if (newInfo==info) return this;
+		return new Result(values.assoc(INFO_POS, newInfo));
+	}
+	
+
+	public Result withSource(Keyword source) {
+		return withInfo(Keywords.SOURCE, source);
+	}
+	
+	/**
 	 * Returns the log for this Result. May be an empty vector.
 	 * 
 	 * @return Log Vector from this Result
@@ -167,10 +210,25 @@ public final class Result extends ARecordGeneric {
 	 * 
 	 * Will be null if no error occurred.
 	 * 
-	 * @return ID from this result
+	 * @return Error code from this result
 	 */
 	public ACell getErrorCode() {
 		return values.get(ERROR_POS);
+	}
+	
+	/**
+	 * Returns the error source code from this Result (see CAD11). This  a Keyword.
+	 * 
+	 * Will be null if :source info not available
+	 * 
+	 * @return Source code keyword from this result,. or null if not present / invalid
+	 */
+	public Keyword getSource() {
+		AMap<Keyword, ACell> info = getInfo();
+		if (info==null) return null;;
+		ACell source=info.get(Keywords.SOURCE);
+		if (source instanceof Keyword) return (Keyword)source;
+		return null;
 	}
 	
 	@Override
@@ -266,6 +324,7 @@ public final class Result extends ARecordGeneric {
 		Context ctx=rc.context;
 		Object result=ctx.getValue();
 		ACell errorCode=null;
+		AVector<AVector<ACell>> log = ctx.getLog();
 		AHashMap<Keyword,ACell> info=Maps.empty();
 		if (result instanceof AExceptional) {
 			AExceptional ex=(AExceptional)result;
@@ -283,8 +342,9 @@ public final class Result extends ARecordGeneric {
 		if (rc.memUsed>0) info=info.assoc(Keywords.MEM, CVMLong.create(rc.memUsed));
 		if (rc.totalFees>0) info=info.assoc(Keywords.FEES, CVMLong.create(rc.totalFees));
 		if (rc.juiceUsed>0) info=info.assoc(Keywords.JUICE, CVMLong.create(rc.juiceUsed));
+		if (rc.source!=null) info=info.assoc(Keywords.SOURCE, rc.source);
 		
-		return create(id,(ACell)result,errorCode,info);
+		return create(id,(ACell)result,errorCode,log,info);
 	}
 	
 	public Result withExtraInfo(Map<Keyword,ACell> extInfo) {
@@ -307,6 +367,7 @@ public final class Result extends ARecordGeneric {
 	 */
 	public static Result fromContext(Context ctx) {
 		ACell rval=(ctx.isExceptional())?ctx.getExceptional().getMessage():ctx.getResult();
+		
 		return create(null,rval,ctx.getErrorCode(),null);
 	}
 
@@ -329,12 +390,77 @@ public final class Result extends ARecordGeneric {
 		return RESULT_FORMAT;
 	}
 
+	/**
+	 * Constructs a result from a caught exception 
+	 * @param e Exception caught
+	 * @return Result instance representing the exception (will be an error)
+	 */
 	public static Result fromException(Throwable e) {
+		if (e==null) return Result.error(ErrorCodes.EXCEPTION,Strings.NIL);
 		if (e instanceof TimeoutException) {
 			String msg=e.getMessage();
-			if (msg==null) msg=e.getClass().getName();
-			return Result.create(null,ErrorCodes.TIMEOUT,Strings.create(msg));
+			return Result.error(ErrorCodes.TIMEOUT,Strings.create(msg));
 		}
-		return Result.create(null, ErrorCodes.EXCEPTION,Strings.create(e.getMessage()));
+		if (e instanceof IOException) {
+			String msg=e.getMessage();
+			return Result.error(ErrorCodes.IO,Strings.create(msg));
+		}
+		if (e instanceof BadFormatException) {
+			String msg=e.getMessage();
+			return Result.error(ErrorCodes.FORMAT,Strings.create(msg));
+		}
+		if (e instanceof MissingDataException) {
+			return MISSING_RESULT;
+		}
+		if (e instanceof ResultException) {
+			return ((ResultException) e).getResult();
+		}
+		if ((e instanceof ExecutionException)||(e instanceof CompletionException)) {
+			// use the underlying cause
+			return fromException(e.getCause());
+		}
+		if (e instanceof InterruptedException) {
+			// This is special, we need to ensure the interrupt status is set
+			return interruptThread();
+		}
+		return Result.error(ErrorCodes.EXCEPTION,Strings.create(e.getMessage()));
 	}
+
+	// Standard result in case of interrupts
+	// Note interrupts are always caused by CLIENT from a local perspective
+	private static final Result INTERRUPTED_RESULT=Result.error(ErrorCodes.INTERRUPTED,Strings.create("Interrupted!")).withSource(SourceCodes.CLIENT);
+	private static final Result MISSING_RESULT=Result.error(ErrorCodes.MISSING,Strings.create("Missing Data!")).withSource(SourceCodes.CLIENT);
+	
+	/**
+	 * Returns a Result representing a thread interrupt, AND sets the interrupt status on the current thread
+	 * @return Result instance representing an interruption
+	 */
+	public static Result interruptThread() {
+		Thread.currentThread().interrupt();
+		return INTERRUPTED_RESULT;
+	}
+
+	/**
+	 * Converts this result to a JSON representation. WARNING: some information may be lost because JSON is a terrible format.
+	 * 
+	 * @return JSON Object containing values from this Result
+	 */
+	public HashMap<String, Object> toJSON() {
+		HashMap<String, Object> hm=new HashMap<>();
+		
+		if (isError()) {
+			hm.put("errorCode", RT.name(getErrorCode()).toString());
+		} 
+		
+		hm.put("value", RT.json(getValue()));
+		
+		AVector<AVector<ACell>> log = getLog();
+		if (log!=null) hm.put("info", RT.json(log));
+		
+		AMap<Keyword, ACell> info = getInfo();
+		if (info!=null) hm.put("info", RT.json(info));
+		
+		return hm;
+	}
+
 }

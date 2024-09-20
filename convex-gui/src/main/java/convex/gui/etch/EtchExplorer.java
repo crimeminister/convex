@@ -1,8 +1,6 @@
 package convex.gui.etch;
 
 import java.awt.BorderLayout;
-import java.awt.EventQueue;
-import java.awt.Toolkit;
 
 import javax.swing.JFrame;
 import javax.swing.JPanel;
@@ -12,9 +10,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import convex.core.store.Stores;
+import convex.etch.EtchStore;
 import convex.gui.components.AbstractGUI;
 import convex.gui.models.StateModel;
-import etch.EtchStore;
+import net.miginfocom.swing.MigLayout;
 
 /**
  * A Client application for exploring an Etch store
@@ -23,8 +22,6 @@ import etch.EtchStore;
 public class EtchExplorer extends AbstractGUI {
 
 	public static final Logger log = LoggerFactory.getLogger(EtchExplorer.class.getName());
-
-	private static JFrame frame;
 
 	public static long maxBlock = 0;
 
@@ -36,32 +33,17 @@ public class EtchExplorer extends AbstractGUI {
 		// call to set up Look and Feel
 		convex.gui.utils.Toolkit.init();
 
-		EventQueue.invokeLater(new Runnable() {
-			@Override
-			public void run() {
-				try {
-					EtchExplorer.frame = new JFrame();
-					frame.setTitle("Etch Explorer");
-					frame.setIconImage(Toolkit.getDefaultToolkit()
-							.getImage(EtchExplorer.class.getResource("/images/Convex.png")));
-					frame.setBounds(100, 100, 1024, 768);
-					frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-					EtchExplorer window = new EtchExplorer();
-					frame.getContentPane().add(window, BorderLayout.CENTER);
-					frame.pack();
-					frame.setVisible(true);
-				} catch (Exception e) {
-					e.printStackTrace();
-				}
-			}
-		});
+		EtchExplorer gui=new EtchExplorer();
+		gui.run();
+		gui.waitForClose();
+		System.exit(0);
 	}
 
 	/*
 	 * Main component panel
 	 */
 	JPanel panel = new JPanel();
-
+ 
 	private static StateModel<EtchStore> etchState = StateModel.create((EtchStore)Stores.getGlobalStore());
 	
 	DatabasePanel homePanel = new DatabasePanel(this);
@@ -104,5 +86,11 @@ public class EtchExplorer extends AbstractGUI {
 		EtchStore e=etchState.getValue();
 		e.close();
 		etchState.setValue(newEtch);
+	}
+
+	@Override
+	public void setupFrame(JFrame frame) {
+		frame.getContentPane().setLayout(new MigLayout());
+		frame.getContentPane().add(this,"dock center");
 	}
 }

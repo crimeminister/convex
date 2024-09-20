@@ -50,25 +50,33 @@ public class AccountChooserPanel extends JPanel {
 			keyCombo=KeyPairCombo.forConvex(convex);
 			keyCombo.setToolTipText("Select a key pair from your Keyring. This will be used to sign transactions.");
 			keyCombo.addItemListener(e->{
-				if (e.getStateChange()==ItemEvent.DESELECTED) return;
+				if (e.getStateChange()==ItemEvent.DESELECTED) {
+					// key pair was deselected and/or set to null
+					convex.setKeyPair(null);
+					return;
+				};
 				AWalletEntry we=(AWalletEntry)e.getItem();
-				AKeyPair kp;
-				if (we.isLocked()) {
-					String s=JOptionPane.showInputDialog(AccountChooserPanel.this,"Enter password to unlock wallet:\n"+we.getPublicKey());
-					if (s==null) {
-						return;
-					}
-					char[] pass=s.toCharArray();
-					boolean unlock=we.tryUnlock(s.toCharArray());
-					if (!unlock) {
-						return;
-					}
-					kp=we.getKeyPair();
-					we.lock(pass);
+				if (we==null) {
+					convex.setKeyPair(null);
 				} else {
-					kp=we.getKeyPair();
+					AKeyPair kp;
+					if (we.isLocked()) {
+						String s=JOptionPane.showInputDialog(AccountChooserPanel.this,"Enter password to unlock wallet:\n"+we.getPublicKey());
+						if (s==null) {
+							return;
+						}
+						char[] pass=s.toCharArray();
+						boolean unlock=we.tryUnlock(s.toCharArray());
+						if (!unlock) {
+							return;
+						}
+						kp=we.getKeyPair();
+						we.lock(pass);
+					} else {
+						kp=we.getKeyPair();
+					}
+					convex.setKeyPair(kp);
 				}
-				convex.setKeyPair(kp);
 			});
 			mp.add(keyCombo);
 
@@ -95,10 +103,11 @@ public class AccountChooserPanel extends JPanel {
 			modeCombo = new JComboBox<String>();
 			modeCombo.setToolTipText("Use Transact to execute transactions (uses Convex Coins).\n\n"
 					+ "Use Query to compute results without changing on-chain state (free).\n\n"
-					//+ "Use Prepare to run transaction with advanced options."
+					+ "Use Prepare to prepare the transcation without submitting."
 					);
 			modeCombo.addItem("Transact");
 			modeCombo.addItem("Query");
+			modeCombo.addItem("Prepare");
 			// modeCombo.addItem("Prepare...");
 			if (convex.getKeyPair()==null) modeCombo.setSelectedItem("Query");
 			mp.add(modeCombo);
@@ -125,7 +134,7 @@ public class AccountChooserPanel extends JPanel {
 			convex.query(Special.get("*balance*"),a).thenAccept(r-> {
 				balanceLabel.setFromResult(r);
 			});
-		} catch (Throwable t) {
+		} catch (NullPointerException t) {
 			balanceLabel.setText(t.getClass().getName());
 		}
 	}

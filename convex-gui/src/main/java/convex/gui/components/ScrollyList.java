@@ -7,12 +7,14 @@ import java.awt.Rectangle;
 import java.util.function.Function;
 
 import javax.swing.JPanel;
+import javax.swing.JScrollBar;
 import javax.swing.JScrollPane;
 import javax.swing.ListModel;
 import javax.swing.Scrollable;
 import javax.swing.event.ListDataEvent;
 import javax.swing.event.ListDataListener;
 
+import convex.gui.utils.Toolkit;
 import net.miginfocom.swing.MigLayout;
 
 /**
@@ -23,6 +25,8 @@ import net.miginfocom.swing.MigLayout;
  */
 @SuppressWarnings("serial")
 public class ScrollyList<E> extends JScrollPane {
+	public static final int VIEWPORT_HEIGHT = 660;
+	
 	private final Function<E, Component> builder;
 	private final ListModel<E> model;
 	private final ScrollablePanel listPanel = new ScrollablePanel();
@@ -30,6 +34,7 @@ public class ScrollyList<E> extends JScrollPane {
 	private final MigLayout listLayout;
 	
 	public void refreshList() {
+		boolean bottom=isAtBottom();
 		EventQueue.invokeLater(()->{;
 			listPanel.removeAll();
 			int n = model.getSize();
@@ -38,14 +43,31 @@ public class ScrollyList<E> extends JScrollPane {
 				listPanel.add(builder.apply(we),"span");
 			}
 			this.revalidate();
+			if (bottom) {
+				EventQueue.invokeLater(()->Toolkit.scrollToBottom(this));
+			}
 		});
 	}
 
+	private boolean isAtBottom() {
+		JScrollBar bar = this.getVerticalScrollBar();
+		int pos= bar.getValue();
+		if (pos==0) return false; // we are the top
+		return pos==bar.getMaximum();
+	}
+
+	/**
+	 * Internal panel that contains the list components
+	 */
 	private static class ScrollablePanel extends JPanel implements Scrollable {
 
 		@Override
 		public Dimension getPreferredScrollableViewportSize() {
-			return getPreferredSize();
+			Dimension d = getPreferredSize();
+			if (d.getHeight()>VIEWPORT_HEIGHT) {
+				d=new Dimension(d.width,VIEWPORT_HEIGHT);
+			}
+			return d;
 		}
 
 		@Override
@@ -55,7 +77,6 @@ public class ScrollyList<E> extends JScrollPane {
 
 		@Override
 		public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction) {
-			// TODO Auto-generated method stub
 			return 180;
 		}
 

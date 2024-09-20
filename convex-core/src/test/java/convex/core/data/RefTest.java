@@ -7,19 +7,25 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Random;
 import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
+import convex.core.ErrorCodes;
+import convex.core.SourceCodes;
 import convex.core.data.Refs.RefTreeStats;
+import convex.core.data.prim.CVMBool;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.InvalidDataException;
 import convex.core.exceptions.MissingDataException;
+import convex.core.lang.Core;
 import convex.core.lang.RT;
 import convex.core.lang.Symbols;
+import convex.core.util.Utils;
 import convex.test.Samples;
 
 public class RefTest {
@@ -31,7 +37,7 @@ public class RefTest {
 		// equals comparison should work
 		assertEquals(ref, Ref.forHash(Samples.BAD_HASH));
 
-		// gneric properties of missing Ref
+		// generic properties of missing Ref
 		assertEquals(Samples.BAD_HASH, ref.getHash());
 		assertEquals(Ref.UNKNOWN, ref.getStatus()); // shouldn't know anything about this Ref yet
 		assertFalse(ref.isDirect());
@@ -55,7 +61,7 @@ public class RefTest {
 	}
 
 	@Test
-	public void testShallowPersist() {
+	public void testShallowPersist() throws IOException {
 		Blob bb = Blob.createRandom(new Random(), 100); // unique blob but embedded
 		assertTrue(bb.isEmbedded());
 		
@@ -145,7 +151,7 @@ public class RefTest {
 	}
 
 	@Test
-	public void testPersistEmbeddedNull() throws InvalidDataException {
+	public void testPersistEmbeddedNull() throws InvalidDataException, IOException {
 		Ref<ACell> nr = Ref.get(null);
 		assertSame(Ref.NULL_VALUE, nr);
 		assertSame(nr, nr.persist());
@@ -154,7 +160,7 @@ public class RefTest {
 	}
 
 	@Test
-	public void testPersistEmbeddedLong() {
+	public void testPersistEmbeddedLong() throws IOException {
 		ACell val=RT.cvm(10001L);
 		Ref<ACell> nr = Ref.get(val);
 		Ref<ACell> nrp = nr.persist();
@@ -169,7 +175,7 @@ public class RefTest {
 	}
 	
 	@Test
-	public void testPersistNestedBlob() {
+	public void testPersistNestedBlob() throws IOException {
 		ABlob bigBlob=Blobs.createRandom(17*Blob.CHUNK_LENGTH); // 16 full chunks plus one extra (3 levels)
 		RefTreeStats rs=Refs.getRefTreeStats(bigBlob.getRef());
 		assertEquals(19,rs.total);
@@ -189,7 +195,7 @@ public class RefTest {
 	}
 	
 	@Test
-	public void testGoodData() {
+	public void testGoodData() throws IOException {
 		AVector<ASymbolic> value = Vectors.of(Keywords.FOO, Symbols.FOO);
 		// a good ref
 		Ref<?> orig = value.getRef();
@@ -207,7 +213,7 @@ public class RefTest {
 	}
 
 	@Test
-	public void testCompare() {
+	public void testCompare() throws IOException {
 		assertEquals(0, Ref.get(RT.cvm(1L)).compareTo(Cells.persist(RT.cvm(1L)).getRef()));
 		assertEquals(1, Ref.get(RT.cvm(1L)).compareTo(
 				Ref.forHash(Hash.fromHex("0000000000000000000000000000000000000000000000000000000000000000"))));
@@ -337,6 +343,44 @@ public class RefTest {
 		assertEquals(11,rts.total);
 		assertEquals(11,rts.embedded);
 		// assertEquals(0,rts.persisted); Might not be true if Sample is persisted?
+	}
+	
+	@Test 
+	public void testInternal() {
+		checkInternal(null);
+		checkInternal(CVMBool.TRUE);
+		checkInternal(Core.COUNT);
+		checkInternal(Keywords.FOO);
+		checkInternal(Symbols.DEF);
+		checkInternal(ErrorCodes.JUICE);
+		checkInternal(SourceCodes.CODE);
+		
+		// Empty data structures
+		checkInternal(Maps.empty());
+		checkInternal(Sets.empty());
+		checkInternal(Vectors.empty());
+		checkInternal(Lists.empty());
+		checkInternal(Index.EMPTY);
+		checkInternal(Blobs.empty());
+		
+		// Cached integers
+		checkInternal(CVMLong.ZERO);
+		checkInternal(CVMLong.ONE);
+		checkInternal(CVMLong.MINUS_ONE);
+		checkInternal(CVMLong.MAX_VALUE);
+		checkInternal(CVMLong.create(100));
+	}
+
+	public static <T extends ACell> void  checkInternal(T a)  {
+		Ref<T> ref=Ref.get(a);
+		assertTrue(ref.isInternal(),()->"Not internal ref: "+a+" of type "+Utils.getClass(a));
+		assertSame(a,ref.getValue());
+		
+		try {
+			assertSame(a,Cells.persist(a));
+		} catch (IOException e) {
+			throw Utils.sneakyThrow(e);
+		}
 	}
 
 	@Test

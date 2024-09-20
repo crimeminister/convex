@@ -6,9 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-
-import static convex.test.Assertions.*;
-
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.HashMap;
@@ -42,6 +39,7 @@ import convex.core.data.SignedData;
 import convex.core.data.Vectors;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadSignatureException;
+import convex.core.exceptions.ResultException;
 import convex.core.init.Init;
 import convex.core.lang.RT;
 import convex.core.lang.Reader;
@@ -94,12 +92,10 @@ public class ServerTest {
 	
 	/**
 	 * Smoke test for ConvexLocal connection 
-	 * @throws IOException
-	 * @throws InterruptedException
-	 * @throws TimeoutException
+	 * @throws Exception in case of error
 	 */
 	@Test
-	public void testLocalConnect() throws IOException, InterruptedException, TimeoutException {
+	public void testLocalConnect() throws Exception {
 		Server server=network.SERVER;
 
 		AKeyPair  kp=server.getKeyPair();
@@ -118,7 +114,7 @@ public class ServerTest {
 		assertEquals(10000000,convex.getBalance());
 
 		r=convex.transactSync("(do (transfer "+user+" 100000) *balance*)");
-		assertCVMEquals(10000000,r.getValue());
+		assertEquals("10000000",r.getValue().toString());
 
 	}
 
@@ -153,7 +149,7 @@ public class ServerTest {
 	}
 
 	@Test
-	public void testBalanceQuery() throws IOException, TimeoutException {
+	public void testBalanceQuery() throws IOException, TimeoutException, ResultException {
 		Convex convex=Convex.connect(network.SERVER.getHostAddress(),network.VILLAIN,network.VILLAIN_KEYPAIR);
 
 		// test the connection is still working
@@ -161,7 +157,7 @@ public class ServerTest {
 	}
 	
 	@Test
-	public void testSequence() throws IOException, TimeoutException {
+	public void testSequence() throws ResultException, TimeoutException, InterruptedException {
 		Convex convex=network.getClient();
 		// sequence number should be zero for fresh account
 		assertEquals(0,convex.getSequence());
@@ -176,22 +172,29 @@ public class ServerTest {
 
 	@Test
 	public void testConvexAPI() throws IOException, InterruptedException, ExecutionException, TimeoutException {
-		Convex convex=Convex.connect(network.SERVER.getHostAddress(),network.VILLAIN,network.VILLAIN_KEYPAIR);
-
-		Future<convex.core.Result> f=convex.query(Symbols.STAR_BALANCE);
-		convex.core.Result f2=convex.querySync(Symbols.STAR_ADDRESS);
-
-		assertEquals(network.VILLAIN,f2.getValue());
-		assertTrue(f.get().getValue() instanceof CVMLong);
-		
-		assertThrows(NullPointerException.class,()->convex.transact((ATransaction)null));
-		
-		
-		convex.core.Result r3=convex.querySync(Reader.read("(fail :foo)"));
-		assertTrue(r3.isError());
-		assertEquals(ErrorCodes.ASSERT,r3.getErrorCode());
-		assertEquals(Keywords.FOO,r3.getValue());
-		assertNotNull(r3.getTrace());
+		synchronized(network.SERVER) {
+			Convex convex=network.getClient();
+	
+			Future<convex.core.Result> f=convex.query(Symbols.STAR_BALANCE);
+			convex.core.Result f2=convex.querySync(Symbols.STAR_ADDRESS);
+	
+			assertEquals(convex.getAddress(),f2.getValue());
+			assertTrue(f.get().getValue() instanceof CVMLong);
+			
+			// Note difference by argument type. `nil` code can make a valid transaction
+			assertThrows(IllegalArgumentException.class,()->convex.transact((ATransaction)null));
+			{
+				Result r=convex.transactSync((ACell)null);
+				// System.out.println(r);
+				assertEquals(null,r.getValue());
+			}
+			
+			convex.core.Result r3=convex.querySync(Reader.read("(fail :foo)"));
+			assertTrue(r3.isError());
+			assertEquals(ErrorCodes.ASSERT,r3.getErrorCode());
+			assertEquals(Keywords.FOO,r3.getValue());
+			assertNotNull(r3.getTrace());
+		}
 	}
 
 	@Test
@@ -204,8 +207,7 @@ public class ServerTest {
 			assertThrows(ExecutionException.class,()->{
 				ACell c = convex.acquire(BAD_HASH).get();
 				System.out.println("Didn't expect to acquire: "+c);
-			}
-			);
+			});
 		}
 	}
 	

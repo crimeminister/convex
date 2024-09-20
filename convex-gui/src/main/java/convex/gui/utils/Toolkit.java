@@ -3,10 +3,10 @@ package convex.gui.utils;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Desktop;
+import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.Graphics2D;
-import java.awt.GraphicsDevice;
-import java.awt.GraphicsEnvironment;
+import java.awt.HeadlessException;
 import java.awt.Image;
 import java.awt.RenderingHints;
 import java.awt.datatransfer.Clipboard;
@@ -29,7 +29,10 @@ import javax.swing.ImageIcon;
 import javax.swing.InputMap;
 import javax.swing.JComponent;
 import javax.swing.JFrame;
+import javax.swing.JLabel;
 import javax.swing.JMenuItem;
+import javax.swing.JScrollBar;
+import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.KeyStroke;
 import javax.swing.LookAndFeel;
@@ -46,6 +49,7 @@ import org.slf4j.LoggerFactory;
 
 import com.formdev.flatlaf.FlatDarculaLaf;
 import com.formdev.flatlaf.intellijthemes.materialthemeuilite.FlatMaterialOceanicIJTheme;
+import com.formdev.flatlaf.util.SystemInfo;
 
 import convex.core.util.Utils;
 
@@ -54,17 +58,22 @@ public class Toolkit {
 	
 	private static Logger log = LoggerFactory.getLogger(Toolkit.class.getName());
 
+	public static final double BASE_SCALE=1.3;
 	public static final float SCALE=getUIScale();
 	
-	public static final int ICON_SIZE = (int) (24*SCALE);
+	public static final int ICON_SIZE = (int) (32*SCALE);
 	public static final int IDENTICON_SIZE = (int) (14*SCALE);
+	public static final int IDENTICON_SIZE_LARGE = 2*IDENTICON_SIZE;
 	public static final int SMALL_ICON_SIZE = (int) (16*SCALE);
-	public static final int MAIN_ICON_SIZE = (int) (64*SCALE);
+	public static final int MAIN_ICON_SIZE = (int) (72*SCALE);
 
-	public static final float DEFAULT_FONT_SIZE=16;
+	public static final float DEFAULT_FONT_SIZE=13*SCALE;
 	
 	public static Font DEFAULT_FONT = new Font(Font.SANS_SERIF,Font.PLAIN,(int)DEFAULT_FONT_SIZE);
-	public static Font MONO_FONT = new Font(Font.MONOSPACED, Font.BOLD, (int)(DEFAULT_FONT_SIZE));
+	public static Font BIG_FONT = new Font(Font.SANS_SERIF, Font.BOLD, (int)(DEFAULT_FONT_SIZE*1.8));
+	public static Font MONO_FONT = new Font(Font.MONOSPACED, Font.PLAIN, (int)(DEFAULT_FONT_SIZE));
+	public static Font BIG_MONO_FONT = new Font(Font.MONOSPACED, Font.BOLD, (int)(DEFAULT_FONT_SIZE*1.5));
+	public static Font SMALL_MONO_FONT = new Font(Font.MONOSPACED, Font.PLAIN, (int)(DEFAULT_FONT_SIZE*0.8));
 	public static Font BUTTON_FONT = new Font(Font.SANS_SERIF, Font.PLAIN, (int)(DEFAULT_FONT_SIZE*1.2));
 	
 	public static final float SYMBOL_FONT_SIZE= DEFAULT_FONT_SIZE;
@@ -72,15 +81,17 @@ public class Toolkit {
 	public static Font SYMBOL_FONT = new Font(Font.MONOSPACED, Font.PLAIN, (int)SYMBOL_FONT_SIZE);
 	
 	public static final Color SYMBOL_COLOUR = new Color(100,170,200);
+	public static final Color WARNING_COLOUR = Color.ORANGE;
 	public static final Color BUTTON_FG = new Color(176,190,197);
 
-
-
-
 	static {
-		loadFonts();
-		UIManager.getLookAndFeelDefaults().put("defaultFont", DEFAULT_FONT);
 		try {
+			if (SystemInfo.isMacOS) {
+				// Apple needs some special setup
+				setupForApple();
+			}
+			loadFonts();
+			UIManager.getLookAndFeelDefaults().put("defaultFont", DEFAULT_FONT);
 			//LookAndFeel laf = installMDLaf();
 			LookAndFeel laf=installFlatLaf();
 			
@@ -99,26 +110,40 @@ public class Toolkit {
 			// Override button foreground, too dark by default
 			UIManager.put( "Button.foreground", UIManager.get("Label.foreground") );
 			// System.out.println(UIManager.get("Label.foreground"));
+		} catch (HeadlessException e) {
+			// We need this to stop things like tests failing in headless mode (e.g. in CI builds)
+			log.warn("Unable to initialise GUI Toolkit due to headless execution mode.");
 		} catch (Exception e) {
 			e.printStackTrace();
 			log.warn("Unable to set look and feel: {}", e);
 		}
 	}
 
+	protected static void setupForApple() {
+		// For Mac, use Convex as the application name
+		System.setProperty( "apple.awt.application.name", "Convex" );
+		System.setProperty( "apple.awt.application.appearance", "system" );
+		System.setProperty( "apple.laf.useScreenMenuBar", "true" );
+	}
+
 	protected static LookAndFeel installFlatLaf() {
-		System.setProperty("flatlaf.uiScale", "1.5");
-		// System.setProperty("flatlaf.uiScale", Double.toString(SCALE));
 		FlatDarculaLaf laf=new FlatDarculaLaf();
 		return laf;
 	}
 
-	public static float getUIScale() {
-		GraphicsDevice screen = GraphicsEnvironment
-			    .getLocalGraphicsEnvironment()
-			    .getDefaultScreenDevice();
-		Double scale=screen.getDefaultConfiguration().getDefaultTransform().getScaleX();
-		log.debug("UI Scale: "+scale);
-		return (float)(scale.doubleValue());
+	private static float getUIScale() {
+		try {
+			//GraphicsDevice screen = GraphicsEnvironment
+			//	    .getLocalGraphicsEnvironment()
+			//	    .getDefaultScreenDevice();
+			//Double scale=screen.getDefaultConfiguration().getDefaultTransform().getScaleX();
+			Double scale=BASE_SCALE;
+			System.setProperty( "flatlaf.uiScale", ""+scale );
+			log.info("UI Scale: "+scale);
+			return (float)(scale.doubleValue());
+		} catch (HeadlessException e) {
+			return 1.0f;
+		}
 	}
 
 	// public static final ImageIcon LOCKED_ICON =
@@ -128,8 +153,8 @@ public class Toolkit {
 	//public static final ImageIcon LOCKED_ICON = scaledIcon(ICON_SIZE, "/images/padlock.png");
 	//public static final ImageIcon UNLOCKED_ICON = scaledIcon(ICON_SIZE, "/images/padlock-open.png");
 	
-	public static final ImageIcon LOCKED_ICON = SymbolIcon.get(0xe897,ICON_SIZE);
-	public static final ImageIcon UNLOCKED_ICON = SymbolIcon.get(0xe898,ICON_SIZE);
+	public static final ImageIcon LOCKED_ICON = SymbolIcon.get(0xe897,ICON_SIZE,Toolkit.SYMBOL_COLOUR.getRGB());
+	public static final ImageIcon UNLOCKED_ICON = SymbolIcon.get(0xe898,ICON_SIZE,Toolkit.WARNING_COLOUR.getRGB());
 	public static final ImageIcon WARNING = scaledIcon(ICON_SIZE, "/images/ic_priority_high_black_36dp.png");
 	public static final ImageIcon CAKE = scaledIcon(ICON_SIZE, "/images/ic_cake_black_36dp.png");
 	public static final ImageIcon CONVEX = scaledIcon(ICON_SIZE, "/images/Convex.png");
@@ -159,12 +184,12 @@ public class Toolkit {
 	private static void loadFonts() {
 		try {
 			{ // Source Code Pro
-				InputStream is = Utils.getResourceAsStream("fonts/SourceCodePro-Regular.ttf");
+				InputStream is = Utils.getResourceAsStream("/fonts/SourceCodePro-Regular.ttf");
 				MONO_FONT = Font.createFont(Font.TRUETYPE_FONT, is).deriveFont(DEFAULT_FONT_SIZE);
 			}
 			
 			{ // Material Symbols
-				InputStream is = Utils.getResourceAsStream("fonts/MaterialSymbolsSharp.ttf");
+				InputStream is = Utils.getResourceAsStream("/fonts/MaterialSymbolsSharp.ttf");
 				SYMBOL_FONT = Font.createFont(Font.TRUETYPE_FONT, is).deriveFont(SYMBOL_FONT_SIZE);
 			}
 			DEFAULT_FONT=DEFAULT_FONT.deriveFont(DEFAULT_FONT_SIZE).deriveFont(Font.PLAIN);
@@ -265,14 +290,6 @@ public class Toolkit {
 		}
 	}
 
-	private static JFrame firstFrame=null;
-	public static synchronized void closeIfFirstFrame(JFrame frame) {
-		if (firstFrame==null) {
-			frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-			firstFrame=frame;
-		}
-	}
-
 	public static JMenuItem makeMenu(String name,Runnable op) {
 		AbstractAction action=makeAction(name,op);
 		JMenuItem mi= new JMenuItem(action);
@@ -318,20 +335,31 @@ public class Toolkit {
 	public static Border createEmptyBorder(int x) {
 		return BorderFactory.createEmptyBorder(x, x, x, x);
 	}
+	
+	public static JComponent makeHelp(String helpText) {
+		JLabel help=new JLabel(SymbolIcon.get(0xe887,Toolkit.SMALL_ICON_SIZE));
+		help.setToolTipText(helpText);
+		return help;
+	}
 
-	public static JTextArea makeNote(String title, String note) {
+	public static JComponent makeNote(String title, String note) {
+		// JLabel ta = new JLabel("<html>"+note+"</html>"); // Alternative, but doesn't scale component height?
 		JTextArea ta = new JTextArea(note);
 		CompoundBorder b=BorderFactory.createCompoundBorder(BorderFactory.createTitledBorder(title), createEmptyBorder(10));
+		
+		// This allows the text area to shrink, for some odd reason....
+		ta.setMinimumSize(new Dimension(50,50));
+		
 		ta.setBorder(b);
-		ta.setEditable(false);
-		ta.setFocusable(false);
+		ta.setEditable(false); // Can't edit notes
+		ta.setFocusable(false); // informational only, shouldn't focus
 		// ta.setFont(Toolkit.DEFAULT_FONT);
-		ta.setWrapStyleWord(true);
-		ta.setLineWrap(true);
+		ta.setLineWrap(true); // for wrapping
+		ta.setWrapStyleWord(true); // for nice text when it wraps
 		return ta;
 	}
 	
-	public static JTextArea makeNote(String note) {
+	public static JComponent makeNote(String note) {
 		return makeNote("NOTE",note);
 	}
 
@@ -354,5 +382,10 @@ public class Toolkit {
 
 	public static Icon menuIcon(int codePoint) {
 		return SymbolIcon.get(codePoint,Toolkit.BUTTON_FONT.getSize());
+	}
+
+	public static <E> void scrollToBottom(JScrollPane scrollPane) {
+		JScrollBar bar = scrollPane.getVerticalScrollBar();
+		bar.setValue(bar.getMaximum());
 	}
 }

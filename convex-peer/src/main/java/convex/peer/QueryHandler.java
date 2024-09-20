@@ -3,8 +3,12 @@ package convex.peer;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import convex.core.Result;
 import convex.core.ResultContext;
+import convex.core.SourceCodes;
 import convex.core.data.ACell;
 import convex.core.data.AVector;
 import convex.core.data.Address;
@@ -15,6 +19,8 @@ import convex.net.Message;
 import convex.net.MessageType;
 
 public class QueryHandler extends AThreadedComponent {
+
+	private static final Logger log = LoggerFactory.getLogger(QueryHandler.class.getName());
 
 	/**
 	 * Queue for received messages to be processed by this Peer Server
@@ -59,28 +65,32 @@ public class QueryHandler extends AThreadedComponent {
 	private void handleQuery(Message m) {
 		try {
 			// query is a vector [id , form, address?]
-			AVector<ACell> v = m.getPayload();
+			AVector<ACell> v= m.getPayload();
 			CVMLong id = (CVMLong) v.get(0);
 			ACell form = v.get(1);
-
+	
 			// extract the Address, might be null
 			Address address = RT.ensureAddress(v.get(2));
-
+	
 			log.debug( "Processing query: {} with address: {}" , form, address);
 			// log.log(LEVEL_MESSAGE, "Processing query: " + form + " with address: " +
 			// address);
+			
+			// Return result
 			ResultContext resultContext = server.getPeer().executeQuery(form, address);
+			Result result=Result.fromContext(id, resultContext).withSource(SourceCodes.PEER);
 			
 			// Report result back to message sender
-			boolean resultReturned= m.returnResult(Result.fromContext(id, resultContext));
-
+			boolean resultReturned= m.returnResult(result);
+	
 			if (!resultReturned) {
 				log.warn("Failed to send query result back to client with ID: {}", id);
 			}
-
-		} catch (Throwable t) {
-			log.warn("Query Error: {}", t);
+		} catch (Exception e) {
+			log.debug("Terminated client: "+e.getMessage());
+			m.closeConnection();
 		}
+
 	}
 
 	@Override

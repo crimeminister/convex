@@ -14,6 +14,7 @@ import convex.core.data.prim.CVMBool;
 import convex.core.data.prim.CVMChar;
 import convex.core.data.util.BlobBuilder;
 import convex.core.exceptions.BadFormatException;
+import convex.core.exceptions.Panic;
 
 public class Strings {
 	public static final StringShort EMPTY = StringShort.EMPTY;
@@ -80,9 +81,10 @@ public class Strings {
 	/**
 	 * Create a canonical CVM String from a regular Java String
 	 * @param s Java String to convert.
-	 * @return CVM String instance.
+	 * @return CVM String instance, or null if input was null
 	 */
 	public static AString create(String s) {
+		if (s==null) return null;
 		int n=s.length();
 		if (n==0) return StringShort.EMPTY;
 		ABlob utfBlob=null;
@@ -98,13 +100,17 @@ public class Strings {
 			try {
 				bb = encoder.encode(CharBuffer.wrap(s));
 			} catch (CharacterCodingException e) {
-				throw new Error("Shouldn't happen!",e);
+				throw new Panic("Shouldn't happen!",e);
 			}
 			BlobBuilder builder=new BlobBuilder();
 			builder.append(bb);
 			utfBlob=builder.toBlob();
 		}
 		return Strings.create(utfBlob);
+	}
+	
+	public static <T extends AString> T intern(T value) {
+		return Cells.intern(value);
 	}
 	
 	public static AString create(CVMChar c) {

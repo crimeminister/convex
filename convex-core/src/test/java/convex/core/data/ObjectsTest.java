@@ -8,6 +8,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+
+import java.io.IOException;
 
 import convex.core.Constants;
 import convex.core.data.Refs.RefTreeStats;
@@ -34,7 +37,11 @@ public class ObjectsTest {
 	public static void doAnyValueTests(ACell a) {
 		Hash h=Hash.get(a);
 				
-		a=Cells.persist(a);
+		try {
+			a=Cells.persist(a);
+		} catch (IOException e) {
+			fail(e);
+		}
 		Ref<ACell> r = Ref.get(a);
 		assertEquals(h,r.getHash());
 		assertSame(a, r.getValue()); // shouldn't get GC'd because we have a strong reference
@@ -156,7 +163,8 @@ public class ObjectsTest {
 		try {
 			b = Format.read(enc);
 		} catch (BadFormatException e) {
-			throw new Error("Reload from complete encoding failed for: " + a + " with encoding "+enc);
+			fail("Reload from complete encoding failed for: " + a + " with encoding "+enc);
+			return;
 		}
 		assertEquals(a,b);
 		assertEquals(enc,b.getEncoding()); // Encoding should be the same
@@ -212,7 +220,8 @@ public class ObjectsTest {
 			ACell a3= Format.read(offsetEncoding);
 			assertEquals(a, a3);
 		} catch (BadFormatException e) {
-			throw new Error("Can't read encoding: 0x" + encoding.toHexString(), e);
+			fail("Can't read encoding: 0x" + encoding.toHexString(), e);
+			return;
 		}
 		
 		assertThrows(BadFormatException.class,()->Format.read(encoding.append(Samples.SMALL_BLOB).toFlatBlob()));
@@ -315,7 +324,7 @@ public class ObjectsTest {
 	}
 
 	@SuppressWarnings("unused")
-	private static void doCellStorageTest(ACell a) throws InvalidDataException {
+	private static void doCellStorageTest(ACell a) throws InvalidDataException, IOException {
 		
 		AStore temp=Stores.current();
 		try {

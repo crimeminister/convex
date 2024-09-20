@@ -14,22 +14,20 @@ public class RemotePeerMixin extends AMixin {
 	
 	@Option(names={"--port"},
 			defaultValue="${env:CONVEX_PORT:-"+Constants.DEFAULT_PEER_PORT+"}",
-			description="Port number to connect to a peer. Defaulting to: ${DEFAULT-VALUE}")
+			description="Port number to connect to host peer. Defaulting to: ${DEFAULT-VALUE}")
 	private Integer port;
 
 	@Option(names={"--host"},
 		defaultValue="${env:CONVEX_HOST:-"+Constants.HOSTNAME_PEER+"}",
-		description="Hostname for remote peer connection. Defaulting to: ${DEFAULT-VALUE}")
+		description="Hostname for remote peer connection. Can specify with CONVEX_HOST. Defaulting to: ${DEFAULT-VALUE}")
 	private String hostname;
 
 	/**
 	 * Connects to a remote peer
 	 * 
-	 * @return
-	 * @throws IOException
-	 * @throws TimeoutException
+	 * @return Convex connection instance
 	 */
-	public convex.api.Convex connect()  {
+	public Convex connect()  {
 		if (port==null) port=convex.core.Constants.DEFAULT_PEER_PORT;
 		if (hostname==null) hostname=convex.cli.Constants.HOSTNAME_PEER;
 		InetSocketAddress sa=new InetSocketAddress(hostname,port);
@@ -39,7 +37,7 @@ public class RemotePeerMixin extends AMixin {
 			
 			return c;
 		} catch (ConnectException ce) {
-			throw new CLIError("Cannot connect to: "+sa,ce);
+			throw new CLIError("Cannot connect to host: "+sa,ce);
 		} catch (TimeoutException e) {
 			throw new CLIError("Timeout while attempting to connect to peer: "+hostname,e);
 		} catch (IOException e) {

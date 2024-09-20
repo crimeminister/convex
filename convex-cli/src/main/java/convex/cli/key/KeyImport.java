@@ -11,10 +11,12 @@ import convex.core.crypto.BIP39;
 import convex.core.crypto.PEMTools;
 import convex.core.data.ABlob;
 import convex.core.data.Blobs;
+import convex.core.exceptions.BadFormatException;
 import convex.core.util.FileUtils;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.ParentCommand;
+import picocli.CommandLine.ScopeType;
 
 
 /**
@@ -47,6 +49,12 @@ public class KeyImport extends AKeyCommand {
 	@Option(names={"--type"},
 			description="Type of file imported. Supports: pem, seed, bip39. Will attempt to autodetect unless strict security is enabled")
 	private String type;
+	
+	@Option(names = { "-p","--keypass" }, 
+			defaultValue = "${env:CONVEX_KEY_PASSWORD}", 
+			scope = ScopeType.INHERIT, 
+			description = "Key pair password for imported key. Can specify with CONVEX_KEY_PASSWORD.")
+	protected char[] keyPassword;
 
 	/**
 	 * Import key pair
@@ -74,7 +82,7 @@ public class KeyImport extends AKeyCommand {
 				informError("Not permitted to infer key import type in strict mode");
 				return null;
 			}
-			inform("No import file type specified, attempting to auto-detect");
+			inform("No import type specified, attempting to auto-detect");
 			
 			if (hex!=null) {
 				if (hex.count()==AKeyPair.SEED_LENGTH) {
@@ -107,7 +115,7 @@ public class KeyImport extends AKeyCommand {
 			
 			try {
 				keyPair = PEMTools.decryptPrivateKeyFromPEM(importText, importPassphrase.toCharArray());
-			} catch (Exception e) {
+			} catch (BadFormatException e) {
 				throw new CLIError(ExitCodes.DATAERR,"Cannot decode PEM. File may be corrupt or wrong passphrase used.",e);
 			}
 		}
@@ -116,16 +124,21 @@ public class KeyImport extends AKeyCommand {
 	}
 	
 	@Override
-	public void run() {
+	public void execute() {
 		// Import the key pair in requested format
 		AKeyPair keyPair=importKeyPair();
 		if (keyPair==null) return; // returning without failure, presumably usage to show or otherwise cancelled
 		
+		// Get password for key
+		if (keyPassword==null) {
+			keyPassword=readPassword("Enter password for imported key: ");
+		}
+
 		// Finally write to store
-		char[] keyPassword=keyMixin.getKeyPassword();
-		if (storeMixin.loadKeyStore()==null) {
+		if (storeMixin.ensureKeyStore()==null) {
 			throw new CLIError("Key store specified for import does not exist");
 		}
+		
 		storeMixin.addKeyPairToStore(keyPair,keyPassword);
 		Arrays.fill(keyPassword, 'x');
 		storeMixin.saveKeyStore();	

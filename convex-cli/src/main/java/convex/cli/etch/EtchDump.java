@@ -1,11 +1,14 @@
 package convex.cli.etch;
 
+import java.io.IOException;
+
+import convex.cli.CLIError;
 import convex.cli.Main;
 import convex.core.data.ACell;
 import convex.core.data.type.AType;
 import convex.core.lang.RT;
-import etch.EtchStore;
-import etch.EtchUtils.EtchCellVisitor;
+import convex.etch.EtchStore;
+import convex.etch.EtchUtils.EtchCellVisitor;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
@@ -37,10 +40,13 @@ public class EtchDump extends AEtchCommand{
 	}
 
 	@Override
-	public void run() {
+	public void execute() {
 		cli().setOut(outputFilename);
 		
-		EtchStore store=store();
-		store.getEtch().visitIndex(new DumpVisitor(cli()));
+		try (EtchStore store=store()) {
+			store.getEtch().visitIndex(new DumpVisitor(cli()));
+		} catch (IOException e) {
+			throw new CLIError("IO Error traversing Etch store",e);
+		}
 	}
 }

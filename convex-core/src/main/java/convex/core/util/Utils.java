@@ -9,11 +9,12 @@ import java.io.InputStreamReader;
 import java.lang.reflect.Array;
 import java.math.BigInteger;
 import java.net.InetSocketAddress;
+import java.net.MalformedURLException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -66,36 +67,6 @@ public class Utils {
 		return new BigInteger(data);
 	}
 	
-	/**
-	 * Create a path if necessary to a File object. Interprets leading "~" as user home directory.
-	 *
-	 * @param file File object to see if the path part of the filename exists, if not then create it.
-	 * @return target File, as an absolute path, with parent directories created recursively if needed
-	 * @throws IOException In case of IO Error
-	 */
-	public static File ensurePath(File file) throws IOException {
-		// Get path of parent directory, using absolute path (may be current working directory user.dir)
-		File target=getPath(file.getPath());
-		String dirPath=target.getParent();
-		Files.createDirectories(Path.of(dirPath));
-		return target;
-	}
-	
-	/**
-	 * Gets the absolute path File for a given file name. Interprets leading "~" as user home directory.
-	 * @param path Path as a string
-	 * @return File representing the given path
-	 */
-	public static File getPath(String path) {
-		if (path!=null && path.startsWith("~")) {
-			path=System.getProperty("user.home")+path.substring(1);
-			return new File(path);
-		} else {
-			path=new File(path).getAbsolutePath();
-			return new File(path);
-		}
-	}
-
 	/**
 	 * Converts an int to a hex string e.g. "80cafe80"
 	 *
@@ -751,8 +722,7 @@ public class Utils {
 	
 
 	public static InputStream getResourceAsStream(String path) throws IOException {
-		ClassLoader classLoader = ClassLoader.getSystemClassLoader();
-		InputStream inputStream = classLoader.getResourceAsStream(path);
+		InputStream inputStream = Utils.class.getResourceAsStream(path);
 		if (inputStream == null) throw new IOException("Resource not found: " + path);
 		return inputStream;
 	}
@@ -772,7 +742,7 @@ public class Utils {
 			}
 			// StandardCharsets.UTF_8.name() > JDK 7
 			return result.toString("UTF-8");
-		} catch (Throwable t) {
+		} catch (IOException t) {
 			return null;
 		}
 	}
@@ -910,7 +880,7 @@ public class Utils {
 		} else if (v instanceof Character) {
 			sb.append(((Character)v).toString());
 		} else {
-			throw new Error("Can't print: " + Utils.getClass(v));
+			throw new IllegalArgumentException("Can't print: " + Utils.getClass(v));
 		}
 	}
 
@@ -946,7 +916,7 @@ public class Utils {
 			URL url=new URI(s).toURL();
 			InetSocketAddress sa= toInetSocketAddress(url);
 			return sa;
-		} catch (Exception ex) {
+		} catch (URISyntaxException | MalformedURLException | IllegalArgumentException ex) {
 			// Try to parse as host:port
 			int colon = s.lastIndexOf(':');
 			if (colon < 0) return null;
@@ -955,8 +925,9 @@ public class Utils {
 				int port = Utils.toInt(s.substring(colon + 1)); // after last colon
 				InetSocketAddress addr = new InetSocketAddress(hostName, port);
 				return addr;
-			} catch (Exception e) {
-				return null;
+			} catch (SecurityException e) {
+				// shouldn't happen?
+				throw Utils.sneakyThrow(e);
 			}
 		}
 	}
@@ -985,7 +956,7 @@ public class Utils {
 	 */
 	public static <T> T[] filterArray(T[] arr, Predicate<T> predicate) {
 		if (arr.length <= 32) return filterSmallArray(arr, predicate);
-		throw new Error("Can't Filter large arrays");
+		throw new IllegalArgumentException("Can't Filter large arrays");
 	}
 
 	/**
@@ -1094,6 +1065,10 @@ public class Utils {
 	 */
 	@SuppressWarnings("unchecked")
 	public static <T extends Throwable> T sneakyThrow(Throwable t) throws T {
+		// Preserve interrupt in this case
+		if (t instanceof InterruptedException) {
+			Thread.currentThread().interrupt();
+		}
 		throw (T) t;
 	}
 
@@ -1193,8 +1168,9 @@ public class Utils {
 	 * @param timeoutMillis Timeout interval
 	 * @param test Test to run until true
 	 * @return True if the operation timed out, false otherwise
+	 * @throws InterruptedException if interrupted while awaiting timeout
 	 */
-	public static boolean timeout(int timeoutMillis, Supplier<Boolean> test) {
+	public static boolean timeout(int timeoutMillis, Supplier<Boolean> test) throws InterruptedException {
 		long start = getTimeMillis();
 		long end=start+timeoutMillis;
 		long now = start;
@@ -1204,17 +1180,12 @@ public class Utils {
 			if (test.get()) return false;
 
 			// test failed, so sleep
-			try {
-				// compute sleep time
-				long nextInterval=(long) ((now - start) * 0.3 + 1);
-				long sleepTime=Math.min(nextInterval, end-now);
-				if (sleepTime<0L) return true;
-				Thread.sleep(sleepTime);
-			} catch (InterruptedException e) {
-				// ignore? Probably shouldn't happen though
-				// But should set interrupt flag as below;
-				Thread.currentThread().interrupt();
-			}
+			// compute sleep time
+			long nextInterval=(long) ((now - start) * 0.3 + 1);
+			long sleepTime=Math.min(nextInterval, end-now);
+			if (sleepTime<0L) return true;
+			Thread.sleep(sleepTime);
+
 			now = getTimeMillis();
 		}
 	}
@@ -1466,6 +1437,12 @@ public class Utils {
 
 	public static long longByteAt(long value,long i) {
 		return 0xFF&(value >> ((ALongBlob.LENGTH - i - 1) * 8));
+	}
+
+	public static String getVersion() {
+		String v= Utils.class.getPackage().getImplementationVersion();
+		if (v==null) v="Unlabelled SNAPSHOT";
+		return v;
 	}
 
 

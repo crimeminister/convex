@@ -21,6 +21,7 @@ import convex.core.data.AccountKey;
 import convex.core.data.Address;
 import convex.core.data.PeerStatus;
 import convex.core.text.Text;
+import convex.etch.EtchStore;
 import convex.gui.client.ConvexClient;
 import convex.gui.components.BaseImageButton;
 import convex.gui.components.BaseListComponent;
@@ -35,7 +36,6 @@ import convex.gui.utils.Toolkit;
 import convex.gui.wallet.WalletApp;
 import convex.peer.ConnectionManager;
 import convex.peer.Server;
-import etch.EtchStore;
 import net.miginfocom.swing.MigLayout;
 
 @SuppressWarnings("serial")
@@ -45,12 +45,8 @@ public class PeerComponent extends BaseListComponent {
 	JTextArea description;
 
 	public void launchPeerWindow(ConvexLocal peer) {
-		try {
-			PeerWindow pw = new PeerWindow(peer);
-			pw.run();
-		} catch (Exception e) {
-			// Ignore
-		}
+		PeerWindow pw = new PeerWindow(peer);
+		pw.run();
 	}
 
 	public void launchEtchWindow(ConvexLocal peer) {
@@ -78,9 +74,10 @@ public class PeerComponent extends BaseListComponent {
 		button.addActionListener(e -> {
 			launchPeerWindow(this.convex);
 		});
-		button.setToolTipText("Launch Peer management window");
+		button.setToolTipText("Launch Peer management window for this peer server");
 		add(button, "dock west");
 		
+		//////////////////////////////////
 		// Central area
 
 		JPanel centralPanel = new JPanel();
@@ -88,28 +85,32 @@ public class PeerComponent extends BaseListComponent {
 		
 		Server server=convex.getLocalServer();
 		AccountKey peerKey=server.getPeerKey();
-		Identicon identicon=new Identicon(peerKey);
-		centralPanel.add(identicon);
-		centralPanel.add(new CodeLabel("0x"+peerKey.toChecksumHex()),"span");
 		
-		description = new CodeLabel(getPeerDescription());
-		description.setFont(Toolkit.MONO_FONT);
-		description.setEditable(false);
-		description.setBorder(null);
-		description.setBackground(null);
-		centralPanel.add(description, "span 2");
-		add(centralPanel,"dock center");
-
-		// Setup popup menu for peer
+		{ // Identicon / peer key heading row
+			Identicon identicon=new Identicon(peerKey,Toolkit.IDENTICON_SIZE_LARGE);
+			centralPanel.add(identicon);
+			CodeLabel peerKeyLabel=(new CodeLabel("0x"+peerKey.toChecksumHex()));
+			peerKeyLabel.setToolTipText("Public key of the peer.");
+			centralPanel.add(peerKeyLabel,"span");
+		}
+		
+		{ // Description of peer status
+			description = new CodeLabel(getPeerDescription());
+			description.setFont(Toolkit.MONO_FONT);
+			description.setEditable(false);
+			description.setBorder(null);
+			description.setBackground(null);
+			centralPanel.add(description, "span 2");
+			add(centralPanel,"dock center");
+		}
+		
+		//////////////////////////////////
+		// Settings Popup menu for peer
 		JPopupMenu popupMenu = new JPopupMenu();
 
 		JMenuItem closeButton = new JMenuItem("Shutdown Peer",Toolkit.menuIcon(0xe8ac));
 		closeButton.addActionListener(e -> {
-			try {
-				server.shutdown();
-			} catch (Exception e1) {
-				// ignore
-			}
+			server.shutdown();
 		});
 		popupMenu.add(closeButton);
 
@@ -137,17 +138,17 @@ public class PeerComponent extends BaseListComponent {
 		replButton.addActionListener(e -> launchPeerWindow(this.convex));
 		popupMenu.add(replButton);
 		
-		JMenuItem walletButton = new JMenuItem("Open Wallet",Toolkit.menuIcon(0xe850));
+		JMenuItem walletButton = new JMenuItem("Open controller Wallet",Toolkit.menuIcon(0xe850));
 		walletButton.addActionListener(e -> {
 			new WalletApp(convex).run();
 		});
 		popupMenu.add(walletButton);
 
 
-
 		DropdownMenu dm = new DropdownMenu(popupMenu);
 		add(dm, "dock east");
 
+		////////////////////////////////////////////////
 		// Block view at bottom
 		
 		JPanel blockView = new BlockViewComponent(convex);
@@ -164,6 +165,8 @@ public class PeerComponent extends BaseListComponent {
 		}
 		add(blockView, "dock south");
 
+		
+		// Final stuff
 		updateDescription();
 	}
 
@@ -190,7 +193,6 @@ public class PeerComponent extends BaseListComponent {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
-		
 	}
 	
 	public String getPeerDescription() {
@@ -201,23 +203,24 @@ public class PeerComponent extends BaseListComponent {
 			AccountKey paddr=server.getPeerKey();
 			// sb.append("0x"+paddr.toChecksumHex()+"\n");
 			if (server.isLive()) {
-				sb.append("Local peer on port: " + server.getPort() + " with store "+server.getStore().shortName()+"\n");
+				sb.append("Local peer on port: " + server.getPort() + "\n");
+				// before:  + " with store "+server.getStore().shortName()+"\n"
 			} else {
 				sb.append("Inactive Peer\n");
 			}
 			PeerStatus ps=state.getPeer(paddr);
 			if (ps!=null) {
 				sb.append("Controller: "+ps.getController());
-				sb.append("    ");
-				sb.append("Peer Stake: "+Text.toFriendlyBalance(ps.getPeerStake()));
-				sb.append("    ");
+				sb.append("   ");
+				sb.append("Stake: "+Text.toFriendlyBalance(ps.getPeerStake()));
+				sb.append("   ");
 				sb.append("Delegated Stake: "+Text.toFriendlyBalance(ps.getDelegatedStake()));
-				sb.append("    ");
+				sb.append("   ");
 			} else {
 				sb.append("Not currently a registered peer    ");
 			}
 			ConnectionManager cm=server.getConnectionManager();
-			sb.append("Connections: "+cm.getConnectionCount());				
+			sb.append("C: "+cm.getConnectionCount());				
 		} else if (convex != null) {
 			sb.append(convex.toString());
 		} else {

@@ -1,13 +1,14 @@
 package convex.cli;
 
 import java.io.Console;
-import java.io.IOException;
 
 import convex.cli.output.Coloured;
 import convex.cli.output.RecordOutput;
 import convex.core.Result;
 import convex.core.util.Utils;
 import picocli.CommandLine;
+import picocli.CommandLine.Help;
+import picocli.CommandLine.Help.Ansi;
 
 /**
  * Base class for Convex CLI command components and mixins
@@ -25,16 +26,32 @@ public abstract class ACommand implements Runnable {
 		cl.setUsageHelpAutoWidth(true);
 		cl.setUsageHelpWidth(100);
 		cl.setUsageHelpLongOptionsMaxWidth(40);
-		cl.usage(System.out);
+		cl.usage(cli().commandLine().getOut(),Help.defaultColorScheme(Ansi.ON));
 	}
 	
 	public CommandLine commandLine() {
 		return cli().commandLine;
 	}
 
+	@Override
+	public final void run() {
+		try {
+			execute();
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new CLIError(ExitCodes.TEMPFAIL,"Command interrupted");
+		}
+	}
+	
+	/**
+	 * Execute this command. Subclasses should override this to provide specific command functionality
+	 * @throws InterruptedException
+	 */
+	protected abstract void execute() throws InterruptedException;
+
 	/**
 	 * Checks if the CLI is in strict (paranoid) mode
-	 * @return
+	 * @return true iff in strict mode
 	 */
 	public boolean isParanoid() {
 		return cli().isParanoid();
@@ -45,10 +62,9 @@ public abstract class ACommand implements Runnable {
 			throw new CLIError("STRICT SECURITY: " + message);
 	}
 
-	
-	protected void inform(int level, String message) {
+	protected void inform(int level, String formattedMessage) {
 		if (verbose()<level) return;
-		commandLine().getErr().println(message);
+		commandLine().getErr().println(formattedMessage);
 	}
 
 	/**
@@ -56,7 +72,7 @@ public abstract class ACommand implements Runnable {
 	 * @return
 	 */
 	protected int verbose() {
-		return cli().verbose;
+		return cli().verbose();
 	}
 	
 	public void println(String s) {
@@ -79,7 +95,7 @@ public abstract class ACommand implements Runnable {
 
 	/**
 	 * Checks if the CLI is in interactive mode (user input permitted)
-	 * @return
+	 * @return True if in interactive mode
 	 */
 	public boolean isInteractive() {
 		return cli().isInteractive();
@@ -87,8 +103,8 @@ public abstract class ACommand implements Runnable {
 	
 	/**
 	 * Prompt the user for String input
-	 * @param message
-	 * @return
+	 * @param message Message to prompt user with
+	 * @return String input from user
 	 */
 	public String prompt(String message) {
 		if (!isInteractive()) throw new CLIError("Can't prompt for user input in non-interactive mode: "+message);
@@ -99,6 +115,7 @@ public abstract class ACommand implements Runnable {
 	}
 	
 	public char[] readPassword(String prompt) {
+		// For some reason using this stops CTRL-C from being subsequently handled :-(
 		Console c = System.console();
 		if (c == null) {
 			if (verbose()>=3) {
@@ -109,30 +126,11 @@ public abstract class ACommand implements Runnable {
 		}
 		
 		if (isColoured()) prompt = Coloured.blue(prompt);
-		return c.readPassword(prompt);
+		char[] pass= c.readPassword(prompt);
+		c.flush();
+		return pass;
 	}
 	
-	/**
-	 * Prompt the user for a Y/N answer
-	 * @param string
-	 * @return
-	 */
-	public boolean question(String string) {
-		if (!isInteractive()) throw new CLIError("Can't ask user question in non-interactive mode: "+string);
-		try {
-			if (isColoured()) string=Coloured.blue(string);
-			inform(0,string);
-			char c=(char)System.in.read(); // Doesn't work because console is not in non-blocking mode?
-			if (c==-1) throw new CLIError("Unexpected end of input stream when expecting a keypress");
-			if (Character.toLowerCase(c)=='y') return true;
-		} catch (IOException e) {
-			throw new CLIError("Unexpected error getting console input: "+e);
-		}
-		return false;
-	}
-	
-
-
 	/**
 	 * Checks if the CLI should output ANSI colours
 	 * @return
@@ -140,7 +138,6 @@ public abstract class ACommand implements Runnable {
 	protected boolean isColoured() {
 		return cli().isColoured();
 	}
-	
 
 	public void informSuccess(String message) {
 		if (isColoured()) message=Coloured.green(message);

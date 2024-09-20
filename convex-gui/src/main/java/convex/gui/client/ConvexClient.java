@@ -5,6 +5,7 @@ import java.awt.Dimension;
 import java.io.IOException;
 import java.util.concurrent.TimeoutException;
 
+import javax.swing.JFrame;
 import javax.swing.JPanel;
 import javax.swing.JTabbedPane;
 
@@ -14,8 +15,9 @@ import org.slf4j.LoggerFactory;
 import convex.api.Convex;
 import convex.gui.components.AbstractGUI;
 import convex.gui.components.ConnectPanel;
+import convex.gui.keys.KeyRingPanel;
 import convex.gui.panels.REPLPanel;
-import convex.gui.utils.Toolkit;
+import net.miginfocom.swing.MigLayout;
 
 /**
  * A Client application for the Convex Network.
@@ -28,8 +30,6 @@ public class ConvexClient extends AbstractGUI {
 	private static final Logger log = LoggerFactory.getLogger(ConvexClient.class.getName());
 
 	public static long maxBlock = 0;
-	
-	static boolean clientMode=false;
 
 	protected Convex convex=null;
 
@@ -41,16 +41,15 @@ public class ConvexClient extends AbstractGUI {
 	 */
 	public static void main(String[] args) throws IOException, TimeoutException {
 		log.info("Starting Convex Client");
-		clientMode=true;
-		
-		// call to set up Look and Feel
-		Toolkit.init();
 
 		Convex convex=ConnectPanel.tryConnect(null,"Connect to Convex");
 		if (convex==null) {
 			System.exit(1);
 		}
-		new ConvexClient(convex).run();
+		ConvexClient gui=new ConvexClient(convex);
+		gui.run();
+		gui.waitForClose();
+		System.exit(0);
 	}
 
 	public JTabbedPane tabs = new JTabbedPane();
@@ -68,6 +67,7 @@ public class ConvexClient extends AbstractGUI {
 		this.add(tabs, BorderLayout.CENTER);
 
 		tabs.add("REPL", replPanel);
+		tabs.add("KeyRing", new KeyRingPanel());
 		
 		// walletPanel.addWalletEntry(WalletEntry.create(convex.getAddress(), convex.getKeyPair()));
 		
@@ -86,6 +86,12 @@ public class ConvexClient extends AbstractGUI {
 			}
 		}
 		System.err.println("Missing tab: " + title);
+	}
+
+	@Override
+	public void setupFrame(JFrame frame) {
+		frame.getContentPane().setLayout(new MigLayout());
+		frame.getContentPane().add(this,"dock center");
 	}
 
 

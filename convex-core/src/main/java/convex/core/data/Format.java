@@ -39,6 +39,8 @@ import convex.core.util.Bits;
 import convex.core.util.Trees;
 import convex.core.util.Utils;
 
+import convex.core.exceptions.Panic;
+
 /**
  * Static utility class for message format encoding
  *
@@ -839,7 +841,7 @@ public class Format {
 		if (result==null) return null; // null value OK at top level
 		
 		int rl=Utils.checkedInt(result.getEncodingLength());
-		if (rl==ml) return result; // Already complete
+		if (rl==ml) return result; // Fast path if already complete
 		
 		// read remaining cells
 		HashMap<Hash,ACell> hm=new HashMap<>();
@@ -1024,7 +1026,7 @@ public class Format {
 			if (ix>0) ix=Format.writeVLCCount(msg,ix,elen);
 			ix=enc.getBytes(msg, ix);
 		}
-		if (ix!=ml) throw new Error("Bad message length expected "+ml+" but was: "+ix);
+		if (ix!=ml) throw new Panic("Bad message length expected "+ml+" but was: "+ix);
 		return Blob.wrap(msg);
 	}
 
@@ -1059,7 +1061,7 @@ public class Format {
 			
 			ix=enc.getBytes(msg,ix);
 		}
-		if (ix!=ml) throw new Error("Bad message length expected "+ml+" but was: "+ix);
+		if (ix!=ml) throw new Panic("Bad message length expected "+ml+" but was: "+ix);
 		
 		return Blob.wrap(msg);
 	}

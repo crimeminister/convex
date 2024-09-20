@@ -684,7 +684,9 @@ public class CoreTest extends ACVMTest {
 		assertNotNull(log);
 
 		assertEquals(1,log.count()); // one log entry only
-		assertEquals(v0,log.get(0).get(1));
+		AVector<ACell> entry=log.get(0);
+		assertEquals(Log.ENTRY_LENGTH,entry.size()); // should be two entries now
+		assertEquals(v0,entry.get(Log.P_VALUES));
 
 		// do second log in same context
 		AVector<ACell> v1=Vectors.of(3L, 4L);
@@ -692,8 +694,8 @@ public class CoreTest extends ACVMTest {
 		log=c.getLog();
 
 		assertEquals(2,log.count()); // should be two entries now
-		assertEquals(v0,log.get(0).get(1));
-		assertEquals(v1,log.get(1).get(1));
+		assertEquals(v0,log.get(0).get(Log.P_VALUES));
+		assertEquals(v1,log.get(1).get(Log.P_VALUES));
 	}
 
 
@@ -711,13 +713,13 @@ public class CoreTest extends ACVMTest {
 		AVector<AVector<ACell>> log = c.getLog();
 
 		assertEquals(1,log.count()); // should be one entry by the actor
-		assertEquals(v0,log.get(0).get(1));
+		assertEquals(v0,log.get(0).get(Log.P_VALUES));
 
 		// call actor function which rolls back - should also roll back log
 		c=step(c,"(call "+actor+" (non-event 3 4))");
 		log = c.getLog();
 		assertEquals(1,log.count()); // should be one entry by the actor
-		assertEquals(v0,log.get(0).get(1));
+		assertEquals(v0,log.get(0).get(Log.P_VALUES));
 
 	}
 
@@ -4209,6 +4211,7 @@ public class CoreTest extends ACVMTest {
 		// set! fails on undeclared values
 		assertUndeclaredError(step("(set! not-declared 1)"));
 		assertUndeclaredError(step("(do (set! a 13) a)"));
+		assertUndeclaredError(step("(let [foo 3] (set! a 13) a)"));
 
 		// set! works in a function body
 		assertEquals(35L,evalL("(let [a 13 f (fn [x] (set! a 25) (+ x a))] (f 10))"));
@@ -4242,6 +4245,9 @@ public class CoreTest extends ACVMTest {
 			// def within let does affect environment
 			assertCVMEquals(3L, eval(ctx,"(do (let [a 2] (def a 3)) a)"));
 		}
+		
+		// Set on a earlier definition
+		assertSame(CVMLong.ZERO, eval("(do (def a 3) (set! a 0) a)"));
 		
 		// Bad types
 		assertSyntaxError(step("(set! :a 2)"));
@@ -4548,7 +4554,7 @@ public class CoreTest extends ACVMTest {
 		BlockResult br = s.applyBlock(sb);
 		State s2 = br.getState();
 
-		Context ctx2 = Context.createInitial(s2, HERO, INITIAL_JUICE);
+		Context ctx2 = Context.create(s2, HERO, INITIAL_JUICE);
 		assertEquals(2L, evalL(ctx2, "a"));
 	}
 

@@ -4,6 +4,7 @@ import convex.core.Coin;
 import convex.core.Constants;
 import convex.core.ErrorCodes;
 import convex.core.ResultContext;
+import convex.core.SourceCodes;
 import convex.core.State;
 import convex.core.data.ACell;
 import convex.core.data.AHashMap;
@@ -29,16 +30,18 @@ import convex.core.data.prim.CVMLong;
 import convex.core.data.type.AType;
 import convex.core.data.util.BlobBuilder;
 import convex.core.init.Init;
-import convex.core.lang.impl.AExceptional;
-import convex.core.lang.impl.ATrampoline;
+import convex.core.lang.exception.AExceptional;
+import convex.core.lang.exception.AThrowable;
+import convex.core.lang.exception.ATrampoline;
+import convex.core.lang.exception.ErrorValue;
+import convex.core.lang.exception.Failure;
+import convex.core.lang.exception.HaltValue;
+import convex.core.lang.exception.RecurValue;
+import convex.core.lang.exception.ReducedValue;
+import convex.core.lang.exception.ReturnValue;
+import convex.core.lang.exception.RollbackValue;
+import convex.core.lang.exception.TailcallValue;
 import convex.core.lang.impl.CoreFn;
-import convex.core.lang.impl.ErrorValue;
-import convex.core.lang.impl.HaltValue;
-import convex.core.lang.impl.RecurValue;
-import convex.core.lang.impl.Reduced;
-import convex.core.lang.impl.ReturnValue;
-import convex.core.lang.impl.RollbackValue;
-import convex.core.lang.impl.TailcallValue;
 import convex.core.util.Economics;
 import convex.core.util.Errors;
 
@@ -101,7 +104,8 @@ public class Context {
 	private ChainState chainState;
 
 	/**
-	 * Local log is a [vector of [address values] entries]
+	 * Local log is an ordered [vector of [address caller scope location [values ...] ] entries
+	 * See CAD33 for details
 	 */
 	private AVector<AVector<ACell>> log;
 	private CompilerState compilerState;
@@ -264,19 +268,19 @@ public class Context {
 	}
 
 	/**
-	 * Creates an execution context with a default actor address.
+	 * Creates an CVM execution context
 	 *
-	 * Useful for Testing
+	 * Useful for Testing or local execution
 	 *
 	 * @param state State to use for this Context
 	 * @return Fake context
 	 */
-	public static Context createFake(State state) {
-		return createFake(state,Address.ZERO);
+	public static Context create(State state) {
+		return create(state,Address.ZERO);
 	}
 
 	/**
-	 * Creates a "fake" execution context for the given address.
+	 * Creates a execution context for the given address.
 	 *
 	 * Not valid for use in real transactions, but can be used to
 	 * compute stuff off-chain "as-if" the actor made the call.
@@ -285,13 +289,13 @@ public class Context {
 	 * @param origin Origin address to use
 	 * @return Fake context
 	 */
-	public static Context createFake(State state, Address origin) {
+	public static Context create(State state, Address origin) {
 		if (origin==null) throw new IllegalArgumentException("Null address!");
 		return create(state,0,Constants.MAX_TRANSACTION_JUICE,EMPTY_BINDINGS,NO_RESULT,ZERO_DEPTH,origin,null,origin, ZERO_OFFER, DEFAULT_LOG,null);
 	}
 
 	/**
-	 * Creates an initial execution context with the specified actor as origin, and reserving the appropriate
+	 * Creates an execution context with the specified actor as origin, and reserving the appropriate
 	 * amount of juice.
 	 *
 	 * Juice reserve is extracted from the actor's current balance.
@@ -301,11 +305,11 @@ public class Context {
 	 * @param juiceLimit Initial juice requested for Context
 	 * @return Initial execution context with reserved juice.
 	 */
-	public static Context createInitial(State state, Address origin,long juiceLimit) {
+	public static Context create(State state, Address origin,long juiceLimit) {
 		AccountStatus as=state.getAccount(origin);
 		if (as==null) {
 			// no account
-			return Context.createFake(state).withError(ErrorCodes.NOBODY);
+			return Context.create(state).withError(ErrorCodes.NOBODY);
 		}
 
 		return create(state,0,juiceLimit,EMPTY_BINDINGS,NO_RESULT,ZERO_DEPTH,origin,null,origin,INITIAL_JUICE,DEFAULT_LOG,null);
@@ -347,9 +351,11 @@ public class Context {
 		long memorySpend=0L; // usually zero
 
 		if (juiceFailure) {
-			// consume whole balance
+			// consume whole balance, reset state
 			juiceFees=balance;
+			state=initialState;
 		} else if (!rc.context.isExceptional()) {
+			// Transaction appears to have succeeded, and will do unless memory accounting fails
 			// do memory accounting as long as we didn't fail for any other reason
 			// compute memory delta (memUsed) and store in ResultContext
 			long memUsed=state.getMemorySize()-initialState.getMemorySize();
@@ -387,6 +393,11 @@ public class Context {
 				long allowanceCredit=-memUsed;
 				account=account.withMemory(allowance+allowanceCredit);
 			}
+		} else {
+			// Transaction failed for reason other than juice usage exceeding balance
+			AExceptional ex=rc.context.getExceptional();
+			// It's user :CODE that caused the error if catchable, otherwise :CVM source 
+			rc.source=(ex.isCatchable())?SourceCodes.CODE:SourceCodes.CVM;
 		}
 
 		// Compute total fees
@@ -411,8 +422,10 @@ public class Context {
 		Context rctx=this.withState(state);
 		if (juiceFailure) {
 			rctx=rctx.withError(ErrorCodes.JUICE, "Insuffienct balance to cover juice fees of "+rc.getJuiceFees());
+			rc.source=SourceCodes.CVM;
 		} else if (memoryFailure) {
 			rctx=rctx.withError(ErrorCodes.MEMORY, "Unable to allocate additional memory required for transaction ("+rc.memUsed+" bytes)");
+			rc.source=SourceCodes.CVM;
 		}
 		return rctx;
 	}
@@ -876,7 +889,7 @@ public class Context {
 	public Context withJuiceError() {
 		// set juice to zero. Can't consume more that we have!
 		this.juice=juiceLimit;
-		return withError(ErrorCodes.JUICE,"Out of juice!");
+		return withException(Failure.juice());
 	}
 
 	public Context withException(AExceptional exception) {
@@ -971,7 +984,7 @@ public class Context {
 	}
 	
 	/**
-	 * Executes a form at the top level. Handles top level halt, recur and return.
+	 * Executes a form at the top level in the current account. Handles top level halt, recur and return.
 	 *
 	 * Returning an updated context containing the result or an exceptional error.
 	 *
@@ -1038,9 +1051,9 @@ public class Context {
 				return ctx.withResult(val);
 			}
 
-			if (v instanceof ErrorValue) {
+			if (v instanceof AThrowable) {
 				if (fn instanceof CoreFn) {
-					ErrorValue ev=(ErrorValue)v;
+					AThrowable ev=(AThrowable)v;
 					ev.addTrace("In core function: "+RT.str(fn)); // TODO: Core.getCoreName() ?
 				}
 			}
@@ -1781,15 +1794,19 @@ public class Context {
 				rv=((ReturnValue<?>)ex).getValue();
 			} else {
 				rollback=true;
-				String msg;
-				if (ex instanceof ATrampoline) {
-					msg="attempt to recur or tail call outside of a function body";
-				} if (ex instanceof Reduced) {
-					msg="reduced used outside of a reduce operation";
+				if (ex instanceof Failure) {
+					rv=ex;
 				} else {
-					msg="Unhandled Exception with Code:"+ex.getCode();
+					String msg;
+					if (ex instanceof ATrampoline) {
+						msg="attempt to recur or tail call outside of a function body";
+					} if (ex instanceof ReducedValue) {
+						msg="reduced used outside of a reduce operation";
+					} else {
+						msg="Unhandled Exception with Code:"+ex.getCode();
+					}
+					rv=ErrorValue.create(ErrorCodes.EXCEPTION, msg);
 				}
-				rv=ErrorValue.create(ErrorCodes.EXCEPTION, msg);
 			}
 		} else {
 			rv=returnContext.getResult();
@@ -2182,7 +2199,7 @@ public class Context {
 	 * @return Result type of new Context
 	 */
 	public Context forkWithAddress(Address newAddress) {
-		return createFake(getState(),newAddress);
+		return create(getState(),newAddress);
 	}
 
 	/**
@@ -2200,11 +2217,12 @@ public class Context {
 	 */
 	public Context appendLog(AVector<ACell> values) {
 		Address addr=getAddress();
+		ACell scope=getScope();
 		AVector<AVector<ACell>> log=this.log;
 		if (log==null) {
 			log=Vectors.empty();
 		}
-		AVector<ACell> entry = Vectors.of(addr,values);
+		AVector<ACell> entry = Vectors.of(addr,scope,null,values);
 		log=log.conj(entry);
 
 		this.log=log;

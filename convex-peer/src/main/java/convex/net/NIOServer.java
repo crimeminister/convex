@@ -22,6 +22,7 @@ import convex.core.Constants;
 import convex.core.exceptions.BadFormatException;
 import convex.core.store.Stores;
 import convex.core.util.Utils;
+import convex.net.impl.HandlerException;
 import convex.peer.Config;
 import convex.peer.Server;
 
@@ -45,7 +46,6 @@ public class NIOServer implements Closeable {
 	protected static final long PRUNE_TIMEOUT = 60000;
 
 	private ServerSocketChannel ssc = null;
-
 
 	private Selector selector = null;
 
@@ -86,8 +86,9 @@ public class NIOServer implements Closeable {
 		ssc.socket().setReuseAddress(true);
 
 		bindAddress = (bindAddress == null) ? "::" : bindAddress;
-		InetSocketAddress address;
 		
+		// Bind to a port
+		InetSocketAddress address;		
 		if (port==0) {
 			try {
 				address = new InetSocketAddress(bindAddress, Constants.DEFAULT_PEER_PORT);
@@ -102,9 +103,12 @@ public class NIOServer implements Closeable {
 			ssc.bind(address);
 		}
 		
+		// Find out which port we actually bound to
 		address = (InetSocketAddress) ssc.getLocalAddress();
-		ssc.configureBlocking(false);
 		port = ssc.socket().getLocalPort();
+
+		// change to bnon-blocking mode
+		ssc.configureBlocking(false);
 
 		// Register for accept. Do this before selection loop starts and
 		// before we return from launch!
@@ -115,7 +119,7 @@ public class NIOServer implements Closeable {
 		running = true;
 
 		Thread selectorThread = new Thread(selectorLoop, "NIO Server loop on port: " + port);
-		selectorThread.setDaemon(true);
+		selectorThread.setDaemon(true); // daemon thread so it doesn't stop shutdown
 		selectorThread.start();
 		log.debug("NIO server started on port {}", port);
 	}
@@ -132,8 +136,9 @@ public class NIOServer implements Closeable {
 			// Use the store configured for the owning server.
 			Stores.setCurrent(server.getStore());
 			try {
-
-				while (running) {
+				// loop unless we are interrupted
+				while (running && !Thread.currentThread().isInterrupted()) {
+					
 					selector.select(SELECT_TIMEOUT);
 					
 
@@ -160,10 +165,7 @@ public class NIOServer implements Closeable {
 						}  catch (CancelledKeyException e) {
 							log.debug("Cancelled key: {}", e.getMessage());
 							key.cancel();
-						} catch (Throwable e) {
-							log.warn("Unexpected Exception, canceling key:", e);
-							key.cancel();
-						}
+						} 
 					}
 					
 					long ts=System.currentTimeMillis();
@@ -172,11 +174,10 @@ public class NIOServer implements Closeable {
 						lastConnectionPrune=ts;
 					}
 
-					
 					// keys.clear();
 				}
 			} catch (IOException e) {
-				log.error("Unexpected IOException, terminating selector loop: ", e);
+				log.error("Unexpected IO Exception, terminating selector loop: ", e);
 			} finally {
 				try {
 					// close all client channels
@@ -284,6 +285,9 @@ public class NIOServer implements Closeable {
 			log.info("Cancelled connection: Bad data format from: {} message: {}", conn.getRemoteAddress(),
 					e.getMessage());
 			// TODO: blacklist peer?
+			key.cancel();
+		} catch (HandlerException e) {
+			log.warn("Unexpected exception in receive handler", e.getCause());
 			key.cancel();
 		}
 	}

@@ -237,11 +237,11 @@ public class Init {
 	private static State addStaticLibraries(State s) {
 
 		// At this point we have a raw initial State with no user or peer accounts
-		s = doActorDeploy(s, "convex/registry.cvx");
-		s = doActorDeploy(s, "convex/trust.cvx");
+		s = doActorDeploy(s, "/convex/core/registry.cvx");
+		s = doActorDeploy(s, "/convex/core/trust.cvx");
 
 		{ // Register core library now that registry exists
-			Context ctx = Context.createFake(s, INIT_ADDRESS);
+			Context ctx = Context.create(s, INIT_ADDRESS);
 			ctx = ctx.eval(Reader.read("(call *registry* (cns-update 'convex.core " + CORE_ADDRESS + "))"));
 						             
 			s = ctx.getState();
@@ -286,46 +286,46 @@ public class Init {
 		try {
 			@SuppressWarnings("unchecked")
 			AVector<AVector<ACell>> table = (AVector<AVector<ACell>>) Reader
-					.readResourceAsData("torus/genesis-currencies.cvx");
+					.readResourceAsData("/convex/torus/genesis-currencies.cvx");
 			for (AVector<ACell> row : table) {
 				s = doCurrencyDeploy(s, row);
 			}
 		} catch (IOException e) {
-			throw new Error("Failre reading source data for currencies",e);
+			throw new Error("Failure reading source data for currencies",e);
 		}
 		return s;
 	}
 
 	private static State addStandardLibraries(State s) {
-		s = doActorDeploy(s, "convex/fungible.cvx");
-		s = doActorDeploy(s, "convex/trusted-oracle/actor.cvx");
-		s = doActorDeploy(s, "convex/oracle.cvx");
-		s = doActorDeploy(s, "convex/asset.cvx");
-		s = doActorDeploy(s, "torus/exchange.cvx");
-		s = doActorDeploy(s, "asset/nft/simple.cvx");
-		s = doActorDeploy(s, "asset/nft/basic.cvx");
-		s = doActorDeploy(s, "asset/nft/tokens.cvx");
-		s = doActorDeploy(s, "asset/box/actor.cvx");
-		s = doActorDeploy(s, "asset/box.cvx");
-		s = doActorDeploy(s, "asset/multi-token.cvx");
-		s = doActorDeploy(s, "asset/share.cvx");
-		s = doActorDeploy(s, "asset/market/trade.cvx");
-		s = doActorDeploy(s, "asset/wrap/convex.cvx");
-		s = doActorDeploy(s, "convex/play.cvx");
-		s = doActorDeploy(s, "convex/did.cvx");
-		s = doActorDeploy(s, "lab/curation-market.cvx");
-		s = doActorDeploy(s, "convex/trust/ownership-monitor.cvx");
-		s = doActorDeploy(s, "convex/trust/delegate.cvx");
-		s = doActorDeploy(s, "convex/trust/whitelist.cvx");
-		s = doActorDeploy(s, "convex/trust/monitors.cvx");
-		s = doActorDeploy(s, "convex/governance.cvx");
-		s = doActorDeploy(s, "asset/spatial.cvx");
+		s = doActorDeploy(s, "/convex/asset/fungible.cvx");
+		s = doActorDeploy(s, "/convex/lab/trusted-oracle/actor.cvx");
+		s = doActorDeploy(s, "/convex/lab/oracle.cvx");
+		s = doActorDeploy(s, "/convex/asset/asset.cvx");
+		s = doActorDeploy(s, "/convex/torus/exchange.cvx");
+		s = doActorDeploy(s, "/convex/asset/nft/simple.cvx");
+		s = doActorDeploy(s, "/convex/asset/nft/basic.cvx");
+		s = doActorDeploy(s, "/convex/asset/nft/tokens.cvx");
+		s = doActorDeploy(s, "/convex/asset/box/actor.cvx");
+		s = doActorDeploy(s, "/convex/asset/box.cvx");
+		s = doActorDeploy(s, "/convex/asset/multi-token.cvx");
+		s = doActorDeploy(s, "/convex/asset/share.cvx");
+		s = doActorDeploy(s, "/convex/asset/market/trade.cvx");
+		s = doActorDeploy(s, "/convex/asset/wrap/convex.cvx");
+		s = doActorDeploy(s, "/convex/lab/play.cvx");
+		s = doActorDeploy(s, "/convex/lab/did.cvx");
+		s = doActorDeploy(s, "/convex/lab/curation-market.cvx");
+		s = doActorDeploy(s, "/convex/trust/ownership-monitor.cvx");
+		s = doActorDeploy(s, "/convex/trust/delegate.cvx");
+		s = doActorDeploy(s, "/convex/trust/whitelist.cvx");
+		s = doActorDeploy(s, "/convex/trust/monitors.cvx");
+		s = doActorDeploy(s, "/convex/trust/governance.cvx");
+		s = doActorDeploy(s, "/convex/asset/spatial.cvx");
 		// s = doActorDeploy(s, "convex/user.cvx");
 		return s;
 	}
 	
 	private static State addCNSTree(State s) {
-		Context ctx=Context.createFake(s, INIT_ADDRESS);
+		Context ctx=Context.create(s, INIT_ADDRESS);
 		//ctx=ctx.eval(Reader.read("(do (*registry*/create 'user.init))"));
 		//ctx.getResult();
 
@@ -355,7 +355,7 @@ public class Init {
 	// First form is the name that must be used when registering the actor.
 	//
 	private static State doActorDeploy(State s, String resource) {
-		Context ctx = Context.createFake(s, INIT_ADDRESS);
+		Context ctx = Context.create(s, INIT_ADDRESS);
 		ACell ADD_NETWORK_GOVERNANCE=Reader.read("(set-controller "+GOVERNANCE_ADDRESS+")");
 		
 		try {
@@ -376,13 +376,15 @@ public class Init {
 			if (ctx.isExceptional()) throw new Error("Error while registering actor:" + ctx.getValue());
 
 			return ctx.getState();
-		} catch (Exception e) { 
-			throw Utils.sneakyThrow(e);
+		} catch (IOException e) { 
+			throw new Error(e);
 		}
 	}
 
 	private static State doCurrencyDeploy(State s, AVector<ACell> row) {
 		String symName = row.get(0).toString();
+		String name = row.get(1).toString();
+		String desc = row.get(2).toString();
 		double usdPrice = RT.jvm(row.get(6)); // Value in USD for currency, e.g. USD=1.0, GBP=1.3
 		long decimals = RT.jvm(row.get(5)); // Decimals for lowest currency unit, e.g. USD = 2
 		long usdValue=(Long) RT.jvm(row.get(4)); // USD value of liquidity in currency
@@ -397,11 +399,18 @@ public class Init {
 		// CVX price for currency
 		double cvxPrice = usdPrice * 1000000000; // One CVX Gold = 1 USD in genesis
 		double cvx = cvxPrice * supply / subDivisions;
-
 		
-		Context ctx = Context.createFake(s, GENESIS_ADDRESS);
+		String metaString="{:name "+RT.print(name)+ ":desc "+RT.print(desc)+"}";
+
+		Context ctx = Context.create(s, GENESIS_ADDRESS);
 		ctx = ctx.eval(Reader
-				.read("(do (import convex.fungible :as fun) (deploy (fun/build-token {:supply " + supply + " :decimals "+decimals+"})))"));
+				.read("(do "
+						+ "(import convex.fungible :as fun) "
+						+ "(deploy "
+						  + "'(call *registry* (register "+metaString+"))"
+						  + "(fun/build-token {:supply " + supply + " :decimals "+decimals+"})"
+						  +")"
+					+ ")"));
 		Address addr = ctx.getResult();
 		ctx = ctx.eval(Reader.read("(do (import torus.exchange :as torus) (torus/add-liquidity " + addr + " "
 				+ (supply / 2) + " " + (cvx / 2) + "))"));
@@ -414,7 +423,7 @@ public class Init {
 	}
 
 	private static State register(State state, Address origin, String name, String description) {
-		Context ctx = Context.createFake(state, origin);
+		Context ctx = Context.create(state, origin);
 		ctx = ctx.eval(Reader.read("(call *registry* (register {:description \"" + description + "\" :name \"" + name + "\"}))"));
 		return ctx.getState();
 	}

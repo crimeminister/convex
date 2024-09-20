@@ -24,14 +24,15 @@ import convex.core.data.Keyword;
 import convex.core.data.Keywords;
 import convex.core.data.Lists;
 import convex.core.data.Maps;
+import convex.core.exceptions.ResultException;
 import convex.core.init.Init;
 import convex.core.lang.Symbols;
 import convex.core.store.AStore;
 import convex.core.transactions.Invoke;
-import etch.Etch;
-import etch.EtchStore;
-import etch.EtchUtils;
-import etch.EtchUtils.FullValidator;
+import convex.etch.Etch;
+import convex.etch.EtchStore;
+import convex.etch.EtchUtils;
+import convex.etch.EtchUtils.FullValidator;
 
 public class RestoreTest {
 	AKeyPair KP=AKeyPair.createSeeded(123456781);
@@ -41,7 +42,7 @@ public class RestoreTest {
 	Address HERO=Init.GENESIS_ADDRESS;
 
 	@Test
-	public void restoreTest() throws IOException, InterruptedException, ExecutionException, TimeoutException {
+	public void restoreTest() throws InterruptedException, ExecutionException, TimeoutException, ResultException, IOException, PeerException {
 //		 {
 //		   System.out.println("Test store = "+Stores.current());
 //

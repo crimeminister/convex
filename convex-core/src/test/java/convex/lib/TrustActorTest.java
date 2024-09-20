@@ -33,6 +33,42 @@ public class TrustActorTest extends ACVMTest {
 		return ctx;
 	}
 	
+	@Test void testMonitors() {
+		Context ctx=exec(context(),"(import convex.trust.monitors :as mon)");
+		
+		// Permit-subjects
+		assertTrue(evalB(ctx,"(trust/trusted? (mon/permit-subjects #3 #14 #17) #14)"));
+		assertFalse(evalB(ctx,"(trust/trusted? (mon/permit-subjects #3 #14 #17) #15)"));
+		
+		// Permit actions
+		assertTrue(evalB(ctx,"(trust/trusted? (mon/permit-actions :foo :bar) #14 :foo)"));
+		assertTrue(evalB(ctx,"(trust/trusted? (mon/permit-actions :foo :bar nil) #14 nil)"));
+		assertFalse(evalB(ctx,"(trust/trusted? (mon/permit-actions :foo :bar) #14 :baz :foo)"));
+		assertFalse(evalB(ctx,"(trust/trusted? (mon/permit-actions :foo :bar) #14 nil)"));
+		assertFalse(evalB(ctx,"(trust/trusted? (mon/permit-actions) #14 nil)"));
+		
+		// Delegate [allow deny base]
+		assertTrue(evalB(ctx,"(trust/trusted? (mon/delegate #3 #4 #5) #3)"));
+		assertFalse(evalB(ctx,"(trust/trusted? (mon/delegate #3 #4 #5) #33)"));
+		assertTrue(evalB(ctx,"(trust/trusted? (mon/delegate #3 #4 #5) #5)"));
+		assertFalse(evalB(ctx,"(trust/trusted? (mon/delegate #3 #4 #5) nil)"));
+		
+		// any 
+		assertTrue(evalB(ctx,"(trust/trusted? (mon/any #3 #4 #5) #4)"));
+		assertTrue(evalB(ctx,"(trust/trusted? (mon/any #3 #4 #5) #3)"));
+		assertFalse(evalB(ctx,"(trust/trusted? (mon/any #3 #4 #5) #8)"));
+
+		// all
+		assertTrue(evalB(ctx,"(trust/trusted? (mon/all #3 #3) #3)"));
+		assertFalse(evalB(ctx,"(trust/trusted? (mon/all #3 #4 #5) #3)"));
+		assertTrue(evalB(ctx,"(trust/trusted? (mon/all #3 (mon/any #3 #4)) #3)"));
+		
+		// rule
+		assertTrue(evalB(ctx,"(trust/trusted? (mon/rule (fn [s a o] true)) #3)"));
+		assertFalse(evalB(ctx,"(trust/trusted? (mon/rule (fn [s a o] false)) #3)"));
+		
+	}
+	
 	@Test
 	public void testDelegate() {
 		Context ctx=exec(context(),"(import convex.trust.delegate :as del)");

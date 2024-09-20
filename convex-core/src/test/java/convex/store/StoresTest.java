@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.util.function.Consumer;
 
 import org.junit.jupiter.api.Test;
@@ -25,13 +26,22 @@ import convex.core.init.InitTest;
 import convex.core.store.AStore;
 import convex.core.store.MemoryStore;
 import convex.core.store.Stores;
+import convex.core.util.Utils;
+import convex.etch.EtchStore;
 import convex.test.Samples;
-import etch.EtchStore;
 
 public class StoresTest {
-	EtchStore testStore=EtchStore.createTemp();
+	static EtchStore testStore;
+	
+	static {
+		try {
+			testStore=EtchStore.createTemp();
+		} catch (IOException e) {
+			throw new Error(e);
+		}
+	}
 
-	@Test public void testInitState() throws InvalidDataException {
+	@Test public void testInitState() throws InvalidDataException, IOException {
 		AStore temp=Stores.current();
 		try {
 			Stores.setCurrent(testStore);
@@ -50,7 +60,7 @@ public class StoresTest {
 		}
 	}
 	
-	@Test public void testCrossStores() throws InvalidDataException {
+	@Test public void testCrossStores() throws InvalidDataException, IOException {
 		AStore m1=new MemoryStore();
 		AStore m2=new MemoryStore();
 		
@@ -68,12 +78,16 @@ public class StoresTest {
 		assertTrue(Cells.isCompletelyEncoded(ev));
 		
 		AVector<?> v=Vectors.of(Vectors.of(nv,ev),nv,ev);
-		
+		 
 		Consumer<ACell> crossTest=x->{
-			doCrossStoreTest(x,e1,e2);
-			doCrossStoreTest(x,m1,e1);
-			doCrossStoreTest(x,e2,m2);			
-			doCrossStoreTest(x,m1,m2);
+			try {
+				doCrossStoreTest(x,e1,e2);
+				doCrossStoreTest(x,m1,e1);
+				doCrossStoreTest(x,e2,m2);			
+				doCrossStoreTest(x,m1,m2);
+			} catch (IOException e) {
+				throw Utils.sneakyThrow(e);
+			}
 		};
 		
 		AStore temp=Stores.current();
@@ -86,16 +100,16 @@ public class StoresTest {
 			assertNull(e2.refForHash(hv));
 			assertNull(m1.refForHash(hv));
 			
-			crossTest.accept(v);
 			crossTest.accept(nv);
 			crossTest.accept(ev);
+			crossTest.accept(v);
 			crossTest.accept(null);
 		} finally {
 			Stores.setCurrent(temp);
 		}
 	}
 
-	private void doCrossStoreTest(ACell a, AStore s1, AStore s2) {
+	private void doCrossStoreTest(ACell a, AStore s1, AStore s2) throws IOException {
 		Hash ha=Cells.getHash(a);
 		
 		ACell a1=Cells.persist(a, s1);

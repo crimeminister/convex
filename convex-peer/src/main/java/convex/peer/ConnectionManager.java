@@ -9,7 +9,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
+import java.util.concurrent.*;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,6 +29,7 @@ import convex.core.data.Keywords;
 import convex.core.data.PeerStatus;
 import convex.core.data.SignedData;
 import convex.core.data.Vectors;
+import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.MissingDataException;
 import convex.core.lang.RT;
 import convex.core.util.LoadMonitor;
@@ -89,8 +90,9 @@ public class ConnectionManager extends AThreadedComponent {
 
 	/**
 	 * Celled by the connection manager to ensure we are tracking latest Beliefs on the network
+	 * @throws InterruptedException 
 	 */
-	private void pollBelief() {
+	private void pollBelief() throws InterruptedException {
 		try {
 			// Poll only if no recent consensus updates
 			long lastConsensus = server.getPeer().getConsensusState().getTimestamp().longValue();
@@ -122,7 +124,9 @@ public class ConnectionManager extends AThreadedComponent {
 			} finally {
 				convex.close();
 			}
-		} catch (Throwable t) {
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		} catch (RuntimeException | TimeoutException | ExecutionException | IOException t) {
 			if (server.isLive()) {
 				log.warn("Belief Polling failed: {}",t.getClass().toString()+" : "+t.getMessage());
 			}
@@ -131,7 +135,7 @@ public class ConnectionManager extends AThreadedComponent {
 
 	private long lastConnectionUpdate=Utils.getCurrentTimestamp();
 	
-	protected void maintainConnections() {
+	protected void maintainConnections() throws InterruptedException {
 		State s=server.getPeer().getConsensusState();
 
 		long now=Utils.getCurrentTimestamp();
@@ -197,7 +201,7 @@ public class ConnectionManager extends AThreadedComponent {
 		lastConnectionUpdate=Utils.getCurrentTimestamp();
 	}
 
-	private void tryRandomConnect(State s) {
+	private void tryRandomConnect(State s) throws InterruptedException {
 		// Connect to a random peer with host address by stake
 		// SECURITY: stake weighted connection is important to avoid bad peers
 		// influencing the connection pool
@@ -244,7 +248,7 @@ public class ConnectionManager extends AThreadedComponent {
 		Integer target;
 		try {
 			target = Utils.toInt(server.getConfig().get(Keywords.OUTGOING_CONNECTIONS));
-		} catch (Exception ex) {
+		} catch (IllegalArgumentException ex) {
 			target=null;
 		}
 		if (target==null) target=Config.DEFAULT_OUTGOING_CONNECTION_COUNT;
@@ -263,12 +267,10 @@ public class ConnectionManager extends AThreadedComponent {
 	 * @param peerKey Peer key linked to the connection to close and remove.
 	 *
 	 */
-	public synchronized void closeConnection(AccountKey peerKey) {
-		if (connections.containsKey(peerKey)) {
-			Connection conn=connections.get(peerKey);
-			if (conn!=null) {
-				conn.close();
-			}
+	public void closeConnection(AccountKey peerKey) {
+		Connection conn=connections.get(peerKey);
+		if (conn!=null) {
+			conn.close();
 			connections.remove(peerKey);
 		}
 	}
@@ -276,7 +278,7 @@ public class ConnectionManager extends AThreadedComponent {
 	/**
 	 * Close all outgoing connections from this Peer
 	 */
-	public synchronized void closeAllConnections() {
+	public void closeAllConnections() {
 		for (Connection conn:connections.values()) {
 			if (conn!=null) conn.close();
 		}
@@ -338,150 +340,157 @@ public class ConnectionManager extends AThreadedComponent {
 	}
 
 	public void processChallenge(Message m, Peer thisPeer) {
+		SignedData<AVector<ACell>> signedData=null;
 		try {
-			SignedData<AVector<ACell>> signedData = m.getPayload();
+			signedData = m.getPayload();
 			if ( signedData == null) {
-				log.debug( "challenge bad message data sent");
-				return;
+				throw new BadFormatException("null challenge?");
 			}
-			AVector<ACell> challengeValues = signedData.getValue();
-
-			if (challengeValues == null || challengeValues.size() != 3) {
-				log.debug("challenge data incorrect number of items should be 3 not ",RT.count(challengeValues));
-				return;
-			}
-			
-			// log.log(LEVEL_CHALLENGE_RESPONSE, "Processing challenge request from: " + pc.getRemoteAddress());
-
-			// get the token to respond with
-			Hash token = RT.ensureHash(challengeValues.get(0));
-			if (token == null) {
-				log.warn( "no challenge token provided");
-				return;
-			}
-
-			// check to see if we are both want to connect to the same network
-			Hash networkId = RT.ensureHash(challengeValues.get(1));
-			if (networkId == null) {
-				log.warn( "challenge data has no networkId");
-				return;
-			}
-			if ( !networkId.equals(thisPeer.getNetworkID())) {
-				log.warn( "challenge data has incorrect networkId");
-				return;
-			}
-			// check to see if the challenge is for this peer
-			AccountKey toPeer = RT.ensureAccountKey(challengeValues.get(2));
-			if (toPeer == null) {
-				log.warn( "challenge data has no toPeer address");
-				return;
-			}
-			if ( !toPeer.equals(thisPeer.getPeerKey())) {
-				log.warn( "challenge data has incorrect addressed peer");
-				return;
-			}
-
-			// get who sent this challenge
-			AccountKey fromPeer = signedData.getAccountKey();
-
-			// send the signed response back
-			AVector<ACell> responseValues = Vectors.of(token, thisPeer.getNetworkID(), fromPeer, signedData.getHash());
-
-			SignedData<ACell> response = thisPeer.sign(responseValues);
-			// log.log(LEVEL_CHALLENGE_RESPONSE, "Sending response to "+ pc.getRemoteAddress());
-			Message resp=Message.createResponse(response);
-			m.returnMessage(resp);
-		} catch (Throwable t) {
-			log.error("Challenge Error: {}" ,t);
-			// t.printStackTrace();
+		} catch (BadFormatException e) {
+			alertBadMessage(m,"Bad format in challenge");
+			return;
 		}
+		
+		AVector<ACell> challengeValues = signedData.getValue();
+
+		if (challengeValues == null || challengeValues.size() != 3) {
+			log.debug("challenge data incorrect number of items should be 3 not ",RT.count(challengeValues));
+			return;
+		}
+		
+		// log.log(LEVEL_CHALLENGE_RESPONSE, "Processing challenge request from: " + pc.getRemoteAddress());
+
+		// get the token to respond with
+		Hash token = RT.ensureHash(challengeValues.get(0));
+		if (token == null) {
+			log.warn( "no challenge token provided");
+			return;
+		}
+
+		// check to see if we are both want to connect to the same network
+		Hash networkId = RT.ensureHash(challengeValues.get(1));
+		if (networkId == null) {
+			log.warn( "challenge data has no networkId");
+			return;
+		}
+		if ( !networkId.equals(thisPeer.getNetworkID())) {
+			log.warn( "challenge data has incorrect networkId");
+			return;
+		}
+		// check to see if the challenge is for this peer
+		AccountKey toPeer = RT.ensureAccountKey(challengeValues.get(2));
+		if (toPeer == null) {
+			log.warn( "challenge data has no toPeer address");
+			return;
+		}
+		if ( !toPeer.equals(thisPeer.getPeerKey())) {
+			log.warn( "challenge data has incorrect addressed peer");
+			return;
+		}
+
+		// get who sent this challenge
+		AccountKey fromPeer = signedData.getAccountKey();
+
+		// send the signed response back
+		AVector<ACell> responseValues = Vectors.of(token, thisPeer.getNetworkID(), fromPeer, signedData.getHash());
+
+		SignedData<ACell> response = thisPeer.sign(responseValues);
+		// log.log(LEVEL_CHALLENGE_RESPONSE, "Sending response to "+ pc.getRemoteAddress());
+		Message resp=Message.createResponse(response);
+		m.returnMessage(resp);
 	}
 
+	/**
+	 * Processes a response message received from a peer
+	 * @param m
+	 * @param thisPeer
+	 * @return
+	 */
 	AccountKey processResponse(Message m, Peer thisPeer) {
+		SignedData<ACell> signedData;
 		try {
-			SignedData<ACell> signedData = m.getPayload();
-
-			log.debug( "Processing response request");
-
-			@SuppressWarnings("unchecked")
-			AVector<ACell> responseValues = (AVector<ACell>) signedData.getValue();
-
-			if (responseValues.size() != 4) {
-				log.warn( "response data incorrect number of items should be 4 not {}",responseValues.size());
-				return null;
-			}
-
-
-			// get the signed token
-			Hash token = RT.ensureHash(responseValues.get(0));
-			if (token == null) {
-				log.warn( "no response token provided");
-				return null;
-			}
-
-			// check to see if we are both want to connect to the same network
-			Hash networkId = RT.ensureHash(responseValues.get(1));
-			if ( networkId == null || !networkId.equals(thisPeer.getNetworkID())) {
-				log.warn( "response data has incorrect networkId");
-				return null;
-			}
-			// check to see if the challenge is for this peer
-			AccountKey toPeer = RT.ensureAccountKey(responseValues.get(2));
-			if ( toPeer == null || !toPeer.equals(thisPeer.getPeerKey())) {
-				log.warn( "response data has incorrect addressed peer");
-				return null;
-			}
-
-			// hash sent by the response
-			Hash challengeHash = RT.ensureHash(responseValues.get(3));
-
-			// get who sent this challenge
-			AccountKey fromPeer = signedData.getAccountKey();
-
-
-			if ( !challengeList.containsKey(fromPeer)) {
-				log.warn( "response from an unkown challenge");
-				return null;
-			}
-			synchronized(challengeList) {
-
-				// get the challenge data we sent out for this peer
-				ChallengeRequest challengeRequest = challengeList.get(fromPeer);
-
-				Hash challengeToken = challengeRequest.getToken();
-				if (!challengeToken.equals(token)) {
-					log.warn( "invalid response token sent");
-					return null;
-				}
-
-				AccountKey challengeFromPeer = challengeRequest.getPeerKey();
-				if (!signedData.getAccountKey().equals(challengeFromPeer)) {
-					log.warn("response key does not match requested key, sent from a different peer");
-					return null;
-				}
-
-				// hash sent by this peer for the challenge
-				Hash challengeSourceHash = challengeRequest.getSendHash();
-				if ( !challengeHash.equals(challengeSourceHash)) {
-					log.warn("response hash of the challenge does not match");
-					return null;
-				}
-				// remove from list incase this fails, we can generate another challenge
-				challengeList.remove(fromPeer);
-
-				Connection connection = getConnection(fromPeer);
-				if (connection != null) {
-					connection.setTrustedPeerKey(fromPeer);
-				}
-
-				// return the trusted peer key
-				return fromPeer;
-			}
-
-		} catch (Exception e) {
-			log.error("Response Error: {}",e);
+			signedData = m.getPayload();
+		} catch (BadFormatException e) {
+			return null;
 		}
-		return null;
+
+		log.debug( "Processing response request");
+
+		@SuppressWarnings("unchecked")
+		AVector<ACell> responseValues = (AVector<ACell>) signedData.getValue();
+
+		if (responseValues.size() != 4) {
+			log.warn( "response data incorrect number of items should be 4 not {}",responseValues.size());
+			return null;
+		}
+
+
+		// get the signed token
+		Hash token = RT.ensureHash(responseValues.get(0));
+		if (token == null) {
+			log.warn( "no response token provided");
+			return null;
+		}
+
+		// check to see if we are both want to connect to the same network
+		Hash networkId = RT.ensureHash(responseValues.get(1));
+		if ( networkId == null || !networkId.equals(thisPeer.getNetworkID())) {
+			log.warn( "response data has incorrect networkId");
+			return null;
+		}
+		// check to see if the challenge is for this peer
+		AccountKey toPeer = RT.ensureAccountKey(responseValues.get(2));
+		if ( toPeer == null || !toPeer.equals(thisPeer.getPeerKey())) {
+			log.warn( "response data has incorrect addressed peer");
+			return null;
+		}
+
+		// hash sent by the response
+		Hash challengeHash = RT.ensureHash(responseValues.get(3));
+
+		// get who sent this challenge
+		AccountKey fromPeer = signedData.getAccountKey();
+
+
+		if ( !challengeList.containsKey(fromPeer)) {
+			log.warn( "response from an unkown challenge");
+			return null;
+		}
+		
+		synchronized(challengeList) {
+
+			// get the challenge data we sent out for this peer
+			ChallengeRequest challengeRequest = challengeList.get(fromPeer);
+
+			Hash challengeToken = challengeRequest.getToken();
+			if (!challengeToken.equals(token)) {
+				log.warn( "invalid response token sent");
+				return null;
+			}
+
+			AccountKey challengeFromPeer = challengeRequest.getPeerKey();
+			if (!signedData.getAccountKey().equals(challengeFromPeer)) {
+				log.warn("response key does not match requested key, sent from a different peer");
+				return null;
+			}
+
+			// hash sent by this peer for the challenge
+			Hash challengeSourceHash = challengeRequest.getSendHash();
+			if ( !challengeHash.equals(challengeSourceHash)) {
+				log.warn("response hash of the challenge does not match");
+				return null;
+			}
+			// remove from list incase this fails, we can generate another challenge
+			challengeList.remove(fromPeer);
+
+			Connection connection = getConnection(fromPeer);
+			if (connection != null) {
+				connection.setTrustedPeerKey(fromPeer);
+			}
+
+			// return the trusted peer key
+			return fromPeer;
+		}
 	}
 
 
@@ -523,7 +532,7 @@ public class ConnectionManager extends AThreadedComponent {
 	 * @throws InterruptedException If broadcast is interrupted
 	 *
 	 */
-	public synchronized void broadcast(Message msg) throws InterruptedException {
+	public void broadcast(Message msg) throws InterruptedException {
 		HashMap<AccountKey,Connection> hm=getCurrentConnections();
 		
 		long start=Utils.getCurrentTimestamp();
@@ -535,7 +544,14 @@ public class ConnectionManager extends AThreadedComponent {
 			
 			for (Map.Entry<AccountKey,Connection> me: left) {
 				Connection pc=me.getValue();
-				boolean sent = pc.sendMessage(msg);
+				boolean sent;
+				try {
+					sent = pc.sendMessage(msg);
+				} catch (IOException e) {
+					// Something went wrong, lose this connection
+					closeConnection(me.getKey());
+					sent=false;
+				}
 				if (sent) {
 					hm.remove(me.getKey());	
 				} else {
@@ -571,8 +587,9 @@ public class ConnectionManager extends AThreadedComponent {
 	 * Connects explicitly to a Peer at the given host address
 	 * @param hostAddress Address to connect to
 	 * @return new Connection, or null if attempt fails
+	 * @throws InterruptedException 
 	 */
-	public Connection connectToPeer(InetSocketAddress hostAddress) {
+	public Connection connectToPeer(InetSocketAddress hostAddress) throws InterruptedException {
 		Connection newConn = null;
 		try {
 			// Use temp client connection to query status
@@ -583,7 +600,8 @@ public class ConnectionManager extends AThreadedComponent {
 			convex.close();
 			
 			if (status == null || status.count()!=Config.STATUS_COUNT) {
-				throw new Error("Bad status message from remote Peer");
+				log.info("Bad status message from remote Peer");
+				return null;
 			}
 
 			AccountKey peerKey =RT.ensureAccountKey(status.get(3));
@@ -601,6 +619,7 @@ public class ConnectionManager extends AThreadedComponent {
 			return null;
 		} catch (UnresolvedAddressException e) {
 			log.info("Unable to resolve host address: "+hostAddress);
+			return null;
 		}
 		return newConn;
 	}
@@ -611,8 +630,9 @@ public class ConnectionManager extends AThreadedComponent {
 		try {
 			Message msg = Message.createGoodBye();
 			broadcast(msg);
-		} catch (Throwable e1) {
-			// Ignore
+		} catch (InterruptedException e ) {
+			// maintain interrupt status
+			Thread.currentThread().interrupt();
 		}
 		
 		super.close();
@@ -631,7 +651,6 @@ public class ConnectionManager extends AThreadedComponent {
 		LoadMonitor.down();
 		Thread.sleep(ConnectionManager.SERVER_CONNECTION_PAUSE);
 		LoadMonitor.up();
-		
 		maintainConnections();
 		pollBelief();
 	}

@@ -1,15 +1,13 @@
 package convex.gui.panels;
 		
 import java.awt.Color;
-import java.awt.Component;
 import java.awt.Font;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.KeyListener;
 import java.util.ArrayList;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
 
 import javax.swing.JButton;
@@ -37,20 +35,21 @@ import convex.core.data.AList;
 import convex.core.data.AString;
 import convex.core.data.AVector;
 import convex.core.data.Address;
-import convex.core.data.List;
 import convex.core.data.SignedData;
 import convex.core.exceptions.ParseException;
+import convex.core.exceptions.ResultException;
 import convex.core.lang.RT;
 import convex.core.lang.Reader;
 import convex.core.lang.Symbols;
 import convex.core.transactions.ATransaction;
-import convex.core.transactions.Invoke;
 import convex.core.util.Utils;
+import convex.gui.components.ActionButton;
 import convex.gui.components.ActionPanel;
 import convex.gui.components.BaseTextPane;
 import convex.gui.components.CodePane;
 import convex.gui.components.account.AccountChooserPanel;
 import convex.gui.utils.CVXHighlighter;
+import convex.gui.utils.Toolkit;
 import net.miginfocom.swing.MigLayout;
 
 /**
@@ -59,8 +58,11 @@ import net.miginfocom.swing.MigLayout;
 @SuppressWarnings("serial")
 public class REPLPanel extends JPanel {
 
-	protected final  CodePane input;
+	protected final CodePane input;
 	protected final CodePane output;
+	protected final JScrollPane inputScrollPane;
+	protected final JScrollPane outputScrollPane;
+	private final JButton btnRun;
 	private final JButton btnClear;
 	private final JButton btnInfo;
 	private final JCheckBox btnResults;
@@ -73,8 +75,8 @@ public class REPLPanel extends JPanel {
 
 	private InputListener inputListener=new InputListener();
 
-	private Font OUTPUT_FONT=new Font("Monospaced", Font.PLAIN, 24);
-	private Font INPUT_FONT=new Font("Monospaced", Font.PLAIN, 30);
+	private Font OUTPUT_FONT=Toolkit.MONO_FONT.deriveFont(16f*Toolkit.SCALE);
+	private Font INPUT_FONT=Toolkit.MONO_FONT.deriveFont(20f*Toolkit.SCALE);
 	private Color DEFAULT_OUTPUT_COLOR=Color.LIGHT_GRAY;
 	
 	private JPanel actionPanel;
@@ -101,17 +103,21 @@ public class REPLPanel extends JPanel {
 		if (btnTiming.isSelected()) {
 			output.append("Completion time: " + (Utils.getCurrentTimestamp()-start) + " ms\n");
 		}
+		if (r==null) {
+			output.append(" No result??\n",Color.ORANGE);
+			return;
+		}
 		if (btnResults.isSelected()) {
-			handleResult((ACell)r);
+			showResultValue((ACell)r);
 	    } else if (r.isError()) {
 			handleError(r.getErrorCode(),r.getValue(),r.getTrace());
 		} else {
-			handleResult((ACell)r.getValue());
+			showResultValue((ACell)r.getValue());
 		}
 		execPanel.updateBalance();
 	}
 
-	protected void handleResult(ACell m) {
+	protected void showResultValue(ACell m) {
 		AString s=RT.print(m);
 		String resultString=(s==null)?"Print limit exceeded!":s.toString();
 		
@@ -167,18 +173,20 @@ public class REPLPanel extends JPanel {
 		output.setToolTipText("Output from transaction execution");
 		//DefaultCaret caret = (DefaultCaret)(outputArea.getCaret());
 		//caret.setUpdatePolicy(DefaultCaret.ALWAYS_UPDATE);
-		splitPane.setLeftComponent(wrapScrollPane(output));
+		outputScrollPane=wrapScrollPane(output);
+		splitPane.setLeftComponent(outputScrollPane);
 
 		input = new CodePane();
 		input.setFont(INPUT_FONT);
 		input.getDocument().addDocumentListener(inputListener);
 		input.addKeyListener(inputListener);
 		input.setToolTipText("Input commands here (Press Enter at the end of input to send)");
+		inputScrollPane=wrapScrollPane(input);
 		//inputArea.setForeground(Color.GREEN);
 
-		splitPane.setRightComponent(wrapScrollPane(input));
+		splitPane.setRightComponent(inputScrollPane);
 		
-		// stop ctrl+arrow losing focus
+		// stop CTRL+arrow losing focus
 		setFocusTraversalKeysEnabled(false);
 		
 		// BOTTOM ACTION PANEL
@@ -186,15 +194,22 @@ public class REPLPanel extends JPanel {
 		actionPanel = new ActionPanel();
 		add(actionPanel, "dock south");
 
-		btnClear = new JButton("Clear");
-		actionPanel.add(btnClear);
-		btnClear.addActionListener(e -> {
-			output.setText("");
+		btnRun = new ActionButton("Run",0xe1c4,e -> {
+			sendMessage(input.getText());
+			input.requestFocus();
 		});
+		actionPanel.setToolTipText("Run the current command from the input pane");
+		actionPanel.add(btnRun);
+		
+		btnClear = new ActionButton("Clear",0xe9d5,e -> {
+			output.setText("");
+			input.setText("");
+			input.requestFocus();
+		});
+		btnClear.setToolTipText("Clear the input and output");
+		actionPanel.add(btnClear);
 
-		btnInfo = new JButton("Connection Info");
-		actionPanel.add(btnInfo);
-		btnInfo.addActionListener(e -> {
+		btnInfo = new ActionButton("Connection Info",0xe88e,e -> {
 			StringBuilder sb=new StringBuilder();
 			if (convex instanceof ConvexRemote) {
 				sb.append("Remote host: " + convex.getHostAddress() + "\n");
@@ -204,16 +219,18 @@ public class REPLPanel extends JPanel {
 			} catch (Exception e1) {
 				log.info("Failed to get sequence number");
 			}
-			sb.append("Account:     " + RT.toString(convex.getAddress()) + "\n");
+			sb.append("Account:     " + RT.print(convex.getAddress()) + "\n");
 			sb.append("Public Key:  " + RT.toString(convex.getAccountKey()) + "\n");
-			sb.append("Connected?:  " + convex.isConnected()+"\n");
+			sb.append("Connected:   " + convex.isConnected()+"\n");
 
 			String infoString = sb.toString();
 			JOptionPane.showMessageDialog(this, infoString);
 		});
+		actionPanel.setToolTipText("Show diagnostic information for the Convex connection");
+		actionPanel.add(btnInfo);
 		
 		btnTX=new JCheckBox("Show transaction");
-		btnTX.setToolTipText("Tick to show full transaction details.");
+		btnTX.setToolTipText("Tick to show details of the transaction sent, including signature and transaction hash.");
 		actionPanel.add(btnTX);
 		
 		btnResults=new JCheckBox("Full Results");
@@ -225,8 +242,8 @@ public class REPLPanel extends JPanel {
 		actionPanel.add(btnTiming);
 		
 		btnCompile=new JCheckBox("Precompile");
-		btnCompile.setToolTipText("Tick to compile code before sending transaction. Usually reduces juice costs.");
-		btnCompile.setSelected(convex.getLocalServer()!=null); // default: only do this if local
+		btnCompile.setToolTipText("Tick to compile code before sending transaction. Usually reduces juice costs at the cost of slightly slower execution time.");
+		btnCompile.setSelected(convex.isPreCompile());
 		actionPanel.add(btnCompile);
 
 		
@@ -238,76 +255,81 @@ public class REPLPanel extends JPanel {
 		});
 	}
 
-	private Component wrapScrollPane(CodePane codePane) {
+	private JScrollPane wrapScrollPane(CodePane codePane) {
 		JScrollPane scrollPane=new JScrollPane(codePane);
 		return scrollPane;
 	}
 
-	private AKeyPair getKeyPair() {
+	protected AKeyPair getKeyPair() {
 		return execPanel.getConvex().getKeyPair();
 	}
 	
-	private Address getAddress() {
+	protected Address getAddress() {
 		return execPanel.getConvex().getAddress();
 	}
 
 	private void sendMessage(String s) {
 		if (s.isBlank()) return;
+		output.append(s);
+		output.append("\n");
+		input.setText("");
 		
 		history.add(s);
 		historyPosition=history.size();
 
 		SwingUtilities.invokeLater(() -> {
 			input.setText("");
-			output.append(s);
-			output.append("\n");
+			long start=Utils.getCurrentTimestamp();
 			try {
 				AList<ACell> forms = Reader.readAll(s);
 				ACell code = (forms.count()==1)?forms.get(0):forms.cons(Symbols.DO);
-				Future<Result> future;
+				CompletableFuture<Result> future;
 				
-				if (btnCompile.isSelected()) {
-					ACell compileStep=List.of(Symbols.COMPILE,List.of(Symbols.QUOTE,code));
-					Result cr=convex.querySync(compileStep);
-					code=cr.getValue();
-				}
+				convex.setPreCompile(btnCompile.isSelected());
 
 				String mode = execPanel.getMode();
 
-				long start=Utils.getCurrentTimestamp();
 				if (mode.equals("Query")) {
 					Address qaddr=getAddress();
-					if (qaddr == null) {
-						future = convex.query(code,null);
-					} else {
-						future = convex.query(code, qaddr);
-					}
+					future = convex.query(code, qaddr);
 				} else if (mode.equals("Transact")) {
-					Address address = getAddress();
-					convex.setAddress(address);
-					AKeyPair kp=getKeyPair();
-					if (kp==null) throw new IllegalStateException("Can't transact without a valid key pair");
-					convex.setKeyPair(kp);
-					ATransaction trans = Invoke.create(address,0, code);
-					SignedData<ATransaction> strans=convex.prepareTransaction(trans);
-					
+					SignedData<ATransaction> strans=convex.prepareTransaction(code);					
 					if (btnTX.isSelected()) {
 						addOutputWithHighlight(output,strans.toString()+"\n");
 						output.append("TX Hash: "+strans.getHash()+"\n");
 					}
 					
 					future = convex.transact(strans);
+				} else if (mode.equals("Prepare")) {
+					SignedData<ATransaction> strans=convex.prepareTransaction(code);	
+					convex.clearSequence();
+					addOutputWithHighlight(output,strans.toString()+"\n");
+					return;
 				} else {
 					throw new Exception("Unrecognosed REPL mode: " + mode);
 				}
 				log.trace("Sent message");
 				
-				handleResult(start,future.get(5000, TimeUnit.MILLISECONDS));
+				future.handleAsync((m,e)->{
+					if (e!=null) {
+						e.printStackTrace();
+					} 
+					handleResult(start,m);
+					Toolkit.scrollToBottom(outputScrollPane);
+					return m;
+				});
+			} catch (ResultException e) {
+				handleResult(start,e.getResult());
 			} catch (ParseException e) {
-				output.append(" PARSE ERROR: "+e.getMessage(),Color.RED);
+				output.append(" PARSE ERROR: "+e.getMessage()+"\n",Color.RED);
 			} catch (TimeoutException t) {
-				output.append(" TIMEOUT waiting for result",Color.RED);
+				output.append(" TIMEOUT waiting for result\n",Color.RED);
+			} catch (IllegalStateException t) {
+				// General errors we understand
+				output.append(" ERROR: ",Color.RED);
+				output.append(t.getMessage() + "\n"); 
 			} catch (Exception t) {
+				// Something bad.....
 				output.append(" ERROR: ",Color.RED);
 				output.append(t.getMessage() + "\n"); 
 				t.printStackTrace();

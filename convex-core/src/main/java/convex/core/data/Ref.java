@@ -1,5 +1,6 @@
 package convex.core.data;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.function.Consumer;
@@ -54,7 +55,7 @@ public abstract class Ref<T extends ACell> extends AObject implements Comparable
 	/**
 	 * Ref status indicating the Ref has been deeply persisted in long term storage.
 	 * The Ref and its children can be assumed to be accessible for the life of the
-	 * storage subsystem execution.
+	 * storage subsystem execution. Embedded cells can assume persisted at minimum.
 	 */
 	public static final int PERSISTED = 2;
 
@@ -74,7 +75,14 @@ public abstract class Ref<T extends ACell> extends AObject implements Comparable
 	 * Ref status indicating the value is marked in the store for GC copying. Marked values
 	 * are retained until next GC cycle
 	 */
-	public static final int MARKED = 15;
+	public static final int MARKED = 5;
+	
+	/**
+	 * Ref status indicating the Ref in internal data that should never be discarded
+	 */
+	public static final int INTERNAL = 15;
+
+	
 
 	/**
 	 * Maximum Ref status
@@ -117,9 +125,15 @@ public abstract class Ref<T extends ACell> extends AObject implements Comparable
 	public static final int VERIFICATION_MASK = VERIFIED_MASK | BAD_MASK;
 
 	/**
-	 * Flags for internal constant values
+	 * Flags for valid embedded values, typically used on creation
 	 */
-	public static final int INTERNAL_FLAGS=KNOWN_EMBEDDED_MASK|VERIFIED_MASK;
+	public static final int VALID_EMBEDDED_FLAGS=PERSISTED|KNOWN_EMBEDDED_MASK|VERIFIED_MASK;
+	
+	/**
+	 * Flags for valid embedded values, typically used on creation
+	 */
+	public static final int INTERNAL_FLAGS=INTERNAL|VERIFIED_MASK;
+
 	
 	/**
 	 * Ref status indicating that the Ref refers to data that has been proven to be invalid
@@ -187,7 +201,7 @@ public abstract class Ref<T extends ACell> extends AObject implements Comparable
 	}
 
 	/**
-	 * Updates the Ref has the given status, at minimum
+	 * Return a Ref that has the given status, at minimum. If status was updated, returns a new Ref
 	 * 
 	 * Assumes any necessary changes to storage will be made separately. 
 	 * SECURITY: Dangerous if misused since may invalidate storage assumptions
@@ -206,7 +220,7 @@ public abstract class Ref<T extends ACell> extends AObject implements Comparable
 	}
 
 	/**
-	 * Create a new Ref of the same type with updated flags
+	 * Return a a similar Ref of the same type with updated flags. Creates a new Ref if lags have changed.
 	 * @param newFlags New flags to set
 	 * @return Updated Ref
 	 */
@@ -404,11 +418,12 @@ public abstract class Ref<T extends ACell> extends AObject implements Comparable
 	 * 
 	 * @param noveltyHandler Novelty handler to call (may be null)
 	 * @return the persisted Ref 
+	 * @throws IOException in case of IO error during persistence
 	 * @throws MissingDataException If the Ref's value does not exist or has been
 	 *         garbage collected before being persisted 
 	 */
 	@SuppressWarnings("unchecked")
-	public <R extends ACell> Ref<R> persist(Consumer<Ref<ACell>> noveltyHandler) {
+	public <R extends ACell> Ref<R> persist(Consumer<Ref<ACell>> noveltyHandler) throws IOException {
 		int status = getStatus();
 		if (status >= PERSISTED) return (Ref<R>) this; // already persisted in some form
 		AStore store=Stores.current();
@@ -423,8 +438,9 @@ public abstract class Ref<T extends ACell> extends AObject implements Comparable
 	 * 
 	 * @throws MissingDataException if the Ref cannot be fully persisted.
 	 * @return the persisted Ref
+	 * @throws IOException in case of IO error during persistence
 	 */
-	public <R extends ACell> Ref<R> persist() {
+	public <R extends ACell> Ref<R> persist() throws IOException {
 		return persist(null);
 	}
 
@@ -531,8 +547,9 @@ public abstract class Ref<T extends ACell> extends AObject implements Comparable
 	 * Status will be updated to STORED or higher.
 	 * 
 	 * @return Ref with status of STORED or above
+	 * @throws IOException in case of IO error during persistence
 	 */
-	public <R extends ACell> Ref<R> persistShallow() {
+	public <R extends ACell> Ref<R> persistShallow() throws IOException {
 		return persistShallow(null);
 	}
 	
@@ -544,9 +561,10 @@ public abstract class Ref<T extends ACell> extends AObject implements Comparable
 	 * 
 	 * @param noveltyHandler Novelty handler to call (may be null)
 	 * @return Ref with status of STORED or above
+	 * @throws IOException in case of IO error during persistence
 	 */
 	@SuppressWarnings("unchecked")
-	public <R extends ACell> Ref<R> persistShallow(Consumer<Ref<ACell>> noveltyHandler) {
+	public <R extends ACell> Ref<R> persistShallow(Consumer<Ref<ACell>> noveltyHandler) throws IOException {
 		AStore store=Stores.current();
 		return (Ref<R>) store.storeTopRef((Ref<ACell>)this, Ref.STORED, noveltyHandler);
 	}
@@ -657,13 +675,15 @@ public abstract class Ref<T extends ACell> extends AObject implements Comparable
 	public abstract boolean isMissing();
 
 	/**
-	 * Merges flags in an idempotent way. Assume flags are valid
+	 * Merges flags in an idempotent way. Assume flags are valid. Takes the maximum status
 	 * @param a First set of flags
 	 * @param b Second set of flags
 	 * @return Merged flags
 	 */
 	public static int mergeFlags(int a, int b) {
-		return ((a|b)&~STATUS_MASK)|Math.max(a&STATUS_MASK, b& STATUS_MASK);
+		int statusPart=Math.max(a&STATUS_MASK, b& STATUS_MASK);
+		int flagsPart=((a|b)&~STATUS_MASK);
+		return statusPart|flagsPart;
 	}
 
 	/**
@@ -695,5 +715,9 @@ public abstract class Ref<T extends ACell> extends AObject implements Comparable
 	@SuppressWarnings("unchecked")
 	public static final <T extends ACell> Ref<T> nil() {
 		return (Ref<T>)NULL_VALUE;
+	}
+
+	public boolean isInternal() {
+		return (flags & STATUS_MASK) == INTERNAL;
 	}
 }

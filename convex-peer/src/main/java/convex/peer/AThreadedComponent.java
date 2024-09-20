@@ -11,7 +11,7 @@ import convex.core.util.LoadMonitor;
  */
 public abstract class AThreadedComponent {
 
-	static final Logger log = LoggerFactory.getLogger(AThreadedComponent.class.getName());
+	private static final Logger log = LoggerFactory.getLogger(AThreadedComponent.class.getName());
 
 	protected final Server server;
 	
@@ -24,19 +24,19 @@ public abstract class AThreadedComponent {
 			Stores.setCurrent(server.getStore());
 			
 			// Run main component loop
-			while (server.isRunning()) {
+			while (server.isRunning()&&!Thread.currentThread().isInterrupted()) {
 				try {
 					loop();		
 				} catch (InterruptedException e) {
+					// Interrupted, so we are exiting
 					log.trace("Component thread interrupted: {}",thread);
+					Thread.currentThread().interrupt();
 					break;
-				} catch (Exception e) {
-					log.warn("Unexpected exception in "+AThreadedComponent.this.getClass().getSimpleName(),e);
-				} 
+				}
 			}
 			
 			// Finally close the component properly
-			log.debug("Component thread stopping: {}",thread);
+			log.trace("Component thread stopping: {}",thread);
 			close();
 		}
 	}

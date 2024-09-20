@@ -5,6 +5,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
 import java.security.NoSuchAlgorithmException;
 
 import javax.crypto.Cipher;
@@ -13,6 +14,7 @@ import javax.crypto.CipherOutputStream;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.IvParameterSpec;
+import convex.core.exceptions.Panic;
 
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
@@ -56,7 +58,7 @@ public class Symmetric {
 			cipher = Cipher.getInstance(SYMMETRIC_ENCRYPTION_ALGO);
 			cipher.init(Cipher.ENCRYPT_MODE, key);
 			iv = cipher.getIV();
-		} catch (Exception e) {
+		} catch (GeneralSecurityException e) {
 			throw new Error("Failed to initialise encryption cipher", e);
 		}
 
@@ -126,7 +128,7 @@ public class Symmetric {
 			cipher = Cipher.getInstance(SYMMETRIC_ENCRYPTION_ALGO);
 			IvParameterSpec ivParamSpec = new IvParameterSpec(iv);
 			cipher.init(Cipher.DECRYPT_MODE, key, ivParamSpec);
-		} catch (Exception e) {
+		} catch (GeneralSecurityException e) {
 			throw new Error("Failed to initialise decryption cipher", e);
 		}
 
@@ -151,7 +153,7 @@ public class Symmetric {
 			kgen = KeyGenerator.getInstance(SYMMETRIC_KEY_ALGORITHM);
 			kgen.init(KEY_LENGTH);
 		} catch (NoSuchAlgorithmException e) {
-			throw new Error("Key generator not initialised sucessfully", e);
+			throw new Panic("Key generator not initialised sucessfully", e);
 		}
 		SecretKey key = kgen.generateKey();
 		return key;

@@ -46,16 +46,24 @@ import convex.core.transactions.ATransaction;
 import convex.core.transactions.Invoke;
 import convex.core.transactions.Transfer;
 import convex.core.util.Utils;
+import convex.etch.EtchStore;
 import convex.test.Samples;
-import etch.EtchStore;
 
 public class EtchStoreTest {
 
 	private static final Hash BAD_HASH = Samples.BAD_HASH;
-	private EtchStore store = EtchStore.createTemp();
+	private static EtchStore store;
+	
+	static {
+		try {
+			store=EtchStore.createTemp();
+		} catch (IOException e) {
+			throw new Error(e);
+		}
+	}
 
 	@Test
-	public void testEmptyStore() {
+	public void testEmptyStore() throws IOException {
 		AStore oldStore = Stores.current();
 		try {
 			Stores.setCurrent(store);
@@ -119,9 +127,21 @@ public class EtchStoreTest {
 			assertNull(store.readStoreRef(h));
 		}
 	}
+	
+	/**
+	 * It's important we don't re-persist internal refs
+	 */
+	@Test
+	public void testPersistInternal() {
+		// an example internal definition
+		ACell c=Keywords.ADDRESS;
+		
+		// Interning is idempotent
+		assertSame(c,Cells.intern(c));
+	}
 
 	@Test
-	public void testPersistedStatus() throws BadFormatException {
+	public void testPersistedStatus() throws BadFormatException, IOException {
 		AStore oldStore = Stores.current();
 		try {
 			Stores.setCurrent(store);
@@ -153,7 +173,7 @@ public class EtchStoreTest {
 	}
 
 	@Test
-	public void testBeliefAnnounce() {
+	public void testBeliefAnnounce() throws IOException {
 		AStore oldStore = Stores.current();
 		AtomicLong counter=new AtomicLong(0L);
 
@@ -231,7 +251,7 @@ public class EtchStoreTest {
 	}
 
 	@Test
-	public void testNoveltyHandler() {
+	public void testNoveltyHandler() throws IOException {
 		AStore oldStore = Stores.current();
 		ArrayList<Ref<ACell>> al = new ArrayList<>();
 		try {
@@ -258,7 +278,7 @@ public class EtchStoreTest {
 		}
 	}
 	
-	@Test public void testDecodeCache() throws BadFormatException {
+	@Test public void testDecodeCache() throws BadFormatException, IOException {
 		AStore oldStore = Stores.current();
 		try {
 			Stores.setCurrent(store);

@@ -2,11 +2,9 @@ package convex.gui.peer;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
-import java.awt.EventQueue;
-import java.awt.event.WindowEvent;
+import java.awt.Dimension;
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.nio.channels.ClosedChannelException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -14,15 +12,9 @@ import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
 import javax.swing.DefaultListModel;
-import javax.swing.JButton;
-import javax.swing.JComponent;
 import javax.swing.JFrame;
-import javax.swing.JLabel;
-import javax.swing.JOptionPane;
 import javax.swing.JPanel;
-import javax.swing.JSpinner;
 import javax.swing.JTabbedPane;
-import javax.swing.SpinnerNumberModel;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,7 +26,6 @@ import convex.core.Peer;
 import convex.core.Result;
 import convex.core.State;
 import convex.core.crypto.AKeyPair;
-import convex.core.crypto.wallet.AWalletEntry;
 import convex.core.crypto.wallet.HotWalletEntry;
 import convex.core.data.AccountKey;
 import convex.core.data.Address;
@@ -44,18 +35,16 @@ import convex.core.init.Init;
 import convex.core.store.AStore;
 import convex.core.store.Stores;
 import convex.core.util.ThreadUtils;
-import convex.core.util.Utils;
 import convex.gui.components.AbstractGUI;
 import convex.gui.components.Toast;
 import convex.gui.components.account.AccountsPanel;
-import convex.gui.components.account.KeyPairCombo;
 import convex.gui.keys.KeyGenPanel;
 import convex.gui.keys.KeyRingPanel;
 import convex.gui.models.StateModel;
 import convex.gui.tools.MessageFormatPanel;
-import convex.gui.utils.SymbolIcon;
 import convex.gui.utils.Toolkit;
 import convex.peer.API;
+import convex.peer.PeerException;
 import convex.peer.Server;
 import convex.restapi.RESTServer;
 import net.miginfocom.swing.MigLayout;
@@ -79,52 +68,28 @@ public class PeerGUI extends AbstractGUI {
 
 	/**
 	 * Launch the application.
-	 * @param args Command line args
+	 * @param args Command line arguments
+	 * @throws Exception in case of failure
 	 */
-	public static void main(String[] args) {
-		
-		// TODO: Store config
-		// Stores.setGlobalStore(EtchStore.create(new File("peers-shared-db")));
-
+	public static void main(String[] args) throws Exception {
 		// call to set up Look and Feel
 		Toolkit.init();
 		
-		launchPeerGUI(DEFAULT_NUM_PEERS, AKeyPair.generate(),true);
+		PeerGUI gui=launchPeerGUI(DEFAULT_NUM_PEERS, AKeyPair.generate(),true);
+		gui.waitForClose();
+		System.exit(0);
 	}
 
-	public static void launchPeerGUI(int peerNum, AKeyPair genesis, boolean topLevel) {
-		EventQueue.invokeLater(()->{
-			try {
-				PeerGUI manager = new PeerGUI(peerNum,genesis);
-				JFrame frame = new JFrame();
-				manager.frame=frame;
-				frame.setTitle("Peer Manager");
-				frame.setIconImage(Toolkit.getDefaultToolkit()
-						.getImage(PeerGUI.class.getResource("/images/Convex.png")));
-				frame.setBounds(200, 150, 1000, 800);
-				Toolkit.closeIfFirstFrame(frame);
-
-				frame.getContentPane().add(manager, BorderLayout.CENTER);
-				frame.setVisible(true);
-
-				frame.addWindowListener(new java.awt.event.WindowAdapter() {
-			        public void windowClosing(WindowEvent winEvt) {
-			        	// shut down peers gracefully
-			    		manager.peerPanel.manager.closePeers();
-			    		manager.restServer.stop();
-			        }
-			    });
-
-			} catch (Exception e) {
-				e.printStackTrace();
-			}
-		});
+	public static PeerGUI launchPeerGUI(int peerNum, AKeyPair genesis, boolean topLevel) throws InterruptedException, PeerException {
+		PeerGUI manager = new PeerGUI(peerNum,genesis);
+		manager.run();
+		return manager;
 	}
 
 	/*
 	 * Main component panel
 	 */
-	PeersListPanel peerPanel;
+	ServerListPanel serverPanel;
 	KeyRingPanel keyRingPanel;
 	
 	KeyGenPanel keyGenPanel;
@@ -139,8 +104,9 @@ public class PeerGUI extends AbstractGUI {
 	 * Create the application.
 	 * @param genesis Genesis key pair
 	 * @param peerCount number of peers to initialise in genesis
+	 * @throws PeerException If peer startup fails
 	 */
-	public PeerGUI(int peerCount, AKeyPair genesis) {
+	public PeerGUI(int peerCount, AKeyPair genesis) throws PeerException {
 		super ("Peer Manager");
 		// Create key pairs for peers, use genesis key as first keypair
 		genesisKey=genesis;
@@ -155,7 +121,7 @@ public class PeerGUI extends AbstractGUI {
 		tickState = StateModel.create(0L);
 		
 		// launch local peers 
-		peerPanel= new PeersListPanel(this);
+		serverPanel= new ServerListPanel(this);
 		keyRingPanel = new KeyRingPanel();
 
 		launchAllPeers();
@@ -179,9 +145,10 @@ public class PeerGUI extends AbstractGUI {
 		setLayout(new BorderLayout());
 
 		tabs = new JTabbedPane();
+		tabs.setPreferredSize(new Dimension(1000,800));
 		this.add(tabs, BorderLayout.CENTER);
 
-		tabs.add("Servers", peerPanel);
+		tabs.add("Peer Servers", serverPanel);
 		tabs.add("Accounts", accountsPanel);
 		tabs.add("Keyring", keyRingPanel);
 		tabs.add("KeyGen", keyGenPanel);
@@ -190,7 +157,7 @@ public class PeerGUI extends AbstractGUI {
 		tabs.add("Torus", new TorusPanel(this));
 		tabs.add("About", new AboutPanel(convex));
 		
-		tabs.setSelectedComponent(peerPanel);
+		tabs.setSelectedComponent(serverPanel);
 
 		ThreadUtils.runVirtual(updateThread);
 	}
@@ -198,7 +165,6 @@ public class PeerGUI extends AbstractGUI {
 	private boolean updateRunning = true;
 
 	private long cp = 0;
-
 
 	private Runnable updateThread = new Runnable() {
 		@Override
@@ -209,8 +175,8 @@ public class PeerGUI extends AbstractGUI {
 					Thread.sleep(100);
 					tickState.setValue(tickState.getValue()+1);
 					
-					java.util.List<ConvexLocal> peerViews = peerPanel.getPeerViews();
-					peerPanel.repaint();
+					java.util.List<ConvexLocal> peerViews = serverPanel.getPeerViews();
+					serverPanel.repaint();
 					State latest = latestState.getValue();
 					for (ConvexLocal s : peerViews) {
 
@@ -235,9 +201,9 @@ public class PeerGUI extends AbstractGUI {
 					latestState.setValue(latest); // trigger peer view repaints etc.
 
 				} catch (InterruptedException e) {
-					//
-					log.trace("Update thread interrupted, presumably shutting down");
 					updateRunning=false;
+					Thread.currentThread().interrupt(); // set interrupt flag since an interruption has occurred	
+					log.trace("Update thread interrupted, presumably shutting down");
 				}
 			}
 			log.debug("GUI Peer Manager update thread ending");
@@ -305,12 +271,8 @@ public class PeerGUI extends AbstractGUI {
 		return Convex.connect(getPrimaryServer(),contract,null);
 	}
 
-	public Convex connectClient(Address address, AKeyPair keyPair) {
-		try {
+	public Convex connectClient(Address address, AKeyPair keyPair) throws IOException, TimeoutException {
 			return makeConnection(address,keyPair);
-		} catch (IOException | TimeoutException e) {
-			throw Utils.sneakyThrow(e);
-		}
 	}
 	
 	private static HashMap<Server,StateModel<Peer>> models=new HashMap<>();
@@ -371,7 +333,7 @@ public class PeerGUI extends AbstractGUI {
 		return null;
 	}
 
-	public void launchAllPeers() {
+	public void launchAllPeers() throws PeerException {
 		try {
 			List<Server> serverList = API.launchLocalPeers(KEYPAIRS,genesisState);
 			for (Server server: serverList) {
@@ -379,15 +341,12 @@ public class PeerGUI extends AbstractGUI {
 				peerList.addElement(convex);
 				
 				// initial wallet list
-		        HotWalletEntry we = HotWalletEntry.create(server.getKeyPair());
+		        HotWalletEntry we = HotWalletEntry.create(server.getKeyPair(),"Peer key pair");
 				KeyRingPanel.addWalletEntry(we);
 			}
-		} catch (Exception e) {
-			if (e instanceof ClosedChannelException) {
-				// Ignore
-			} else {
-				throw(e);
-			}		
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new PeerException("Peer launch interrupted",e);
 		}
 	}
 
@@ -401,7 +360,7 @@ public class PeerGUI extends AbstractGUI {
 			long amt=convex.getBalance()/10;
 			convex.transferSync(a, amt);
 			
-			KeyRingPanel.addWalletEntry(HotWalletEntry.create(kp));
+			KeyRingPanel.addWalletEntry(HotWalletEntry.create(kp,"Generated peer key"));
 			
 			// Set up Peer in base server
 			convex=Convex.connect(base, a, kp);
@@ -428,7 +387,9 @@ public class PeerGUI extends AbstractGUI {
 		}
 	}
 
-	public void closePeers() {
+	@Override
+	public void close() {
+		updateRunning=false;
 		DefaultListModel<ConvexLocal> peerList = getPeerList();
 		int n = peerList.getSize();
 		for (int i = 0; i < n; i++) {
@@ -439,62 +400,18 @@ public class PeerGUI extends AbstractGUI {
 				// ignore
 			}
 		}
+		super.close();
 	}
 
-	public static void runLaunchDialog(JComponent parent) {
-		JPanel pan=new JPanel();
-		pan.setLayout(new MigLayout("fill,wrap 2","","[fill]10[fill]"));
-		
-		pan.add(Toolkit.makeNote("Select a number of peers to include in the genesis state and launch initially. More can be added later. 3-5 recommended for local devnet testing"),
-				"grow,span 2");
-		pan.add(new JLabel("Number of Peers:"));
-		JSpinner peerCountSpinner = new JSpinner();
-		// Note: about 300 max number of clients before hitting juice limits for account creation
-		peerCountSpinner.setModel(new SpinnerNumberModel(PeerGUI.DEFAULT_NUM_PEERS, 1, 100, 1));
-		pan.add(peerCountSpinner);
+	public void addPeer(ConvexLocal cvl) {
+		peerList.addElement(cvl);
 
-		
-		pan.add(Toolkit.makeNote("Select genesis key for the network. The genesis key will be the key used for the first peer and initial governance accounts."),
-				"grow,span 2");
-		pan.add(new JLabel("Genesis Key:   "));
-		AKeyPair kp=AKeyPair.generate();
-		KeyPairCombo keyField=KeyPairCombo.create(kp);
+	}
 
-		pan.add(keyField);
-		pan.add(new JPanel());
-		
-		JButton randomise=new JButton("Randomise",SymbolIcon.get(0xe863,Toolkit.SMALL_ICON_SIZE)); 
-		randomise.addActionListener(e->{
-			AKeyPair newKP=AKeyPair.generate();
-			// System.err.println("Generated key "+newKP.getAccountKey());
-			// Note we go to the model directly, JComboBox doeesn't like
-			// setting a selected item to something not in the list when not editable
-			keyField.getModel().setSelectedItem(HotWalletEntry.create(newKP));
-		});
-		pan.add(randomise);
-
-
-		int result = JOptionPane.showConfirmDialog(parent, pan, 
-	               "Enter Launch Details", 
-	               JOptionPane.OK_CANCEL_OPTION, 
-	               JOptionPane.QUESTION_MESSAGE,
-	               SymbolIcon.get(0xeb9b,72));
-	    if (result == JOptionPane.OK_OPTION) {
-	    	try {
-	    		int numPeers=(Integer)peerCountSpinner.getValue();
-	    		AWalletEntry we=keyField.getWalletEntry();
-	    		if (we==null) throw new Exception("No key pair selected");
-	    		
-	       		kp=we.getKeyPair();
-	    		if (kp==null) throw new Exception("Invalid Genesis Key!");
-	    		PeerGUI.launchPeerGUI(numPeers, kp,false);
-	    	} catch (Exception e) {
-	    		Toast.display(parent, "Launch Failed: "+e.getMessage(), Color.RED);
-	    		e.printStackTrace();
-	    	}
-	    }
-		
-		
+	@Override
+	public void setupFrame(JFrame frame) {
+		frame.getContentPane().setLayout(new MigLayout());
+		frame.getContentPane().add(this,"dock center");
 	}
 
 }

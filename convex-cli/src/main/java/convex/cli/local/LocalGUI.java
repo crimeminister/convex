@@ -1,6 +1,5 @@
 package convex.cli.local;
 
-import convex.api.Applications;
 import convex.cli.CLIError;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.ParentCommand;
@@ -25,12 +24,12 @@ public class LocalGUI extends ALocalCommand {
 	protected Local localParent;
 
 	@Override
-	public void run() {
+	public void execute() throws InterruptedException {
 		// sub command to launch peer manager
 		try {
-			Applications.launchApp(convex.gui.peer.PeerGUI.class);
-		} catch (Throwable t) {
-			throw new CLIError("Error launching GUI: ",t);
+			convex.gui.peer.PeerGUI.main(new String[0]);
+		} catch (Exception e) {
+			throw new CLIError("Peer launch failed",e);
 		}
 	}
 

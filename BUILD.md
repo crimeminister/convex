@@ -4,11 +4,21 @@
 
 Convex main repository is structured as a multi-module Maven project.
 
+
 ## Build and test
 
+### Merge 
+
+- Merge from `master` branch, ensure in sync
+- Merge any other branches for release
+
+### Ensure clean build
+
 ```
-mvn clean install
+mvn clean package
 ```
+
+Remember to test headless (i.e. no GUI) e.g. with CI server.
 
 ## Release preparation
 
@@ -28,16 +38,17 @@ Need to make sure `CHANGELOG.md` is fully up to date before deploy
 - Annotate with date
 - Commit to release branch
 
+
 ### Build and deploy
 
 ```
 mvn clean deploy -DperformRelease
 ```
 
-### SCM release
+### Tag release
 
 - Merge to `master` branch
-- Tag Release Commit
+- Tag Release Commit on merge
 - Push to GitHub!
 
 ### Prepare for next develop version
@@ -45,6 +56,21 @@ mvn clean deploy -DperformRelease
 - Merge `master` back into `develop`
 - Create new CHANGELOG "Unreleased" section for next version
 - Run `mvn versions:set -DnewVersion='0.7.4-SNAPSHOT'` for next snapshot version as required 
+
+## Docker build
+
+To build a peer container using docker in the current directory from the provided `Dockerfile`
+
+```bash
+docker build -t convexlive/convex:latest .
+```
+
+To deploy to docker hub:
+
+```
+docker login -u "convexlive" docker.io
+docker push convexlive/convex
+```
 
 ## Repeatable Builds
 

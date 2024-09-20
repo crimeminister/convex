@@ -6,6 +6,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased 
 
+### Changed
+
+- `set!` now doesn't fail on pending definitions
+
+## [0.7.15] - 2024-09-17
+
+### Added
+- Docker `Dockerfile` build for self-contained peer container
+
+### Changed
+- Better format / HTML building for peer web app with j2html
+- Better CLI design for `convex account balance` and `convex account info`
+- Better handling for JSON results in REST client
+
+## [0.7.14] - 2024-09-10 - MAVEN CENTRAL ISSUE
+
+NOTE: Due to to an apparent issue in Maven Central, this release was only partially uploaded. It is recommended to avoid depending upon this release.
+
+### Added
+- New main class for both GUI and desktop ("MainGUI")
+- New `convex-integration` module
+- DLFS base implementation and browser
+- Better Result and `log` information
+
+### Changed
+- Updated CLI and GUI functionality
+- Significant internal refactoring
+- Upgrades to default REST API and OpenAPI documentation
+- Better error handling
+- Convert core modules to JPMS
 
 ## [0.7.13] - 2024-05-21
 
