@@ -1000,6 +1000,16 @@ public class RT {
 	public static AString print(ACell a) {
 		return print(a,Constants.PRINT_LIMIT);
 	}
+	
+	/**
+	 * Prints a value after converting to appropriate CVM type
+	 * @param o Any value to print
+	 * @return Printed representation of object, or null if print limit exceeded
+	 */
+	public static AString print(Object o) {
+		ACell cell=cvm(o);
+		return print(cell);
+	}
 	/**
 	 * Converts a value to a CVM String representation. Required to work for all
 	 * valid Cells.
@@ -1286,11 +1296,11 @@ public class RT {
 	 * 
 	 */
 	@SuppressWarnings("unchecked")
-	public static <K extends ACell, V extends ACell> AMap<K, V> ensureMap(ACell a) {
+	public static <K extends ACell, V extends ACell, R extends AMap<K,V>> R ensureMap(ACell a) {
 		if (a == null)
-			return Maps.empty();
+			return (R) Maps.empty();
 		if (a instanceof AMap)
-			return (AMap<K, V>) a;
+			return (R) a;
 		return null;
 	}
 
@@ -1333,6 +1343,22 @@ public class RT {
 	public static boolean bool(ACell a) {
 		return !((a == null) || (a == CVMBool.FALSE));
 	}
+	
+	/**
+	 * Converts any value to a boolean value. A value is considered falsey if
+	 * null, java false or CVMBool.FALSE, truthy otherwise
+	 * 
+	 * @param a Object to convert to boolean value
+	 * @return true if object is truthy, false otherwise
+	 */
+	public static boolean bool(Object a) {
+		if (a==null) return false;
+		if (a instanceof Boolean) {
+			return ((Boolean)a);
+		}
+ 		return !(a==CVMBool.FALSE);
+	}
+
 
 	/**
 	 * Converts an object to a map entry. Handles MapEntries and length 2 Vectors.
@@ -1849,12 +1875,6 @@ public class RT {
 		if (maybeTx instanceof ATransaction) return (ATransaction)maybeTx;
 		return null;
 	}
-
-
-
-
-
-
 
 
 }

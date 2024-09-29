@@ -50,17 +50,17 @@ import convex.core.data.prim.CVMDouble;
 import convex.core.data.prim.CVMLong;
 import convex.core.data.type.Types;
 import convex.core.exceptions.BadFormatException;
-import convex.core.lang.impl.AExceptional;
+import convex.core.lang.exception.AExceptional;
+import convex.core.lang.exception.ErrorValue;
+import convex.core.lang.exception.HaltValue;
+import convex.core.lang.exception.RecurValue;
+import convex.core.lang.exception.ReducedValue;
+import convex.core.lang.exception.ReturnValue;
+import convex.core.lang.exception.RollbackValue;
+import convex.core.lang.exception.TailcallValue;
 import convex.core.lang.impl.CoreFn;
 import convex.core.lang.impl.CorePred;
-import convex.core.lang.impl.ErrorValue;
-import convex.core.lang.impl.HaltValue;
 import convex.core.lang.impl.ICoreDef;
-import convex.core.lang.impl.RecurValue;
-import convex.core.lang.impl.Reduced;
-import convex.core.lang.impl.ReturnValue;
-import convex.core.lang.impl.RollbackValue;
-import convex.core.lang.impl.TailcallValue;
 import convex.core.lang.ops.Special;
 import convex.core.util.Errors;
 import convex.core.util.Utils;
@@ -126,6 +126,7 @@ public class Core {
 	 * @return
 	 */
 	private static <T extends ACell> T reg(T o) {
+		o=Cells.intern(o);
 		if (tempReg.contains(o)) throw new Error("Duplicate core form! = "+o);
 		tempReg.add(o);
 		
@@ -624,7 +625,7 @@ public class Core {
 		}
 	});
 
-	public static final CorePred SYNTAX_Q = reg(new CorePred(Symbols.SYNTAX_Q,24) {
+	public static final CoreFn<CVMBool> SYNTAX_Q = reg(new CorePred(Symbols.SYNTAX_Q,24) {
 		@Override
 		public boolean test(ACell val) {
 			return val instanceof Syntax;
@@ -1728,7 +1729,7 @@ public class Core {
 		}
 	});
 
-	public static final CorePred BOOLEAN_Q = reg(new CorePred(Symbols.BOOLEAN_Q,135) {
+	public static final CoreFn<CVMBool> BOOLEAN_Q = reg(new CorePred(Symbols.BOOLEAN_Q,135) {
 		@Override
 		public boolean test(ACell val) {
 			return RT.isBoolean(val);
@@ -2640,8 +2641,8 @@ public class Core {
 	// Helper function for reduce
 	private static final Context reduceResult(Context ctx) {
 		Object ex=ctx.getValue(); // might be an ACell or Exception. We need to check for a Reduced result only
-	 	if (ex instanceof Reduced) {
-	 		ctx=ctx.withResult(((Reduced)ex).getValue());
+	 	if (ex instanceof ReducedValue) {
+	 		ctx=ctx.withResult(((ReducedValue)ex).getValue());
 	 	}
 	 	return ctx.consumeJuice(Juice.REDUCE); // bail out with exception
 	}
@@ -2652,7 +2653,7 @@ public class Core {
 		public  Context invoke(Context context, ACell[] args) {
 			if (args.length != 1) return context.withArityError(exactArityMessage(1, args.length));
 
-			AExceptional result = Reduced.wrap((ACell) args[0]);
+			AExceptional result = ReducedValue.wrap((ACell) args[0]);
 			return context.withException(Juice.RETURN, result);
 		}
 	});
@@ -2660,56 +2661,56 @@ public class Core {
 	// =====================================================================================================
 	// Predicates
 
-	public static final CorePred NIL_Q = reg(new CorePred(Symbols.NIL_Q,240) {
+	public static final CoreFn<CVMBool> NIL_Q = reg(new CorePred(Symbols.NIL_Q,240) {
 		@Override
 		public boolean test(ACell val) {
 			return val == null;
 		}
 	});
 
-	public static final CorePred VECTOR_Q = reg(new CorePred(Symbols.VECTOR_Q,241) {
+	public static final CoreFn<CVMBool> VECTOR_Q = reg(new CorePred(Symbols.VECTOR_Q,241) {
 		@Override
 		public boolean test(ACell val) {
 			return val instanceof AVector;
 		}
 	});
 
-	public static final CorePred LIST_Q = reg(new CorePred(Symbols.LIST_Q,242) {
+	public static final CoreFn<CVMBool> LIST_Q = reg(new CorePred(Symbols.LIST_Q,242) {
 		@Override
 		public boolean test(ACell val) {
 			return val instanceof AList;
 		}
 	});
 
-	public static final CorePred SET_Q = reg(new CorePred(Symbols.SET_Q,243) {
+	public static final CoreFn<CVMBool> SET_Q = reg(new CorePred(Symbols.SET_Q,243) {
 		@Override
 		public boolean test(ACell val) {
 			return val instanceof ASet;
 		}
 	});
 
-	public static final CorePred MAP_Q = reg(new CorePred(Symbols.MAP_Q,244) {
+	public static final CoreFn<CVMBool> MAP_Q = reg(new CorePred(Symbols.MAP_Q,244) {
 		@Override
 		public boolean test(ACell val) {
 			return val instanceof AMap;
 		}
 	});
 
-	public static final CorePred COLL_Q = reg(new CorePred(Symbols.COLL_Q,245) {
+	public static final CoreFn<CVMBool> COLL_Q = reg(new CorePred(Symbols.COLL_Q,245) {
 		@Override
 		public boolean test(ACell val) {
 			return val instanceof ADataStructure;
 		}
 	});
 	
-	public static final CorePred COUNTABLE_Q = reg(new CorePred(Symbols.COUNTABLE_Q,256) {
+	public static final CoreFn<CVMBool> COUNTABLE_Q = reg(new CorePred(Symbols.COUNTABLE_Q,256) {
 		@Override
 		public boolean test(ACell val) {
 			return RT.isCountable(val);
 		}
 	});
 
-	public static final CorePred EMPTY_Q = reg(new CorePred(Symbols.EMPTY_Q,246) {
+	public static final CoreFn<CVMBool> EMPTY_Q = reg(new CorePred(Symbols.EMPTY_Q,246) {
 		@Override
 		public boolean test(ACell val) {
 			// consider null as an empty object
@@ -2720,21 +2721,21 @@ public class Core {
 		}
 	});
 
-	public static final CorePred SYMBOL_Q = reg(new CorePred(Symbols.SYMBOL_Q,247) {
+	public static final CoreFn<CVMBool> SYMBOL_Q = reg(new CorePred(Symbols.SYMBOL_Q,247) {
 		@Override
 		public boolean test(ACell val) {
 			return val instanceof Symbol;
 		}
 	});
 
-	public static final CorePred KEYWORD_Q = reg(new CorePred(Symbols.KEYWORD_Q,248) {
+	public static final CoreFn<CVMBool> KEYWORD_Q = reg(new CorePred(Symbols.KEYWORD_Q,248) {
 		@Override
 		public boolean test(ACell val) {
 			return val instanceof Keyword;
 		}
 	});
 
-	public static final CorePred BLOB_Q = reg(new CorePred(Symbols.BLOB_Q,249) {
+	public static final CoreFn<CVMBool> BLOB_Q = reg(new CorePred(Symbols.BLOB_Q,249) {
 		@Override
 		public boolean test(ACell val) {
 			if (!(val instanceof ABlob)) return false;
@@ -2742,14 +2743,14 @@ public class Core {
 		}
 	});
 
-	public static final CorePred ADDRESS_Q = reg(new CorePred(Symbols.ADDRESS_Q,250) {
+	public static final CoreFn<CVMBool> ADDRESS_Q = reg(new CorePred(Symbols.ADDRESS_Q,250) {
 		@Override
 		public boolean test(ACell val) {
 			return val instanceof Address;
 		}
 	});
 
-	public static final CorePred LONG_Q = reg(new CorePred(Symbols.LONG_Q,251) {
+	public static final CoreFn<CVMBool> LONG_Q = reg(new CorePred(Symbols.LONG_Q,251) {
 		@Override
 		public boolean test(ACell val) {
 			if (val instanceof AInteger) {
@@ -2759,7 +2760,7 @@ public class Core {
 		}
 	});
 	
-	public static final CorePred INT_Q = reg(new CorePred(Symbols.INT_Q,252) {
+	public static final CoreFn<CVMBool> INT_Q = reg(new CorePred(Symbols.INT_Q,252) {
 		@Override
 		public boolean test(ACell val) {
 			if (val instanceof AInteger) {
@@ -2769,42 +2770,42 @@ public class Core {
 		}
 	});
 	
-	public static final CorePred DOUBLE_Q = reg(new CorePred(Symbols.DOUBLE_Q,253) {
+	public static final CoreFn<CVMBool> DOUBLE_Q = reg(new CorePred(Symbols.DOUBLE_Q,253) {
 		@Override
 		public boolean test(ACell val) {
 			return val instanceof CVMDouble;
 		}
 	});
 
-	public static final CorePred STR_Q = reg(new CorePred(Symbols.STR_Q,254) {
+	public static final CoreFn<CVMBool> STR_Q = reg(new CorePred(Symbols.STR_Q,254) {
 		@Override
 		public boolean test(ACell val) {
 			return val instanceof AString;
 		}
 	});
 
-	public static final CorePred NUMBER_Q = reg(new CorePred(Symbols.NUMBER_Q,255) {
+	public static final CoreFn<CVMBool> NUMBER_Q = reg(new CorePred(Symbols.NUMBER_Q,255) {
 		@Override
 		public boolean test(ACell val) {
 			return RT.isNumber(val);
 		}
 	});
 
-	public static final CorePred NAN_Q = reg(new CorePred(Symbols.NAN_Q,270) {
+	public static final CoreFn<CVMBool> NAN_Q = reg(new CorePred(Symbols.NAN_Q,270) {
 		@Override
 		public boolean test(ACell val) {
 			return RT.isNaN(val);
 		}
 	});
 
-	public static final CorePred FN_Q = reg(new CorePred(Symbols.FN_Q,271) {
+	public static final CoreFn<CVMBool> FN_Q = reg(new CorePred(Symbols.FN_Q,271) {
 		@Override
 		public boolean test(ACell val) {
 			return val instanceof AFn;
 		}
 	});
 
-	public static final CorePred ZERO_Q = reg(new CorePred(Symbols.ZERO_Q,272) {
+	public static final CoreFn<CVMBool> ZERO_Q = reg(new CorePred(Symbols.ZERO_Q,272) {
 		@Override
 		public boolean test(ACell val) {
 			if (!RT.isNumber(val)) return false;
@@ -2833,7 +2834,7 @@ public class Core {
 		return env.assoc(sym, o);
 	}
 	
-	public static void registerCode(ICoreDef o) {
+	static void registerCode(ICoreDef o) {
 		int code=o.getCoreCode();
 		ACell there=CODE_MAP[code];
 		if (there!=null) {
@@ -2856,7 +2857,7 @@ public class Core {
 		for (int i=0; i<=CORE_ADDRESS.longValue(); i++) {
 			state = state.putAccount(Address.create(i), AccountStatus.createActor());
 		}
-		Context ctx = Context.createFake(state, CORE_ADDRESS);
+		Context ctx = Context.create(state, CORE_ADDRESS);
 
 		// Map in forms from env.
 		for (Map.Entry<Symbol,ACell> me : env.entrySet()) {
@@ -2866,7 +2867,7 @@ public class Core {
 		ACell form = null;
 
 		// Compile and execute forms in turn. Later definitions can use earlier macros!
-		AList<ACell> forms = Reader.readAll(Utils.readResourceAsString("convex/core.cvx"));
+		AList<ACell> forms = Reader.readAll(Utils.readResourceAsString("/convex/core/core.cvx"));
 		for (ACell f : forms) {
 			form = f;
 			ctx = ctx.expandCompile(form);
@@ -2929,7 +2930,7 @@ public class Core {
  				}
  
  				ctx = ctx.defineWithSyntax(Syntax.create(sym, meta), value);
- 			} catch (Throwable ex) {
+ 			} catch (IllegalArgumentException ex) {
  				throw new Error("Error applying documentation:  " + entry, ex);
  			}
  		}
@@ -2967,7 +2968,7 @@ public class Core {
 		AHashMap<Symbol, AHashMap<ACell,ACell>> coreMeta = Maps.empty();
 
 		try {
-			METAS=Reader.read(Utils.readResourceAsString("convex/core/metadata.cvx"));
+			METAS=Reader.read(Utils.readResourceAsString("/convex/core/metadata.cvx"));
 			
 			// Register all objects from registered runtime
 			for (ACell o : tempReg) {
@@ -2983,6 +2984,7 @@ public class Core {
 			METADATA = coreMeta;
 			ENVIRONMENT = coreEnv;
 		} catch (IOException e) {
+			e.printStackTrace();
 			throw new RuntimeException("IO Error initialising core!",e);
 		}
 	}

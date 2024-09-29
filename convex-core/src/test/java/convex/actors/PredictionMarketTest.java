@@ -22,11 +22,18 @@ import convex.core.util.Utils;
 public class PredictionMarketTest extends ACVMTest {
 	Address addr;
 	
+	static String CONTRACT_STRING;
+	static {
+		try {
+			CONTRACT_STRING = Utils.readResourceAsString("/convex/lab/prediction-market.cvx");
+		} catch (IOException e) {
+			throw Utils.sneakyThrow(e);
+		}
+	}
+	
 	@Override protected Context buildContext(Context ctx) {
 		try {
-			String contractString = Utils.readResourceAsString("lab/prediction-market.cvx");
-			
-			ctx=exec(ctx,contractString);
+			ctx=exec(ctx,CONTRACT_STRING);
 			ctx=exec(ctx,"(deploy (build-prediction-market *address* :bar #{true,false}))");
 
 			addr = (Address) ctx.getResult();
@@ -67,7 +74,7 @@ public class PredictionMarketTest extends ACVMTest {
 			// accepted so no issue.
 			Context rctx2 = step(rctx1,"(call caddr 10 (stake false 10))");
 			assertCVMEquals(4L, rctx2.getResult());
-			assertEquals(TestState.TOTAL_FUNDS, rctx2.getState().computeTotalFunds());
+			assertEquals(TestState.TOTAL_FUNDS, rctx2.getState().computeTotalBalance());
 
 			// halve stakes
 			Context rctx3 = step(rctx2,"(call caddr 10 (stake false 5))");
@@ -85,7 +92,7 @@ public class PredictionMarketTest extends ACVMTest {
 			Context rctx5 =step(rctx4,"(call caddr 10 (stake true 0))");
 			assertCVMEquals(-5L, rctx5.getResult()); // refund of 5
 			assertEquals(0L, initalBal - rctx5.getBalance(HERO));
-			assertEquals(TestState.TOTAL_FUNDS, rctx2.getState().computeTotalFunds());
+			assertEquals(TestState.TOTAL_FUNDS, rctx2.getState().computeTotalBalance());
 		}
 
 		{ // underfunded stake request
@@ -113,8 +120,7 @@ public class PredictionMarketTest extends ACVMTest {
 		ctx = exec(ctx, "(oaddr/register :bar {:trust #{*address*}})");
 
 		// deploy a prediction market using the oracle
-		String contractString = Utils.readResourceAsString("lab/prediction-market.cvx");
-		ctx=exec(ctx,"(deploy ("+contractString+" oaddr :bar #{true,false}))");
+		ctx=exec(ctx,"(deploy ("+CONTRACT_STRING+" oaddr :bar #{true,false}))");
 		Address pmaddr = (Address) ctx.getResult();
 		ctx = exec(ctx, "(def pmaddr " + pmaddr + ")");
 		ctx = stepAs(VILLAIN, ctx, "(def pmaddr "+pmaddr+")");
@@ -147,7 +153,7 @@ public class PredictionMarketTest extends ACVMTest {
 			assertEquals(VILLAIN_BALANCE + 4000, c.getBalance(VILLAIN));
 
 			assertEquals(0L, c.getBalance(pmaddr));
-			assertEquals(TestState.TOTAL_FUNDS, c.getState().computeTotalFunds());
+			assertEquals(TestState.TOTAL_FUNDS, c.getState().computeTotalBalance());
 		}
 	}
 

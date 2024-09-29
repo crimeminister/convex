@@ -2,6 +2,11 @@ package convex.gui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
+
+import java.awt.GraphicsEnvironment;
+import java.awt.HeadlessException;
 
 import org.junit.jupiter.api.Test;
 
@@ -15,7 +20,7 @@ import convex.gui.dlfs.DLFSBrowser;
 import convex.gui.peer.PeerGUI;
 import convex.gui.tools.HackerTools;
 import convex.gui.utils.Toolkit;
-import convex.peer.API;
+import convex.peer.PeerException;
 import convex.peer.Server;
 
 /**
@@ -24,26 +29,43 @@ import convex.peer.Server;
  */
 public class GUITest {
 	
-	Server SERVER;
-	Convex CONVEX;
+	static Server SERVER;
+	static Convex CONVEX;
+	private static PeerGUI manager = null;
 	
+
 	static {
-		Toolkit.init();
+		try {
+			Toolkit.init();
+			manager=new PeerGUI(3,AKeyPair.generate());
+			SERVER=manager.getPrimaryServer();
+			CONVEX=Convex.connect(SERVER);
+		} catch (HeadlessException e) {
+			// ensure null manager
+			manager=null;
+		} catch (PeerException e) {
+			throw new Error(e);
+		} 
 	}
 	
-	{
-		SERVER=API.launchPeer();
-		CONVEX=Convex.connect(SERVER);
+	/**
+	 * Test assumption that the GUI can be initialised. If not, we are probably in headless mode, and there is
+	 * no point trying to test and GUI components that will just fail with HeadlessException
+	 */
+	public static void assumeGUI() {
+		assumeTrue(manager!=null);
+		assumeFalse(GraphicsEnvironment.isHeadless());
 	}
 	
 	/**
 	 * Manager is the root panel of the GUI. A lot of other stuff is built in its
 	 * constructor.
 	 */
-	static final PeerGUI manager = new PeerGUI(3,AKeyPair.generate());
 
 	@Test
 	public void testState() throws InvalidDataException {
+		GUITest.assumeGUI();
+		
 		State s = manager.getLatestState();
 		s.validate();
 	}
@@ -53,6 +75,8 @@ public class GUITest {
 	 */
 	@Test
 	public void testDLFSBrowser() {
+		GUITest.assumeGUI();
+		
 		DLFSBrowser browser=new DLFSBrowser();
 		DLFileSystem drive=browser.getDrive();
 		assertEquals(0,drive.getRoot().getNameCount());
@@ -60,12 +84,16 @@ public class GUITest {
 	
 	@Test
 	public void testHackerTools() {
+		GUITest.assumeGUI();
+		
 		HackerTools tools=new HackerTools();
 		assertNotNull(tools.tabs);
 	}
 	
 	@Test
 	public void testClientTools() {
+		GUITest.assumeGUI();
+		
 		ConvexClient client=new ConvexClient(CONVEX);
 		assertNotNull(client.tabs);
 	}

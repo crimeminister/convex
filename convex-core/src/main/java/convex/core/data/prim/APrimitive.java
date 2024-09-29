@@ -7,6 +7,10 @@ import convex.core.data.Ref;
 /**
  * Abstract base class for CVM primitive values.
  * 
+ * We don't use JVM primitives directly in CVM data structures because these primitives need to inherit 
+ * the basic ACell functionality, but these are otherwise relatively lightweight wrappers over the
+ * underlying JVM types.
+ * 
  */
 public abstract  class APrimitive extends ACell {
 	@Override
@@ -34,7 +38,7 @@ public abstract  class APrimitive extends ACell {
 	}
 	
 	/**
-	 * @return Java long value representing this primitive CVM value
+	 * @return Java long value representing this primitive CVM value. Essentially equivalent to JVM cast.
 	 */
 	public abstract long longValue();
 	
@@ -66,6 +70,12 @@ public abstract  class APrimitive extends ACell {
 	@Override
 	public int getRefCount() {
 		// No Refs by default
+		return 0;
+	}
+	
+	@Override
+	public int getBranchCount() {
+		// Never any branches by default
 		return 0;
 	}
 

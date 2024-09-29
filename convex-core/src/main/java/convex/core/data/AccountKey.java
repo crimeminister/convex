@@ -9,14 +9,9 @@ import convex.core.util.Errors;
 import convex.core.util.Utils;
 
 /**
- * Immutable class representing an Ed25519 Public Key for an Account
+ * Immutable class representing an Ed25519 public key for a Convex account
  * 
- * <p>
- * Using Ed25519:
- * </p>
- * <ul>
- * <li>AccountKey is the Public Key (32 bytes)</li>
- * </ul>
+ * AccountKey is basically the public key represented as a 256-bit blob (32 bytes)
  * 
  */
 public class AccountKey extends AArrayBlob {
@@ -39,7 +34,7 @@ public class AccountKey extends AArrayBlob {
 	@SuppressWarnings("unchecked")
 	protected <R extends ACell> Ref<R> createRef() {
 		// Create Ref at maximum status to reflect internal embedded status
-		Ref<ACell> newRef= RefDirect.create(this,cachedHash(),Ref.INTERNAL_FLAGS);
+		Ref<ACell> newRef= RefDirect.create(this,cachedHash(),Ref.VALID_EMBEDDED_FLAGS);
 		cachedRef=newRef;
 		return (Ref<R>) newRef;
 	}
@@ -98,8 +93,8 @@ public class AccountKey extends AArrayBlob {
 	 */
 	public static AccountKey dummy(String nonce) {
 		int n = nonce.length();
-		if (n == 0) throw new Error("Empty nonce");
-		if (n >= LENGTH / 2) throw new Error("Nonce too long for dummy address");
+		if (n == 0) nonce="FFFF0000";
+		if (n >= LENGTH / 2) throw new IllegalArgumentException("Nonce too long for dummy address");
 		StringBuilder sb = new StringBuilder();
 		for (int i = 0; i < LENGTH * 2; i += n) {
 			sb.append(nonce);
@@ -148,6 +143,7 @@ public class AccountKey extends AArrayBlob {
 	 * @return AccountKey, or null if not possible to parse
 	 */
 	public static AccountKey parse(String s) {
+		if (s==null) return null;
 		s=s.trim();
 		if (s.startsWith("0x")) s=s.substring(2);
 		return fromHexOrNull(s);
@@ -167,9 +163,16 @@ public class AccountKey extends AArrayBlob {
 		return wrap(bs);
 	}
 	
-	public static AccountKey fromHexOrNull(AString a) {
-		if (a.count()!=LENGTH*2) return null;
-		return fromHexOrNull(a.toString());
+	/**
+	 * Constructs an AccountKey object from a hex string
+	 * 
+	 * @param hexString Hex String
+	 * @return An AccountKey constructed from the hex string, or null if not a valid
+	 *         hex string
+	 */
+	public static AccountKey fromHexOrNull(AString hexString) {
+		if (hexString.count()!=LENGTH*2) return null;
+		return fromHexOrNull(hexString.toString());
 	}
 
 

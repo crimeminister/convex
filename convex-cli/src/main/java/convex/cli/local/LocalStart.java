@@ -10,12 +10,14 @@ import org.slf4j.LoggerFactory;
 
 import convex.cli.CLIError;
 import convex.cli.Constants;
+import convex.cli.ExitCodes;
 import convex.cli.Helpers;
 import convex.core.State;
 import convex.core.crypto.AKeyPair;
 import convex.core.data.AccountKey;
 import convex.core.init.Init;
 import convex.peer.API;
+import convex.peer.PeerException;
 import convex.peer.Server;
 import convex.restapi.RESTServer;
 import picocli.CommandLine.Command;
@@ -52,21 +54,21 @@ public class LocalStart extends ALocalCommand {
 	private String[] keystorePublicKey;
 
   @Option(names={"--ports"},
-		description="List of ports to assign to peers in the cluster. If not specified, will attempt to find available ports."
-			+ "or a single --ports=8081,8082,8083 or --ports=8080-8090")
+		description="List of ports to assign to peers. If not specified, will attempt to find available ports."
+			+ "e.g. --ports=8081,8082,8083 ")
 	private String[] ports;
 
 	@Option(names={"--api-port"},
 		defaultValue = "8080",
-		description="REST API port, if set enable REST API to a peer in the local cluster")
+		description="REST API port, enables REST API to the first peer in the local cluster. Default: ${DEFAULT-VALUE}")
 	private int apiPort;
 
     /**
      * Gets n public keys for local test cluster
-     * @param n Number of public keys
+     * @param count Number of public keys
      * @return List of distinct public keys
      */
-    private List<AKeyPair> getPeerKeyPairs(int n) {
+    private List<AKeyPair> getPeerKeyPairs(int count) {
     	ArrayList<AKeyPair> keyPairList = new ArrayList<AKeyPair>();
       
 		// load in the list of public keys to use as peers
@@ -85,13 +87,13 @@ public class LocalStart extends ALocalCommand {
 				}
 			}
 		}
-		int left=n-keyPairList.size();
+		int left=count-keyPairList.size();
 		if (left>0) {
-			log.warn("Insufficient key pairs specified. Additional "+left+" keypair(s) will be generated");
+			informWarning("Insufficient key pairs specified. Additional "+left+" keypair(s) will be generated");
 			for (int i=0; i<left; i++) {
 				AKeyPair kp=AKeyPair.generate();
 				keyPairList.add(kp);
-				log.warn("Generated key: "+kp.getAccountKey().toChecksumHex()+" Priv: "+kp.getSeed());
+				log.info("Generated key: "+kp.getAccountKey().toChecksumHex()+" Priv: "+kp.getSeed());
 			}
 		}
 		
@@ -102,52 +104,53 @@ public class LocalStart extends ALocalCommand {
 		return new ArrayList<AKeyPair>(keyPairList);
     }
     
-	@Override
-	public void run() {
-		List<AKeyPair> keyPairList = getPeerKeyPairs(count);
-
-		int peerPorts[] = null;
+    /**
+     * Gets array of ports to assign to peers
+     * @return
+     */
+	private int[] getPeerPorts() {
+		int peerPorts[]=null;
 		if (ports != null) {
-			try {
-				peerPorts = Helpers.getPortList(ports, count);
-			} catch (NumberFormatException e) {
-				log.warn("cannot convert port number " + e);
-				return;
-			}
+			peerPorts = Helpers.getPortList(ports, count);
+			if (peerPorts==null) throw new CLIError(ExitCodes.DATAERR,"Failed to parse port list");
 			if (peerPorts.length < count) {
-				log.warn("Only {} ports specified for {} peers", peerPorts.length, count);
-				return;
+				log.debug("Only {} ports specified for {} peers", peerPorts.length, count);
 			}
 		}
-		log.info("Starting local test network with "+count+" peer(s)");
+		return peerPorts;
+	}
+    
+	@Override
+	public void execute() throws InterruptedException{
+		List<AKeyPair> keyPairList = getPeerKeyPairs(count);
+		int peerPorts[] = getPeerPorts();
+		
+		inform("Starting local test network with "+count+" peer(s)");
 		List<Server> servers=launchLocalPeers(keyPairList, peerPorts);
 		int n=servers.size();
-		log.debug("Started: "+ n+" local peer"+((n>1)?"s":"")+" launched");
 		
-		try {
-			if (apiPort > 0) {
-				log.debug("Requesting REST API on port "+apiPort);
-			}
-			launchRestAPI(servers.get(0));
-		} catch (Throwable t) {
-			log.warn("Failed to start REST server: "+t);
+
+		if (apiPort > 0) {
+			log.debug("Requesting REST API on port "+apiPort);
 		}
+		launchRestAPI(servers.get(0));
 		
-		// Loop until we end
-		while (true) {
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e) {
-				return;
-			}
-		}
+		// informWarning("Failed to start REST server: "+t);
+		
+		informSuccess("Started: "+ n+" local peer"+((n>1)?"s":"")+" launched");
+		servers.get(0).waitForShutdown();
+		informWarning("Peer shutdown complete");
 	}
-	
-	public List<Server> launchLocalPeers(List<AKeyPair> keyPairList, int peerPorts[]) {
+
+	public List<Server> launchLocalPeers(List<AKeyPair> keyPairList, int peerPorts[]) throws InterruptedException {
 		List<AccountKey> keyList=keyPairList.stream().map(kp->kp.getAccountKey()).collect(Collectors.toList());
 
 		State genesisState=Init.createState(keyList);
-		return API.launchLocalPeers(keyPairList,genesisState, peerPorts);
+		try {
+			return API.launchLocalPeers(keyPairList,genesisState, peerPorts);
+		} catch (PeerException e) {
+			throw new CLIError(ExitCodes.CONFIG,"Failed to launch peer(s) : "+e.getMessage(),e);
+		} 
 	}
 	
 	public RESTServer launchRestAPI(Server server) {

@@ -22,6 +22,7 @@ import convex.core.Constants;
 import convex.core.exceptions.BadFormatException;
 import convex.core.store.Stores;
 import convex.core.util.Utils;
+import convex.net.impl.HandlerException;
 import convex.peer.Config;
 import convex.peer.Server;
 
@@ -45,7 +46,6 @@ public class NIOServer implements Closeable {
 	protected static final long PRUNE_TIMEOUT = 60000;
 
 	private ServerSocketChannel ssc = null;
-
 
 	private Selector selector = null;
 
@@ -75,10 +75,6 @@ public class NIOServer implements Closeable {
 	 * @throws IOException in case of IO problem
 	 */
 	public void launch(String bindAddress, Integer port) throws IOException {
-		if (port == null) {
-			port = 0;
-		}
-
 		ssc = ServerSocketChannel.open();
 
 		// Set receive buffer size
@@ -86,25 +82,32 @@ public class NIOServer implements Closeable {
 		ssc.socket().setReuseAddress(true);
 
 		bindAddress = (bindAddress == null) ? "::" : bindAddress;
-		InetSocketAddress address;
 		
+		// Bind to a port
+		InetSocketAddress bindSA;	
+		if (port == null) {
+			port = 0;
+		}
 		if (port==0) {
 			try {
-				address = new InetSocketAddress(bindAddress, Constants.DEFAULT_PEER_PORT);
-				ssc.bind(address);
+				bindSA = new InetSocketAddress(bindAddress, Constants.DEFAULT_PEER_PORT);
+				ssc.bind(bindSA);
 			} catch (IOException e) {
 				// try again with random port
-				address = new InetSocketAddress(bindAddress, 0);
-				ssc.bind(address);
+				bindSA = new InetSocketAddress(bindAddress, 0);
+				ssc.bind(bindSA);
 			}
 		} else {
-			address = new InetSocketAddress(bindAddress, port);
-			ssc.bind(address);
+			bindSA = new InetSocketAddress(bindAddress, port);
+			ssc.bind(bindSA);
 		}
 		
-		address = (InetSocketAddress) ssc.getLocalAddress();
-		ssc.configureBlocking(false);
+		// Find out which port we actually bound to
+		bindSA = (InetSocketAddress) ssc.getLocalAddress();
 		port = ssc.socket().getLocalPort();
+
+		// change to bnon-blocking mode
+		ssc.configureBlocking(false);
 
 		// Register for accept. Do this before selection loop starts and
 		// before we return from launch!
@@ -115,7 +118,7 @@ public class NIOServer implements Closeable {
 		running = true;
 
 		Thread selectorThread = new Thread(selectorLoop, "NIO Server loop on port: " + port);
-		selectorThread.setDaemon(true);
+		selectorThread.setDaemon(true); // daemon thread so it doesn't stop shutdown
 		selectorThread.start();
 		log.debug("NIO server started on port {}", port);
 	}
@@ -132,8 +135,9 @@ public class NIOServer implements Closeable {
 			// Use the store configured for the owning server.
 			Stores.setCurrent(server.getStore());
 			try {
-
-				while (running) {
+				// loop unless we are interrupted
+				while (running && !Thread.currentThread().isInterrupted()) {
+					
 					selector.select(SELECT_TIMEOUT);
 					
 
@@ -160,10 +164,7 @@ public class NIOServer implements Closeable {
 						}  catch (CancelledKeyException e) {
 							log.debug("Cancelled key: {}", e.getMessage());
 							key.cancel();
-						} catch (Throwable e) {
-							log.warn("Unexpected Exception, canceling key:", e);
-							key.cancel();
-						}
+						} 
 					}
 					
 					long ts=System.currentTimeMillis();
@@ -172,11 +173,10 @@ public class NIOServer implements Closeable {
 						lastConnectionPrune=ts;
 					}
 
-					
 					// keys.clear();
 				}
 			} catch (IOException e) {
-				log.error("Unexpected IOException, terminating selector loop: ", e);
+				log.error("Unexpected IO Exception, terminating selector loop: ", e);
 			} finally {
 				try {
 					// close all client channels
@@ -285,6 +285,9 @@ public class NIOServer implements Closeable {
 					e.getMessage());
 			// TODO: blacklist peer?
 			key.cancel();
+		} catch (HandlerException e) {
+			log.warn("Unexpected exception in receive handler", e.getCause());
+			key.cancel();
 		}
 	}
 
@@ -309,8 +312,9 @@ public class NIOServer implements Closeable {
 		log.debug("New connection accepted: {}", socketChannel);
 		socketChannel.configureBlocking(false);
 
-		// TODO: Confirm we don't want Nagle?
-		// Generally, we want to send packets as fast as possible.
+		// We don't want Nagle
+		// Generally, we want to send packets as fast as possible, they are usually quite small
+		// Low latency is the primary concern
 		socketChannel.setOption(StandardSocketOptions.TCP_NODELAY, true);
 		socketChannel.register(selector, SelectionKey.OP_READ);
 	}

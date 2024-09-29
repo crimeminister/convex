@@ -1,6 +1,8 @@
 package convex.gui.components;
 
 import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.FontMetrics;
 import java.math.BigInteger;
 
 import javax.swing.JMenuItem;
@@ -50,13 +52,6 @@ public class BalanceLabel extends BaseTextPane {
 	
 	public BalanceLabel() {
 		this.setEditable(false);
-		
-		AttributeSet attribs = new SimpleAttributeSet();
-		attribs=styleContext.addAttribute(attribs, StyleConstants.Alignment, StyleConstants.ALIGN_RIGHT);
-		attribs=styleContext.addAttribute(attribs, StyleConstants.FontFamily, getFont().getFamily());
-		//StyleConstants.setAlignment(attribs, StyleConstants.ALIGN_RIGHT);
-		//StyleConstants.setFontFamily(attribs, Font.PLAIN);
-		this.setParagraphAttributes(attribs, true);
 		this.setFocusable(false);
 	}
 	
@@ -66,31 +61,34 @@ public class BalanceLabel extends BaseTextPane {
 	
 	public void setDecimals(int decimals) {
 		this.decimals=decimals;
+		// reset balance to ensure correct display
+		refreshBalance();
 	}
 	
-	public void setBalanceColour(Color c) {
-		this.balanceColour=c;
-	}
-
-	public void setBalance(AInteger a) {
-		if (Utils.equals(a, balance)) return;
-		try {
-			if (a==null) {
-				setText("-         ");
-				balance=null;
-				return;
+	private synchronized void refreshBalance() {
+		try {	
+			if (balance==null) {
+				super.setText("-         ");
+				return;			
 			} else {
-				balance=a;
+				// Clear balance for appends
+				super.setText("");
 			}
-			
 			int size=getFont().getSize();
 			
 			BigInteger unit=getUnit(decimals);
-			BigInteger bi=a.big();
+			BigInteger bi=balance.big();
 			BigInteger change=bi.remainder(unit);
 			BigInteger coins=bi.divide(unit);
 	
-			setText("");
+			AttributeSet attribs = new SimpleAttributeSet();
+			attribs=styleContext.addAttribute(attribs, StyleConstants.Alignment, StyleConstants.ALIGN_RIGHT);
+			attribs=styleContext.addAttribute(attribs, StyleConstants.FontFamily, getFont().getFamily());
+			//StyleConstants.setAlignment(attribs, StyleConstants.ALIGN_RIGHT);
+			//StyleConstants.setFontFamily(attribs, Font.PLAIN);
+			this.setParagraphAttributes(attribs, true);
+
+			
 			String cs=Text.toFriendlyNumber(coins.longValue());
 			append(cs,balanceColour,size);
 			String ch=Text.zeroPad(change,decimals);
@@ -107,11 +105,34 @@ public class BalanceLabel extends BaseTextPane {
 			}
 			
 			Toolkit.addPopupMenu(this, new BalanceMenu());
-		} catch (Throwable e) {
+		} catch (NullPointerException e) {
 			e.printStackTrace();
-			setText(e.getMessage());
+			super.setText(e.getMessage());
 			balance=null;
 		}	
+	}
+
+	public void setBalanceColour(Color c) {
+		this.balanceColour=c;
+	}
+	
+	@Override
+	public Dimension getPreferredSize() {
+		Dimension d=super.getPreferredSize();
+		FontMetrics font=getFontMetrics(getFont());
+		int pw=font.charWidth('0')*(10+decimals);
+		if (d.width<pw) d.width=pw;
+		return d;
+	}
+
+	public void setBalance(AInteger a) {
+		if (Utils.equals(a, balance)) return;
+		balance=a;
+		refreshBalance();
+	}
+	
+	public AInteger getBalance() {
+		return balance;
 	}
 
 	private static Color[] CCOLS=new Color[] {SILVER, BRONZE, COPPER};
@@ -126,8 +147,12 @@ public class BalanceLabel extends BaseTextPane {
 	
 	@Override
 	public void setText(String s) {
-		super.setText("");
-		append(s,Color.ORANGE,getFont().getSize());
+		AInteger val=DecimalAmountField.parse(s,decimals,false);
+		if (val==null) {
+			super.setText("");
+		} else {
+			setBalance(val);
+		}
 	}
 
 	public void setFromResult(Result r) {

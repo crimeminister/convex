@@ -2,6 +2,7 @@ package convex.core.data;
 
 import java.nio.charset.StandardCharsets;
 
+import convex.core.data.prim.CVMChar;
 import convex.core.data.util.BlobBuilder;
 import convex.core.exceptions.InvalidDataException;
 import convex.core.text.Text;
@@ -34,7 +35,7 @@ public final class StringShort extends AString {
 	/**
 	 * The canonical empty String
 	 */
-	public static final StringShort EMPTY = new StringShort(Blob.EMPTY);
+	public static final StringShort EMPTY = Cells.intern(new StringShort(Blob.EMPTY));
 
 	protected StringShort(Blob data) {
 		super(data.count);
@@ -153,6 +154,12 @@ public final class StringShort extends AString {
 		return 0;
 	}
 	
+	@Override
+	public int getBranchCount() {
+		if (!isCanonical()) return super.getRefCount();
+		return 0;
+	}
+	
 	/**
 	 * Read a StringShort from an encoding. Assumes tag and length already validated. 
 	 * @param length Length of string in UTF-8 bytes
@@ -217,7 +224,23 @@ public final class StringShort extends AString {
 		if ((start<0)||(start>end)||(end>n)) throw new IllegalArgumentException(Errors.badRange(start, end));
 		for (long i=start; i<end; i++) {
 			byte b=data.byteAtUnchecked(i);
-			Text.writeEscapedByte(sb,b);
+			if (b>=0) {
+				// ASCII range, might be escape character
+				Text.writeEscapedByte(sb,b);
+			} else {
+				int cp=charAt(i);
+				if (cp<0) {
+					sb.append(CVMChar.BAD_CHARACTER);
+					i+=1; // skip one byte? or should we error correct?
+				} else {
+					// need to copy exactly one UTF character
+					int len=CVMChar.utfLength(cp);
+					for (int j=0; j<len; j++) {
+						sb.append(byteAt(i+j));
+					}
+					i+=len-1;
+				}
+			}
 		}
 		return;
 	}

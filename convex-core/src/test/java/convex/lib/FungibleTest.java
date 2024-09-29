@@ -127,8 +127,8 @@ public class FungibleTest extends ACVMTest {
 		assertNotError(step(ctx,"(fungible/transfer token *address* "+bal+")"));
 
 		// bad transfers
-		assertAssertError(step(ctx,"(fungible/transfer token *address* -1)"));
-		assertAssertError(step(ctx,"(fungible/transfer token *address* "+(bal+1)+")"));
+		assertArgumentError(step(ctx,"(fungible/transfer token *address* -1)"));
+		assertFundsError(step(ctx,"(fungible/transfer token *address* "+(bal+1)+")"));
 	}
 
 	@Test public void testMint() {
@@ -169,12 +169,14 @@ public class FungibleTest extends ACVMTest {
 			c=exec(c,"(fungible/burn token 900)");
 			assertEquals(100L,evalL(c,"(fungible/balance token *address*)"));
 
-			assertStateError(step(c,"(fungible/burn token 101)")); // Fails, not held
+			assertFundsError(step(c,"(fungible/burn token 101)")); // Fails, not held
 
+			assertArgumentError(step(c,"(fungible/burn token -1)")); // Fails, can't burn negative
+			
 			c=exec(c,"(fungible/burn token 100)");
 			assertEquals(0L,evalL(c,"(fungible/balance token *address*)"));
 
-			assertStateError(step(c,"(fungible/burn token 1)")); // Fails, not held
+			assertFundsError(step(c,"(fungible/burn token 1)")); // Fails, not held
 		}
 
 
@@ -186,7 +188,7 @@ public class FungibleTest extends ACVMTest {
 			c=exec(c,"(fungible/transfer token "+VILLAIN+" 800)");
 			assertEquals(200L,evalL(c,"(fungible/balance token *address*)"));
 
-			assertStateError(step(c,"(fungible/burn token 201)")); // Fails, not held
+			assertFundsError(step(c,"(fungible/burn token 201)")); // Fails, not held
 			assertNotError(step(c,"(fungible/burn token 200)")); // OK since held
 		}
 

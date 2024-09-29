@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collection;
 
@@ -15,7 +16,8 @@ import convex.core.data.prim.CVMLong;
 import convex.core.store.AStore;
 import convex.core.store.MemoryStore;
 import convex.core.store.Stores;
-import etch.EtchStore;
+import convex.core.util.Utils;
+import convex.etch.EtchStore;
 
 @RunWith(Parameterized.class)
 public class ParamTestRefs {
@@ -27,14 +29,18 @@ public class ParamTestRefs {
 
 	@Parameterized.Parameters(name = "{index}: {0}")
 	public static Collection<Object[]> dataExamples() {
-		return Arrays
-				.asList(new Object[][] { 
-					    { "Memory Store", new MemoryStore() }, 
-						{ "Temp Etch Store", EtchStore.createTemp() } });
+		try {
+			return Arrays
+					.asList(new Object[][] { 
+						    { "Memory Store", new MemoryStore() }, 
+							{ "Temp Etch Store", EtchStore.createTemp() } });
+		} catch (IOException e) {
+			throw Utils.sneakyThrow(e); 
+		}
 	}
 	
 	@Test
-	public void testStoreUsage() {
+	public void testStoreUsage() throws IOException {
 		AStore temp=Stores.current();
 
 		try {

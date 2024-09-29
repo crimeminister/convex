@@ -30,9 +30,12 @@ import convex.core.lang.ops.Special;
 
 /**
  * Tests for basic execution Context mechanics and internals
+ * 
+ 
  */
 public class ContextTest extends ACVMTest {
 
+	// TODO: should probably make independent of base state init
 	protected ContextTest() {
 		super(BaseTest.STATE);
 	}
@@ -202,7 +205,11 @@ public class ContextTest extends ACVMTest {
 
 
 		assertEquals(1,log.count());
-		assertEquals(v,log.get(0).get(1));
+		AVector<ACell> logEntry=log.get(0);
+		assertEquals(Log.ENTRY_LENGTH,logEntry.size());
+		assertEquals(c.getAddress(),logEntry.get(Log.P_ADDRESS));
+		assertNull(logEntry.get(Log.P_SCOPE));
+		assertEquals(v,logEntry.get(Log.P_VALUES));
 	}
 
 	@Test

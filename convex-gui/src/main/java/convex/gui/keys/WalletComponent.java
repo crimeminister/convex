@@ -1,5 +1,7 @@
 package convex.gui.keys;
 
+import java.awt.Color;
+
 import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JComponent;
@@ -39,13 +41,13 @@ public class WalletComponent extends BaseListComponent {
 	public WalletComponent(AWalletEntry initialWalletEntry) {
 		this.walletEntry = initialWalletEntry;
 
-		setLayout(new MigLayout());
+		setLayout(new MigLayout("aligny center"));
 
 		//////////  identicon
-		JLabel identicon = new Identicon(walletEntry.getPublicKey());
+		JLabel identicon = new Identicon(walletEntry.getPublicKey(),Toolkit.IDENTICON_SIZE*2);
 		JPanel idPanel=new JPanel();
 		idPanel.add(identicon);
-		add(idPanel,"dock west"); // add to MigLayout
+		add(idPanel); // add to MigLayout
 
 		
 		/////////// Wallet Address and info fields
@@ -56,6 +58,7 @@ public class WalletComponent extends BaseListComponent {
 		// cPanel.add(addressLabel,"span");
 		
 		infoLabel = new CodeLabel(getInfoString());
+		infoLabel.setFont(Toolkit.SMALL_MONO_FONT);
 		cPanel.add(infoLabel,"dock center");
 		//add(cPanel,"dock center"); // add to MigLayout
 		add(cPanel); // add to MigLayout
@@ -72,11 +75,16 @@ public class WalletComponent extends BaseListComponent {
 				UnlockWalletDialog.offerUnlock(this,walletEntry);
 			} else {
 				try {
-					String s=JOptionPane.showInputDialog(WalletComponent.this,"Enter lock password");
-					if (s!=null) {
-						walletEntry.lock(s.toCharArray());
-					}	
-				} catch (IllegalStateException e1) {
+					if (walletEntry.needsLockPassword()) {
+						String s=JOptionPane.showInputDialog(WalletComponent.this,"Enter lock password");
+						if (s!=null) {
+							walletEntry.lock(s.toCharArray());
+						}	
+					} else {
+						walletEntry.lock();
+					}
+				
+				} catch (Exception e1) {
 					e1.printStackTrace();
 				}	
 			}
@@ -85,15 +93,15 @@ public class WalletComponent extends BaseListComponent {
 		
 		// Menu Button
 		JPopupMenu menu=new JPopupMenu();
-		JMenuItem m1=new JMenuItem("Edit...");
-		menu.add(m1);
+		//JMenuItem m1=new JMenuItem("Edit...");
+		//menu.add(m1);
 		JMenuItem m2=new JMenuItem("Show seed...");
 		m2.addActionListener(e-> {
 			AKeyPair kp=walletEntry.getKeyPair();
 			if (kp!=null) {
 				JPanel panel=new JPanel();
 				panel.setLayout(new MigLayout("wrap 1","[200]"));
-				panel.add(new Identicon(kp.getAccountKey()),"align center");
+				panel.add(new Identicon(kp.getAccountKey(),Toolkit.IDENTICON_SIZE_LARGE),"align center");
 				
 				panel.add(Toolkit.withTitledBorder("Ed25519 Private Seed",new CodeLabel(kp.getSeed().toString()))); 
 				panel.add(Toolkit.makeNote("WARNING: keep this private, it can be used to control your account(s)"),"grow");
@@ -104,7 +112,7 @@ public class WalletComponent extends BaseListComponent {
 			}
 		});
 		menu.add(m2);
-		JMenuItem m3=new JMenuItem("Delete");
+		JMenuItem m3=new JMenuItem("Remove...");
 		m3.addActionListener(e-> {
 			int confirm =JOptionPane.showConfirmDialog(WalletComponent.this, "Are you sure you want to delete this keypair from your keyring?","Confirm Delete",JOptionPane.WARNING_MESSAGE);
 			if (confirm==JOptionPane.OK_OPTION) {
@@ -114,6 +122,7 @@ public class WalletComponent extends BaseListComponent {
 		menu.add(m3);
 
 		DropdownMenu menuButton=new DropdownMenu(menu); 
+		menuButton.setToolTipText("Settings and special actions for this key");
 		buttons.add(menuButton);
 		
 		// panel of buttons on right
@@ -128,22 +137,25 @@ public class WalletComponent extends BaseListComponent {
 		resetTooltipText(lockButton);
 		infoLabel.setText(getInfoString());
 		Icon icon=walletEntry.isLocked()? Toolkit.LOCKED_ICON:Toolkit.UNLOCKED_ICON;
+		
 		this.lockButton.setIcon(icon);
+		this.lockButton.setForeground(Color.WHITE);
 	}
 
 
 	private void resetTooltipText(JComponent b) {
 		if (walletEntry.isLocked()) {
-			b.setToolTipText("Unlock");
+			b.setToolTipText("Currently locked. Press to unlock.");
 		} else {
-			b.setToolTipText("Lock");
+			b.setToolTipText("Currently unlocked. Press to lock.");
 		}
 	}
 
 	private String getInfoString() {
 		StringBuilder sb=new StringBuilder();
 		sb.append("Public Key: " + walletEntry.getPublicKey()+"\n");
-		sb.append("Status:     " + (walletEntry.isLocked()?"Locked":"Unlocked"));
+		// sb.append("Status:     " + (walletEntry.isLocked()?"Locked":"Unlocked")+"\n");
+		sb.append("Source:     " + walletEntry.getSource());
 		
 		//sb.append("\n");
 		//sb.append("Key: "+walletEntry.getAccountKey()+ "   Controller: "+as.getController());

@@ -7,6 +7,7 @@ import javax.swing.JTabbedPane;
 import javax.swing.SwingConstants;
 
 import convex.api.Convex;
+import convex.core.crypto.wallet.AWalletEntry;
 import convex.dlfs.DLFS;
 import convex.gui.components.AbstractGUI;
 import convex.gui.components.ConnectPanel;
@@ -38,11 +39,12 @@ public class WalletApp extends AbstractGUI {
 	public WalletApp(Convex convex) {
 		super ("Convex Wallet");
 		this.convex=convex;
+		
 		setLayout(new MigLayout("fill"));
 		
 		add(new AccountOverview(convex),"dock north");
 
-		addTab("Wallet", SymbolIcon.get(0xe850,TAB_ICON_SIZE), new WalletPanel(convex));
+		addTab("Wallet", SymbolIcon.get(0xe850,TAB_ICON_SIZE), new TokenListPanel(convex));
 
 		addTab("Friends", SymbolIcon.get(0xf233,TAB_ICON_SIZE), new FriendPanel(convex));
 		
@@ -58,6 +60,16 @@ public class WalletApp extends AbstractGUI {
 		addTab("Settings", SymbolIcon.get(0xe8b8,TAB_ICON_SIZE), new SettingsPanel(convex));
 		
 		this.add(tabs, "dock center");
+	}
+	
+	@Override
+	public void afterRun() {
+		if (convex.getKeyPair()==null) {
+			AWalletEntry we=KeyRingPanel.findWalletEntry(convex);
+			if (we!=null) {
+				convex.setKeyPair(we.getKeyPair());
+			}
+		}
 	}
 
 	private void addTab(String name, SymbolIcon icon, JComponent panel) {

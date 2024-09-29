@@ -13,7 +13,7 @@ import convex.core.data.Hash;
 import convex.core.data.Ref;
 import convex.core.data.Vectors;
 import convex.core.data.prim.CVMLong;
-import etch.EtchStore;
+import convex.etch.EtchStore;
 
 /**
  * Benchmarks from the Etch database
@@ -27,7 +27,7 @@ import etch.EtchStore;
  */
 public class EtchBenchmark {
 	
-	static final EtchStore store=EtchStore.createTemp();
+	static final EtchStore store;
 	
 	static long nonce=0;
 	
@@ -39,18 +39,24 @@ public class EtchBenchmark {
 	static final Random rand=new Random();
 	
 	static {
-		for (int i=0; i<NUMVALS; i++) {
-			AVector<CVMLong> v=Vectors.of(0L,(long)i);
-			Ref<ACell> r=v.getRef();
-			refs[i]=r;
-			r.getHash();
-			store.storeTopRef(r, Ref.STORED, null);
+		try {
+			store =EtchStore.createTemp();
+			for (int i=0; i<NUMVALS; i++) {
+				AVector<CVMLong> v=Vectors.of(0L,(long)i);
+				Ref<ACell> r=v.getRef();
+				refs[i]=r;
+				r.getHash();
+				store.storeTopRef(r, Ref.STORED, null);
+			}	
+		} catch (IOException e) {
+			throw new Error(e);
 		}
+
 		System.out.println("Refs stored for testing");
 	}
 	
 	@Benchmark
-	public void writeData() {
+	public void writeData() throws IOException {
 		AVector<CVMLong> v=Vectors.of(1L,nonce++);
 		store.storeTopRef(v.getRef(), Ref.STORED, null);
 	}

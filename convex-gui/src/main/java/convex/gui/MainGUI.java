@@ -5,6 +5,7 @@ import java.awt.EventQueue;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JComponent;
+import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.SwingConstants;
@@ -16,7 +17,7 @@ import convex.gui.components.ActionPanel;
 import convex.gui.components.ConnectPanel;
 import convex.gui.dlfs.DLFSBrowser;
 import convex.gui.panels.HomePanel;
-import convex.gui.peer.PeerGUI;
+import convex.gui.peer.PeerLaunchDialog;
 import convex.gui.tools.HackerTools;
 import convex.gui.utils.Toolkit;
 import convex.gui.wallet.WalletApp;
@@ -71,7 +72,7 @@ public class MainGUI extends AbstractGUI {
 	
 	
 	public void launchTestNet() {
-		PeerGUI.runLaunchDialog(this);
+		PeerLaunchDialog.runLaunchDialog(this);
 	}
 	
 	public void launchDiscord() {
@@ -85,8 +86,10 @@ public class MainGUI extends AbstractGUI {
 	    }
 	}
 	
-	public void launchTools() {
-		HackerTools.launch();
+	public HackerTools launchTools() {
+		HackerTools tools=new HackerTools();
+		tools.run();
+		return tools;
 	}
 	
 	public void launchWebsite() {
@@ -110,12 +113,20 @@ public class MainGUI extends AbstractGUI {
 	}
 
 	/**
-	 * Launch the application.
+	 * Launch the Convex Desktop application and waits until main frame is closed.
 	 * @param args Command line args
 	 */
-	public static void main(String[] args) {
-		Toolkit.init();
-		new MainGUI().run();
+	public static void main(String... args) {
+		MainGUI gui=new MainGUI();
+		gui.run();
+		gui.waitForClose();
+		System.exit(0);
+	}
+
+	@Override
+	public void setupFrame(JFrame frame) {
+		frame.getContentPane().setLayout(new MigLayout());
+		frame.getContentPane().add(this,"dock center");
 	}
 
 }

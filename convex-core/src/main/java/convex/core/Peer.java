@@ -172,16 +172,13 @@ public class Peer {
 	 * @param genesisState Initial genesis State of the Network
 	 * @param remoteBelief Remote belief to sync with
 	 * @return New Peer instance
+	 * @throws InvalidDataException if invalid data was found in merged belief
 	 */
-	public static Peer create(AKeyPair peerKP, State genesisState, Belief remoteBelief) {
+	public static Peer create(AKeyPair peerKP, State genesisState, Belief remoteBelief) throws InvalidDataException {
 		Peer peer=create(peerKP,genesisState);
 		peer=peer.updateTimestamp(Utils.getCurrentTimestamp());
-		try {
-			peer=peer.mergeBeliefs(remoteBelief);
-			return peer;
-		} catch (Throwable  e) {
-			throw Utils.sneakyThrow(e);
-		}
+		peer=peer.mergeBeliefs(remoteBelief);
+		return peer;
 	}
 	
 	/**
@@ -196,12 +193,8 @@ public class Peer {
 //		Belief b=Belief.create(order,myOrder); // two orders in Belief at least....
 //		Peer peer=create(peerKP,genesisState,consensusState,b);
 //		peer=peer.updateTimestamp(Utils.getCurrentTimestamp());
-//		try {
-//			peer=peer.mergeBeliefs(remoteBelief);
-//			return peer;
-//		} catch (Throwable  e) {
-//			throw Utils.sneakyThrow(e);
-//		}
+//		peer=peer.mergeBeliefs(remoteBelief);
+//		return peer;
 //	}
 
 	/**
@@ -321,7 +314,7 @@ public class Peer {
 		}
 
 		// Run query in a fake context
-		Context ctx=Context.createInitial(state, address, Constants.MAX_TRANSACTION_JUICE);
+		Context ctx=Context.create(state, address, Constants.MAX_TRANSACTION_JUICE);
 		ctx=ctx.run(form);
 		ResultContext rctx=ResultContext.fromContext(ctx);
 		return rctx;

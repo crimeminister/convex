@@ -42,6 +42,7 @@ import convex.core.lang.ops.Local;
 import convex.core.lang.ops.Lookup;
 import convex.core.lang.ops.Query;
 import convex.core.lang.ops.Special;
+import convex.core.lang.ops.Try;
 
 /**
  * Compiler class responsible for transforming forms (code as data) into an
@@ -197,11 +198,10 @@ public class Compiler {
 		}
 		
 		// Regular symbol lookup in environment
-		Address address=context.getAddress();
-		return compileEnvSymbol(address,sym,context);
+		return compileEnvSymbol(sym,context);
 	}
 	
-	private static Context compileEnvSymbol(Address address,Symbol sym, Context context) {
+	private static Context compileEnvSymbol(Symbol sym, Context context) {
 		// Optional code for :static embedding
 		if (Constants.OPT_STATIC) {
 			// Get metadata for symbol.
@@ -214,10 +214,10 @@ public class Compiler {
 			}
 		}
 		
+		Address address=context.getAddress();
+		
 		// Check if the symbol references an existing declaration
-		context=context.lookupDefiningAddress(address, sym);
-		if (context.isExceptional()) return context; // could be juice error?
-		Address a=context.getResult();
+		Address a=context.lookupDefiningAddress(address, sym);
 		if (a!=null) return context.withResult(Juice.COMPILE_LOOKUP,Lookup.create(Constant.of(a),sym));
 		
 		// Finally revert to a lookup in the current address / environment
@@ -244,11 +244,17 @@ public class Compiler {
 		
 		if (position==null) {
 			// If not a local binding, create a Def Op iff definition already exists
+			Def<?> op = Def.create(sym, exp);
 			if (context.getEnvironment().containsKey(sym)) {
-				Def<?> op = Def.create(sym, exp);
 				return context.withResult(Juice.COMPILE_NODE,op);
+			} else {
+				Constant<Symbol> symOp=Constant.of(sym);
+				Invoke<?> check=Invoke.create(Constant.of(Core.LOOKUP_META),Special.forSymbol(Symbols.STAR_ADDRESS),symOp);
+				Invoke<?> fail=Invoke.create(Constant.of(Core.FAIL),Constant.of(ErrorCodes.UNDECLARED),symOp);
+				Cond<?> cond=Cond.create(check,op,fail);
+				// a bit more expensive for multiple ops
+				return context.withResult(Juice.COMPILE_NODE*3,cond);
 			}
-			return context.withUndeclaredError(sym);
 		} else {
 			// Otherwise must be a Local binding, so use a Set op
 			AOp<?> op=convex.core.lang.ops.Set.create(position.longValue(), exp);
@@ -390,6 +396,8 @@ public class Compiler {
 			
 			if (sym.equals(Symbols.LET)) return compileLet(list, context, false);
 
+			if (sym.equals(Symbols.LOOKUP)) return compileLookup(list, context);
+
 			if (sym.equals(Symbols.COND)) {
 				context = context.compileAll(list.next());
 				if (context.isExceptional()) return context;
@@ -423,6 +431,8 @@ public class Compiler {
 				// need to expand and compile here, since we just created a raw form
 				return expandCompile(resultForm, context);
 			}
+			
+			if (sym.equals(Symbols.TRY)) return compileTry(list,context);
 
 			if (sym.equals(Symbols.QUERY)) {
 				context = context.compileAll(list.next());
@@ -433,9 +443,6 @@ public class Compiler {
 
 			if (sym.equals(Symbols.LOOP)) return compileLet(list, context, true);
 			if (sym.equals(Symbols.SET_BANG)) return compileSetBang(list, context);
-			
-			if (sym.equals(Symbols.LOOKUP)) return compileLookup(list, context);
-
 		}
 		
 		// must be a regular function call
@@ -687,6 +694,21 @@ public class Compiler {
 		Do<?> op = Do.create(ops);
 		return context.withResult(Juice.COMPILE_NODE, op);
 	}
+	
+	// Compile do: note optimisation for small forms 
+	private static Context compileTry(AList<ACell> list, Context context){
+		list=list.next(); // advance past "try", might be nothing left....
+		if (list==null) return context.withResult(Juice.COMPILE_NODE,Constant.NULL);
+
+		context = context.compileAll(list);
+		if (context.isExceptional()) return context;
+		AVector<AOp<ACell>> ops=context.getResult();
+		
+		if (list.count()==1) return context.withResult(Juice.COMPILE_NODE, ops.get(0));
+		
+		Try<?> op = Try.create(ops);
+		return context.withResult(Juice.COMPILE_NODE, op);
+	}
 
 	
 	/**
@@ -773,6 +795,7 @@ public class Compiler {
 						if (ctx.isExceptional()) return ctx;
 	
 						ACell newElement = ctx.getResult();
+						// TODO: can be faster if no changes?
 						updated = updated.conj(newElement);
 					}
 					return ctx.withResult(Juice.EXPAND_SEQUENCE, updated);
@@ -793,6 +816,7 @@ public class Compiler {
 						if (ctx.isExceptional()) return ctx;
 						ACell newValue = ctx.getResult();
 	
+						// TODO: can be faster if no changes?
 						updated = updated.assoc(newKey, newValue);
 					}
 					return ctx.withResult(Juice.EXPAND_SEQUENCE, updated);

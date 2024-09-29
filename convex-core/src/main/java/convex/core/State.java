@@ -34,14 +34,14 @@ import convex.core.data.Tag;
 import convex.core.data.Vectors;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
-import convex.core.exceptions.BadSignatureException;
 import convex.core.exceptions.InvalidDataException;
+import convex.core.init.Init;
 import convex.core.lang.AOp;
 import convex.core.lang.Context;
 import convex.core.lang.Juice;
 import convex.core.lang.RT;
+import convex.core.lang.RecordFormat;
 import convex.core.lang.Symbols;
-import convex.core.lang.impl.RecordFormat;
 import convex.core.transactions.ATransaction;
 import convex.core.util.Counters;
 import convex.core.util.Economics;
@@ -442,7 +442,7 @@ public class State extends ARecord {
 			Context ctx;
 			
 			// TODO juice limit? juice refund?
-			ctx = Context.createInitial(state, origin, Constants.MAX_TRANSACTION_JUICE);
+			ctx = Context.create(state, origin, Constants.MAX_TRANSACTION_JUICE);
 			ctx = ctx.run(op);
 			if (ctx.isExceptional()) {
 				// TODO: what to do here? probably ignore
@@ -487,10 +487,10 @@ public class State extends ARecord {
 				
 				// state update
 				state = rc.context.getState();
-			} catch (Exception t) {
-				String msg= "Unexpected fatal exception applying transaction: "+t.toString();
-				results[i] = Result.create(CVMLong.create(i), Strings.create(msg),ErrorCodes.UNEXPECTED);
-				log.error(msg,t);
+			} catch (Exception e) {
+				String msg= "Unexpected fatal exception applying transaction: "+e.toString();
+				results[i] = Result.create(CVMLong.create(i), Strings.create(msg),ErrorCodes.UNEXPECTED).withSource(SourceCodes.CVM);
+				log.error(msg,e);
 			}
 		}
 
@@ -506,33 +506,46 @@ public class State extends ARecord {
 	 *
 	 * @return ResultContext containing the result of the transaction
 	 */
-	public ResultContext applyTransaction(SignedData<? extends ATransaction> signedTransaction) throws BadSignatureException {
+	public ResultContext applyTransaction(SignedData<? extends ATransaction> signedTransaction) {
 		// Extract transaction, performs signature check
 		ATransaction t=signedTransaction.getValue();
 		Address addr=t.getOrigin();
 		AccountStatus as = getAccount(addr);
 		if (as==null) {
-			return ResultContext.error(this,ErrorCodes.NOBODY,"Transaction for non-existent Account: "+addr);
+			ResultContext rc=ResultContext.error(this,ErrorCodes.NOBODY,"Transaction for non-existent Account: "+addr);
+			return rc.withSource(SourceCodes.CVM);
 		} else {
 
 			// Update sequence number for target account
 			long sequence=t.getSequence();
 			long expectedSequence=as.getSequence()+1;
 			if (sequence!=expectedSequence) {
-				return ResultContext.error(this,ErrorCodes.SEQUENCE, "Sequence = "+sequence+" but expected "+expectedSequence);
+				ResultContext rc=ResultContext.error(this,ErrorCodes.SEQUENCE, "Sequence = "+sequence+" but expected "+expectedSequence);
+				return rc.withSource(SourceCodes.CVM);
 			}
 			
 			AccountKey key=as.getAccountKey();
-			if (key==null) return ResultContext.error(this,ErrorCodes.NOBODY,"Transaction for account that is an Actor: "+addr);
+			if (key==null) {
+				ResultContext rc= ResultContext.error(this,ErrorCodes.STATE,"Transaction for account that is an Actor: "+addr);
+				return rc.withSource(SourceCodes.CVM);
+			}
 			
 			boolean sigValid=signedTransaction.checkSignature(key);
-			if (!sigValid) return ResultContext.error(this,ErrorCodes.SIGNATURE, Strings.BAD_SIGNATURE);
+			if (!sigValid) {
+				ResultContext rc= ResultContext.error(this,ErrorCodes.SIGNATURE, Strings.BAD_SIGNATURE);
+				return rc.withSource(SourceCodes.CVM);
+			}
 		}
 
 		ResultContext ctx=applyTransaction(t);
 		return ctx;
 	}
 	
+	/**
+	 * Creates an initial ResultContext for a transaction
+	 * @param t
+	 * @return
+	 */
 	private ResultContext createResultContext(ATransaction t) {
 		long juicePrice=getJuicePrice().longValue();
 		ResultContext rc=new ResultContext(t,juicePrice);
@@ -576,11 +589,17 @@ public class State extends ARecord {
 			// - Non-existent Origin account
 			// - Bad sequence number
 			// Return context with no change, i.e. before executing the transaction
+			rc.source=SourceCodes.CVM;
 		}
 
 		return rc.withContext(ctx);
 	}
 
+	/**
+	 * Prepares a CVM execution context and ResultContext for a transaction
+	 * @param rc ResultContext to populate
+	 * @return
+	 */
 	private Context prepareTransaction(ResultContext rc) {
 		ATransaction t=rc.tx;
 		long juicePrice=rc.juicePrice;
@@ -589,7 +608,7 @@ public class State extends ARecord {
 		// Pre-transaction state updates (persisted even if transaction fails)
 		AccountStatus account = getAccount(origin);
 		if (account == null) {
-			return Context.createFake(this).withError(ErrorCodes.NOBODY);
+			return Context.create(this).withError(ErrorCodes.NOBODY);
 		}
 
 
@@ -599,11 +618,11 @@ public class State extends ARecord {
 		juiceLimit=Math.min(Constants.MAX_TRANSACTION_JUICE,juiceLimit);
 		long initialJuice=0;
 		if (juiceLimit<=initialJuice) {
-			return Context.createFake(this,origin).withJuiceError();
+			return Context.create(this,origin).withJuiceError();
 		}
 		
 		// Create context ready to execute, with at least some available juice
-		Context ctx = Context.createInitial(this, origin, juiceLimit);
+		Context ctx = Context.create(this, origin, juiceLimit);
 		ctx=ctx.withJuice(initialJuice);
 		return ctx;
 	}
@@ -731,7 +750,7 @@ public class State extends ARecord {
 	 *
 	 * @return The total value of all funds
 	 */
-	public long computeTotalFunds() {
+	public long computeTotalBalance() {
 		long total = accounts.reduce((Long acc,AccountStatus as) -> acc + as.getBalance(), (Long)0L);
 		total += peers.reduceValues((Long acc, PeerStatus ps) -> acc + ps.getBalance(), 0L);
 		total += getGlobalFees().longValue();
@@ -740,7 +759,20 @@ public class State extends ARecord {
 	}
 	
 	/**
-	 * Compute the total memory allowance, including the memory pool.
+	 * Compute the issued coin supply. This is the maximum supply cap minus the unissued coin balance.
+	 *
+	 * @return The current Convex Coin Supply
+	 */
+	public long computeSupply() {
+		long supply=Constants.MAX_SUPPLY;
+		for (int i=0; i<Init.NUM_GOVERNANCE_ACCOUNTS; i++) {
+			supply-=accounts.get(i).getBalance();
+		}
+		return supply;
+	}
+	
+	/**
+	 * Compute the total memory allowance, including the memory pool. WARNING: expensive full account scan.
 	 *
 	 * @return The total amount of CVM memory available
 	 */
@@ -870,7 +902,7 @@ public class State extends ARecord {
 	 * @return Address from CNS, or null if not found
 	 */
 	public Address lookupCNS(String name) {
-		Context ctx=Context.createFake(this);
+		Context ctx=Context.create(this);
 		return (Address) ctx.lookupCNS(name).getResult();
 	}
 

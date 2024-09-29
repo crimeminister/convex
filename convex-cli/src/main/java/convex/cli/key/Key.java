@@ -16,6 +16,7 @@ import picocli.CommandLine.Command;
 		KeyImport.class,
 		KeyGenerate.class,
 		KeyList.class,
+		KeySign.class,
 		KeyExport.class,
 		KeyDelete.class,
 		CommandLine.HelpCommand.class
@@ -26,7 +27,7 @@ public class Key extends ATopCommand {
 
 
 	@Override
-	public void run() {
+	public void execute() {
 		// sub command run with no command provided
 		showUsage();
 	}

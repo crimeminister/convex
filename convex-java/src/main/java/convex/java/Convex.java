@@ -1,24 +1,20 @@
 package convex.java;
 
-import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.Consumer;
 
 import org.apache.hc.client5.http.async.methods.SimpleHttpRequest;
 import org.apache.hc.client5.http.async.methods.SimpleHttpResponse;
 import org.apache.hc.client5.http.async.methods.SimpleRequestBuilder;
-import org.apache.hc.client5.http.impl.async.CloseableHttpAsyncClient;
-import org.apache.hc.client5.http.impl.async.HttpAsyncClients;
-import org.apache.hc.core5.concurrent.FutureCallback;
 import org.apache.hc.core5.http.ContentType;
 
+import convex.core.ErrorCodes;
+import convex.core.Result;
 import convex.core.crypto.AKeyPair;
 import convex.core.crypto.ASignature;
 import convex.core.data.Address;
 import convex.core.data.Blob;
-import convex.core.util.Shutdown;
 import convex.core.util.Utils;
 
 /**
@@ -32,19 +28,7 @@ import convex.core.util.Utils;
  * limitation.
  */
 public class Convex {
-	private static final CloseableHttpAsyncClient httpasyncclient = HttpAsyncClients.createDefault();
 
-	static {
-		httpasyncclient.start();
-		Shutdown.addHook(Shutdown.CLIENTHTTP, ()->{
-			try {
-				httpasyncclient.close();
-			} catch (IOException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
-		});
-	}
 
 	private final String url;
 	private AKeyPair keyPair;
@@ -323,7 +307,7 @@ public class Convex {
 			Map<String, Object> result=future.get();
 			return result;
 		} catch (Exception e) {
-			throw Utils.sneakyThrow(e);
+			return Result.fromException(e).toJSON();
 		}
 	}
 
@@ -362,7 +346,7 @@ public class Convex {
 					if (hash==null) throw new Error("Hash provided by server not valid hex, got: "+hashHex);
 					CompletableFuture<Map<String,Object>> tr = submitAsync(hash);
 					return tr;
-				} catch (Throwable e) {
+				} catch (Exception e) {
 					throw Utils.sneakyThrow(e);
 				}
 			}
@@ -382,7 +366,6 @@ public class Convex {
 		req.put("accountKey", getKeyPair().getAccountKey().toHexString());
 		req.put("sig", sd.toHexString());
 		String json=JSON.toPrettyString(req);
-		// System.out.println("Submitting:\n "+json);
 		return doPostAsync(url+"/api/v1/transaction/submit",json);
 	}
 
@@ -445,48 +428,24 @@ public class Convex {
 	 */
 	private CompletableFuture<Map<String,Object>> doRequest(SimpleHttpRequest request) {
 		try {
-			CompletableFuture<SimpleHttpResponse> future=toCompletableFuture(fc -> {
-				httpasyncclient.execute(request, (FutureCallback<SimpleHttpResponse>) fc);
-			});
-			return future.thenApply(r->{
-				String rbody=null;;
-				SimpleHttpResponse response=r;
+			CompletableFuture<SimpleHttpResponse> future=HTTPClients.execute(request);
+			return future.thenApply(response->{
+				String rbody=null;
 				try {
 					rbody=response.getBody().getBodyText();
 					return JSON.parse(rbody);
 				} catch (Exception e) {
-					
 					if (rbody==null) rbody="<Body not readable as String>";
-					throw new RuntimeException("Error in response "+response+" because can't parse body: " +rbody,e);
+					Result res= Result.error(ErrorCodes.FORMAT,"Error in response "+response+" because can't parse body: " +rbody);
+					return res.toJSON();
 				}
 			});
-
 		} catch (Exception e) {
-			throw Utils.sneakyThrow(e);
+			return CompletableFuture.completedFuture(Result.fromException(e).toJSON());
 		}
 	}
 
-	private static <T> CompletableFuture<T> toCompletableFuture(Consumer<FutureCallback<T>> c) {
-        CompletableFuture<T> promise = new CompletableFuture<>();
 
-        c.accept(new FutureCallback<T>() {
-            @Override
-            public void completed(T t) {
-                promise.complete(t);
-            }
-
-            @Override
-            public void failed(Exception e) {
-                promise.completeExceptionally(e);
-            }
-
-            @Override
-            public void cancelled() {
-                promise.cancel(true);
-            }
-        });
-        return promise;
-    }
 
 
 

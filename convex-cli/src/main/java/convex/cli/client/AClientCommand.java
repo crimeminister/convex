@@ -3,11 +3,12 @@ package convex.cli.client;
 import convex.api.Convex;
 import convex.cli.ATopCommand;
 import convex.cli.CLIError;
+import convex.cli.Constants;
 import convex.cli.ExitCodes;
 import convex.cli.mixins.AddressMixin;
 import convex.cli.mixins.KeyMixin;
 import convex.cli.mixins.RemotePeerMixin;
-import convex.cli.mixins.StoreMixin;
+import convex.cli.mixins.KeyStoreMixin;
 import convex.core.crypto.AKeyPair;
 import convex.core.data.AccountKey;
 import convex.core.data.Address;
@@ -17,7 +18,7 @@ import picocli.CommandLine.Option;
 public abstract class AClientCommand extends ATopCommand {
 	
 	@Mixin
-	protected StoreMixin storeMixin; 
+	protected KeyStoreMixin storeMixin; 
 	
 	@Mixin
 	protected KeyMixin keyMixin;
@@ -30,8 +31,14 @@ public abstract class AClientCommand extends ATopCommand {
 	
 	@Option(names={"--timeout"},
 			description="Timeout in miliseconds.")
-	protected Long timeout;
+	private Long timeout;
 
+	protected long getClientTimeout() {
+		// Gets timeout specified at CLI, or default value
+		return timeout==null?Constants.DEFAULT_TIMEOUT_MILLIS : timeout;
+	}
+
+	
 	/**
 	 * Connect as a client to the convex network
 	 * @return
@@ -58,8 +65,9 @@ public abstract class AClientCommand extends ATopCommand {
 	/**
 	 * Connect to Convex ready to transact
 	 * @return
+	 * @throws InterruptedException 
 	 */
-	protected Convex connectTransact() {
+	protected Convex connectTransact() throws InterruptedException {
 		Convex convex=connectQuery();
 		ensureKeyPair(convex);
 		return convex;
@@ -74,7 +82,7 @@ public abstract class AClientCommand extends ATopCommand {
 	}
 	
 	
-	protected void ensureKeyPair(Convex convex) {
+	protected void ensureKeyPair(Convex convex) throws InterruptedException {
 		Address a=convex.getAddress();
 		AKeyPair keyPair = convex.getKeyPair();
 		if (keyPair!=null) return;
@@ -94,7 +102,7 @@ public abstract class AClientCommand extends ATopCommand {
 			}
 		}
 		
-		storeMixin.loadKeyStore();
+		storeMixin.ensureKeyStore();
 		int c=storeMixin.keyCount(pk);
 		if (c==0) {
 			throw new CLIError(ExitCodes.CONFIG,"Can't find keypair with public key: "+pk);

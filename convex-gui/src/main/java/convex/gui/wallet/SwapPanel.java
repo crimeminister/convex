@@ -14,7 +14,6 @@ import convex.api.Convex;
 import convex.core.data.ACell;
 import convex.core.data.Address;
 import convex.core.data.prim.AInteger;
-import convex.core.util.Utils;
 import convex.gui.components.AbstractGUI;
 import convex.gui.components.ActionButton;
 import convex.gui.components.ActionPanel;
@@ -22,6 +21,7 @@ import convex.gui.components.BalanceLabel;
 import convex.gui.components.DecimalAmountField;
 import convex.gui.utils.SymbolIcon;
 import convex.gui.utils.Toolkit;
+import convex.net.IPUtils;
 import net.miginfocom.swing.MigLayout;
 
 @SuppressWarnings("serial")
@@ -31,8 +31,11 @@ public class SwapPanel extends AbstractGUI {
 	protected TokenInfo token1;
 	protected TokenInfo token2;
 	private DecimalAmountField amountField;
+	
+	/**
+	 * Panel for swap display components
+	 */
 	private JPanel swapPanel;
-	private JPanel tradePanel;
 	private BalanceLabel receiveLabel;
 
 	private SwapPanel(String title) {
@@ -48,19 +51,10 @@ public class SwapPanel extends AbstractGUI {
 		setLayout(new MigLayout("fill,wrap","[]","[][][grow]"));
 		setBorder(Toolkit.createDialogBorder());
 		
-
-		
 		swapPanel=new JPanel();
 		addSwapComponents();
 		add(swapPanel,"align center,span,growx");
-		
-		tradePanel=new JPanel();
-		tradePanel.setLayout(new MigLayout("fill,wrap 3","[150][grow]"));
-		tradePanel.add(new JLabel("You receive:"));
-		receiveLabel = new BalanceLabel();
-		tradePanel.add(receiveLabel);
-		add(tradePanel);
-		
+	
 		// Main action buttons
 		ActionPanel actionPanel=new ActionPanel();
 		actionPanel.add(new ActionButton("Trade!",0xe933,e->{
@@ -74,14 +68,17 @@ public class SwapPanel extends AbstractGUI {
 			refreshRates();
 		})); 
 		add(actionPanel,"dock south");
+		refreshRates();
 	}
 
 	protected void addSwapComponents() {
-		swapPanel.setLayout(new MigLayout("fill,wrap 3","[150][grow]"));
 		swapPanel.removeAll();
-
+		swapPanel.setLayout(new MigLayout("fill,wrap 3"));
+		
+		swapPanel.add(new JLabel("Amount:"));
 		amountField=new DecimalAmountField(token1.getDecimals()); 
-		amountField.setFont(amountField.getFont().deriveFont(30f));
+		amountField.setFont(Toolkit.BIG_FONT);
+		swapPanel.add(new TokenButton(token1));
 		swapPanel.add(amountField,"span");
 		amountField.getDocument().addDocumentListener(new DocumentListener() {
 			@Override
@@ -96,21 +93,33 @@ public class SwapPanel extends AbstractGUI {
 			public void changedUpdate(DocumentEvent e) {}
 		});
 		amountField.setToolTipText("Input amount of "+token1.getSymbol()+" to swap into "+token2.getSymbol());
-		
-		swapPanel.add(new JLabel("From:"));
-		swapPanel.add(new TokenButton(token1),"wrap,grow");
-		JButton switchButton=new JButton(SymbolIcon.get(0xe8d5,Toolkit.SMALL_ICON_SIZE));
+				
+		JButton switchButton=new JButton(SymbolIcon.get(0xe8d5,Toolkit.ICON_SIZE));
 		switchButton.addActionListener(e-> {
 			TokenInfo temp=token1;
 			token1=token2;
 			token2=temp;
+			
+			String amt=receiveLabel.getText();
+			System.err.println("Switching amount: "+amt);
 			addSwapComponents();
+			amountField.setText(amt);
+			System.err.println("Amount Set: "+amountField.getAmount());
 			refreshRates();
 		});
+		
 		swapPanel.add(new JLabel()); // spacer
-		swapPanel.add(switchButton,"span");
+		swapPanel.add(switchButton,"center,span");
 		swapPanel.add(new JLabel("To:"));
-		swapPanel.add(new TokenButton(token2),"wrap,grow");
+		swapPanel.add(new TokenButton(token2));
+		
+		// Receive amount line
+		receiveLabel = new BalanceLabel();
+		receiveLabel.setFont(Toolkit.BIG_FONT);
+		receiveLabel.setDecimals(token2.getDecimals());
+		receiveLabel.setToolTipText("Amount you will receive when swap occurs");
+		swapPanel.add(receiveLabel);
+
 		swapPanel.validate();
 		swapPanel.repaint();
 	}
@@ -120,6 +129,10 @@ public class SwapPanel extends AbstractGUI {
 		ACell torus=TokenInfo.getTorusAddress(convex);
 		receiveLabel.setDecimals(token2.getDecimals());
 		AInteger amount=amountField.getAmount();
+		if (amount==null) {
+			receiveLabel.setText("-");
+			return;
+		}
 		String qs;
 		if (token1.isConvex()) {
 			System.err.println(amount +" :dec "+token1.getDecimals());
@@ -129,18 +142,16 @@ public class SwapPanel extends AbstractGUI {
 		} else {
 			qs="("+torus+"/sell-quote "+token1.getID()+" "+amount+" "+token2.getID()+")";
 		}
-		try {
-			convex.query(qs).thenAccept(r->{
-				ACell val=r.getValue();
-				if (val instanceof AInteger) {
-					receiveLabel.setBalance((AInteger) val);
-				} else {
-					receiveLabel.setBalance(null);
-				}
-			});
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
+
+		convex.query(qs).thenAccept(r->{
+			System.err.println(qs + " => " + r);
+			ACell val=r.getValue();
+			if (val instanceof AInteger) {
+				receiveLabel.setBalance((AInteger) val);
+			} else {
+				receiveLabel.setBalance((AInteger)null);
+			}
+		});
 	}
 	
 	protected void executeTrade() {
@@ -157,25 +168,23 @@ public class SwapPanel extends AbstractGUI {
 			qs="("+torus+"/sell "+token1.getID()+" "+amount+" "+token2.getID()+")";
 		}
 		System.out.println(qs);
-		try {
-			convex.transact(qs).thenAccept(r->{
-				ACell val=r.getValue();
-				System.out.println(r);
-				if (val instanceof AInteger) {
-					receiveLabel.setBalance((AInteger) val);
-				} else {
-					receiveLabel.setBalance(null);
-				}
-			});
-		} catch (IOException | TimeoutException e) {
-			e.printStackTrace();
-		}
+
+		convex.transact(qs).thenAccept(r->{
+			ACell val=r.getValue();
+			System.out.println(r);
+			if (val instanceof AInteger) {
+				receiveLabel.setBalance((AInteger) val);
+			} else {
+				receiveLabel.setBalance((AInteger)null);
+			}
+		});
+
 	}
 
 	public static void main(String[] args) throws InterruptedException, IOException, TimeoutException {
 		// call to set up Look and Feel
 		Toolkit.init();
-		InetSocketAddress sa=Utils.toInetSocketAddress("localhost:18888");
+		InetSocketAddress sa=IPUtils.toInetSocketAddress("localhost:18888");
 		Convex convex=Convex.connect(sa);
 		convex.setAddress(Address.create(11));
 		new SwapPanel(convex,TokenInfo.getFungible(convex,"currency.USDF"),TokenInfo.convexCoin()).run();

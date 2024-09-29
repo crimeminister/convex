@@ -16,7 +16,7 @@ import convex.core.crypto.AKeyPair;
 import convex.core.crypto.PEMTools;
 import convex.core.crypto.PFXTools;
 import convex.core.data.AccountKey;
-import convex.core.util.Utils;
+import convex.core.util.FileUtils;
 
 public class KeyExportTest {
 	private static final char[] KEYSTORE_PASSWORD = "testPassword".toCharArray();
@@ -30,10 +30,9 @@ public class KeyExportTest {
 			TEMP_FILE=Helpers.createTempFile("tempKeystore", ".pfx");
 			PFXTools.createStore(TEMP_FILE, KEYSTORE_PASSWORD);
 			KEYSTORE_FILENAME = TEMP_FILE.getCanonicalPath();
-		} catch (Throwable t) {
-			throw Utils.sneakyThrow(t);
-		} 
-		
+		} catch (Exception t) {
+			throw new Error(t);
+		} 	
 	}
 
 	@Test
@@ -42,16 +41,17 @@ public class KeyExportTest {
 		// command key.generate
 		CLTester tester =  CLTester.run(
 			"key", "generate",
+			"--type", "random",
 			"--storepass", new String(KEYSTORE_PASSWORD),
 			"--keypass", new String(KEY_PASSWORD),
 			"--keystore", KEYSTORE_FILENAME
 		);
-		assertEquals(ExitCodes.SUCCESS,tester.getResult());
+		tester.assertExitCode(ExitCodes.SUCCESS);
 
 		File fp = TEMP_FILE;
 		assertTrue(fp.exists());
 		
-		assertTrue(Files.exists(Utils.getPath(KEYSTORE_FILENAME).toPath()));
+		assertTrue(Files.exists(FileUtils.getFile(KEYSTORE_FILENAME).toPath()));
 		
 		// Check output is hex key
 		String output=tester.getOutput().trim();

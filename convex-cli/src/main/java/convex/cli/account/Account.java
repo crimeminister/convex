@@ -22,7 +22,6 @@ import picocli.CommandLine.ParentCommand;
 		AccountInformation.class,
 		CommandLine.HelpCommand.class
 	},
-	mixinStandardHelpOptions=false,
 	description="Manage Convex accounts.")
 public class Account extends ATopCommand  {
 
@@ -32,9 +31,9 @@ public class Account extends ATopCommand  {
 	protected Main mainParent;
 
 	@Override
-	public void run() {
+	public void execute() {
 		// sub command run with no command provided
-		CommandLine.usage(new Account(), System.out);
+		showUsage();
 	}
 
 	@Override

@@ -1,5 +1,6 @@
 package convex.core.store;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.function.Consumer;
 
@@ -18,7 +19,7 @@ import convex.core.exceptions.MissingDataException;
  * made" ― Robert C. Martin
  *
  */
-public abstract class AStore {
+public abstract class AStore implements Closeable {
 	
 	/**
 	 * Stores a @Ref in long term storage as defined by this store implementation.
@@ -36,8 +37,9 @@ public abstract class AStore {
 	 * @param status Status to store at
 	 * @param noveltyHandler Novelty Handler function for Novelty detected. May be null.
 	 * @return The persisted Ref, of status STORED at minimum
+	 * @throws IOException in case of IO error during persistence
 	 */
-	public abstract <T extends ACell> Ref<T> storeRef(Ref<T> ref, int status,Consumer<Ref<ACell>> noveltyHandler);
+	public abstract <T extends ACell> Ref<T> storeRef(Ref<T> ref, int status,Consumer<Ref<ACell>> noveltyHandler) throws IOException;
 
 	/**
 	 * Stores a top level @Ref in long term storage as defined by this store implementation.
@@ -54,8 +56,9 @@ public abstract class AStore {
 	 * @param status Status to store at
 	 * @param noveltyHandler Novelty Handler function for Novelty detected. May be null.
 	 * @return The persisted Ref, of status STORED at minimum
+	 * @throws IOException in case of IO error during persistence
 	 */
-	public abstract <T extends ACell> Ref<T> storeTopRef(Ref<T> ref, int status,Consumer<Ref<ACell>> noveltyHandler);
+	public abstract <T extends ACell> Ref<T> storeTopRef(Ref<T> ref, int status,Consumer<Ref<ACell>> noveltyHandler) throws IOException;
 
 	
 	/**
@@ -81,9 +84,9 @@ public abstract class AStore {
 	 * Gets the Root Data from the Store. Root data is typically used to store the Peer state
 	 * in situations where the Peer needs to be restored from persistent storage.
 	 * 
-	 * @return Root data value from this store.
+	 * @return Root data value from this store. May be nil.
 	 * @throws IOException In case of store IO error
-	 * @throws MissingDataException is Root Data is missing
+	 * @throws MissingDataException if Root Data is missing
 	 */
 	public <T extends ACell> T getRootData() throws IOException {
 		Ref<T> ref=getRootRef();
@@ -92,15 +95,21 @@ public abstract class AStore {
 	}
 	
 	/**
-	 * Gets a Ref for Root Data. Root data is typically used to store the Peer state
+	 * Gets a Ref for the Root Data. Root data is typically used to store the Peer state
 	 * in situations where the Peer needs to be restored from persistent storage.
 	 * 
 	 * @return Root Data Ref from this store, or null if not found.
 	 * @throws IOException In case of store IO error
 	 */
+	@SuppressWarnings("unchecked")
 	public <T extends ACell> Ref<T> getRootRef() throws IOException {
 		Hash h=getRootHash();
 		Ref<T> ref=refForHash(h);
+		
+		// special case, we always recognise null even if not in store
+		if ((ref==null) &&(Hash.NULL_HASH.equals(h))) {
+			return (Ref<T>) Ref.NULL_VALUE;
+		}
 		return ref;
 	}
 

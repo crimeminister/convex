@@ -41,6 +41,8 @@ import convex.core.store.Stores;
 import convex.core.transactions.ATransaction;
 import convex.core.util.Counters;
 import convex.core.util.Utils;
+import convex.core.util.Shutdown;
+import convex.net.impl.HandlerException;
 import convex.peer.Config;
 
 /**
@@ -92,11 +94,11 @@ public class Connection {
 	private final MessageReceiver receiver;
 	private final MessageSender sender;
 
-	private Connection(ByteChannel clientChannel, Consumer<Message> receiveAction, AStore store,
+	private Connection(ByteChannel channel, Consumer<Message> receiveAction, AStore store,
 			AccountKey trustedPeerKey) {
-		this.channel = clientChannel;
+		this.channel = channel;
 		receiver = new MessageReceiver(receiveAction, this);
-		sender = new MessageSender(clientChannel);
+		sender = new MessageSender(channel);
 		this.store = store;
 		this.lastActivity=Utils.getCurrentTimestamp();
 		this.trustedPeerKey = trustedPeerKey;
@@ -198,8 +200,9 @@ public class Connection {
 			if (elapsed > Config.DEFAULT_CLIENT_TIMEOUT)
 				throw new TimeoutException("Couldn't connect after "+elapsed+"ms");
 			try {
-				Thread.sleep(10+elapsed/5);
+				Thread.sleep(10+elapsed/3);
 			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
 				throw new IOException("Connect interrupted", e);
 			}
 		}
@@ -233,7 +236,7 @@ public class Connection {
 			return null;
 		try {
 			return (InetSocketAddress) ((SocketChannel) channel).getRemoteAddress();
-		} catch (Exception e) {
+		} catch (IOException e) {
 			// anything fails, we have no address
 			return null;
 		}
@@ -258,7 +261,7 @@ public class Connection {
 			return null;
 		try {
 			return (InetSocketAddress) ((SocketChannel) channel).getLocalAddress();
-		} catch (Exception e) {
+		} catch (IOException e) {
 			// anything fails, we have no address
 			return null;
 		}
@@ -293,7 +296,7 @@ public class Connection {
 	/**
 	 * Sends a QUERY Message on this connection.
 	 *
-	 * @param form    A data object representing the query form
+	 * @param form    A data object representing the query source form
 	 * @param address The address with which to run the query, which may be null
 	 * @return The ID of the message sent, or -1 if send buffer is full.
 	 * @throws IOException If IO error occurs
@@ -365,9 +368,6 @@ public class Connection {
 	 * Sends a transaction if possible, returning the message ID (greater than zero)
 	 * if successful.
 	 *
-	 * Uses the configured CLIENT_STORE to store the transaction, so that any
-	 * missing data requests from the server can be honoured.
-	 *
 	 * Returns -1 if the message could not be sent because of a full buffer.
 	 *
 	 * @param signed Signed transaction
@@ -375,35 +375,25 @@ public class Connection {
 	 * @throws IOException In the event of an IO error, e.g. closed connection
 	 */
 	public long sendTransaction(SignedData<ATransaction> signed) throws IOException {
-		AStore temp = Stores.current();
-		try {
-			Stores.setCurrent(store);
-			long id = getNextID();
-			AVector<ACell> v = Vectors.of(id, signed);
-			boolean sent = sendObject(MessageType.TRANSACT, v);
-			return (sent) ? id : -1;
-		} finally {
-			Stores.setCurrent(temp);
-		}
+		long id = getNextID();
+		AVector<ACell> v = Vectors.of(id, signed);
+		boolean sent = sendObject(MessageType.TRANSACT, v);
+		return (sent) ? id : -1;
 	}
 
 	/**
 	 * Sends a message over this connection
 	 *
 	 * @param msg Message to send
-	 * @return true if message buffered successfully, false if failed
+	 * @return true if message buffered successfully, false if failed due to full buffer
+	 * @throws IOException If IO error occurs while sending
 	 */
-	public boolean sendMessage(Message msg)  {
-		try {
-			return sendBuffer(msg.getType(),msg.getMessageData());
-		} catch (IOException e) {
-			return false;
-		}
+	public boolean sendMessage(Message msg) throws IOException  {
+		return sendBuffer(msg.getType(),msg.getMessageData());
 	}
 
 	/**
-	 * Sends a full payload for the given message type. Should be called on the thread
-	 * that responds to missing data messages from the destination.
+	 * Sends a message with full payload for the given message type.
 	 *
 	 * @param type    Type of message
 	 * @param payload Payload value for message
@@ -490,7 +480,7 @@ public class Connection {
 		if (chan != null) {
 			try {
 				chan.close();
-			} catch (Exception e) {
+			} catch (IOException e) {
 				// TODO OK to ignore?
 			}
 		}
@@ -546,6 +536,9 @@ public class Connection {
 					// make this a daemon thread so it shuts down if everything else exits
 					selectorThread.setDaemon(true);
 					selectorThread.start();				
+					
+					// shut down connection loop at end of shutdown process
+					Shutdown.addHook(Shutdown.CONNECTION,()->{selectorThread.interrupt();});
 				}
 			}
 		}
@@ -555,7 +548,7 @@ public class Connection {
 		@Override
 		public void run() {
 			log.trace("Client selector loop starting...");
-			while (true) {
+			while (!Thread.currentThread().isInterrupted()) {
 				try {
 					selector.select(300);
 					Set<SelectionKey> keys = selector.selectedKeys();
@@ -586,8 +579,8 @@ public class Connection {
 							log.trace("Cancelled key");
 						}
 					}
-				} catch (Exception t) {
-					log.warn("Uncaught error in PeerConnection client selector loop: ", t);
+				} catch (IOException t) {
+					log.warn("Uncaught IO error in PeerConnection client selector loop: ", t);
 				}
 			}
 		}
@@ -618,9 +611,13 @@ public class Connection {
 			log.trace("Channel closed from: {}", conn.getRemoteAddress());
 			key.cancel();
 		} catch (BadFormatException e) {
-			log.warn("Cancelled connection to Peer: Bad data format from: " + conn.getRemoteAddress() + " "
+			log.debug("Cancelled connection to Peer: Bad data format from: " + conn.getRemoteAddress() + " "
 					+ e.getMessage());
 			key.cancel();
+		} catch (HandlerException e) {
+			log.warn("Cancelled connection: error in handler: " +e.getMessage());
+			key.cancel();
+			
 		}
 	}
 
@@ -635,8 +632,8 @@ public class Connection {
 	 * @throws IOException If IO error occurs
 	 * @throws BadFormatException If there is an encoding error
 	 */
-	public int handleChannelRecieve() throws IOException, BadFormatException {
-		AStore tempStore = Stores.current();
+	public int handleChannelRecieve() throws IOException, BadFormatException, HandlerException {
+		AStore savedStore = Stores.current();
 		try {
 			// set the current store for handling incoming messages
 			Stores.setCurrent(store);
@@ -649,7 +646,7 @@ public class Connection {
 			if (recd>0) lastActivity=System.currentTimeMillis();
 			return total;
 		} finally {
-			Stores.setCurrent(tempStore);
+			Stores.setCurrent(savedStore);
 		}
 	}
 

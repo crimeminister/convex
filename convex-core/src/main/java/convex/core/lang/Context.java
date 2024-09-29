@@ -4,6 +4,7 @@ import convex.core.Coin;
 import convex.core.Constants;
 import convex.core.ErrorCodes;
 import convex.core.ResultContext;
+import convex.core.SourceCodes;
 import convex.core.State;
 import convex.core.data.ACell;
 import convex.core.data.AHashMap;
@@ -29,16 +30,18 @@ import convex.core.data.prim.CVMLong;
 import convex.core.data.type.AType;
 import convex.core.data.util.BlobBuilder;
 import convex.core.init.Init;
-import convex.core.lang.impl.AExceptional;
-import convex.core.lang.impl.ATrampoline;
+import convex.core.lang.exception.AExceptional;
+import convex.core.lang.exception.AThrowable;
+import convex.core.lang.exception.ATrampoline;
+import convex.core.lang.exception.ErrorValue;
+import convex.core.lang.exception.Failure;
+import convex.core.lang.exception.HaltValue;
+import convex.core.lang.exception.RecurValue;
+import convex.core.lang.exception.ReducedValue;
+import convex.core.lang.exception.ReturnValue;
+import convex.core.lang.exception.RollbackValue;
+import convex.core.lang.exception.TailcallValue;
 import convex.core.lang.impl.CoreFn;
-import convex.core.lang.impl.ErrorValue;
-import convex.core.lang.impl.HaltValue;
-import convex.core.lang.impl.RecurValue;
-import convex.core.lang.impl.Reduced;
-import convex.core.lang.impl.ReturnValue;
-import convex.core.lang.impl.RollbackValue;
-import convex.core.lang.impl.TailcallValue;
 import convex.core.util.Economics;
 import convex.core.util.Errors;
 
@@ -101,7 +104,8 @@ public class Context {
 	private ChainState chainState;
 
 	/**
-	 * Local log is a [vector of [address values] entries]
+	 * Local log is an ordered [vector of [address caller scope location [values ...] ] entries
+	 * See CAD33 for details
 	 */
 	private AVector<AVector<ACell>> log;
 	private CompilerState compilerState;
@@ -264,19 +268,19 @@ public class Context {
 	}
 
 	/**
-	 * Creates an execution context with a default actor address.
+	 * Creates an CVM execution context
 	 *
-	 * Useful for Testing
+	 * Useful for Testing or local execution
 	 *
 	 * @param state State to use for this Context
 	 * @return Fake context
 	 */
-	public static Context createFake(State state) {
-		return createFake(state,Address.ZERO);
+	public static Context create(State state) {
+		return create(state,Address.ZERO);
 	}
 
 	/**
-	 * Creates a "fake" execution context for the given address.
+	 * Creates a execution context for the given address.
 	 *
 	 * Not valid for use in real transactions, but can be used to
 	 * compute stuff off-chain "as-if" the actor made the call.
@@ -285,13 +289,13 @@ public class Context {
 	 * @param origin Origin address to use
 	 * @return Fake context
 	 */
-	public static Context createFake(State state, Address origin) {
+	public static Context create(State state, Address origin) {
 		if (origin==null) throw new IllegalArgumentException("Null address!");
 		return create(state,0,Constants.MAX_TRANSACTION_JUICE,EMPTY_BINDINGS,NO_RESULT,ZERO_DEPTH,origin,null,origin, ZERO_OFFER, DEFAULT_LOG,null);
 	}
 
 	/**
-	 * Creates an initial execution context with the specified actor as origin, and reserving the appropriate
+	 * Creates an execution context with the specified actor as origin, and reserving the appropriate
 	 * amount of juice.
 	 *
 	 * Juice reserve is extracted from the actor's current balance.
@@ -301,11 +305,11 @@ public class Context {
 	 * @param juiceLimit Initial juice requested for Context
 	 * @return Initial execution context with reserved juice.
 	 */
-	public static Context createInitial(State state, Address origin,long juiceLimit) {
+	public static Context create(State state, Address origin,long juiceLimit) {
 		AccountStatus as=state.getAccount(origin);
 		if (as==null) {
 			// no account
-			return Context.createFake(state).withError(ErrorCodes.NOBODY);
+			return Context.create(state).withError(ErrorCodes.NOBODY);
 		}
 
 		return create(state,0,juiceLimit,EMPTY_BINDINGS,NO_RESULT,ZERO_DEPTH,origin,null,origin,INITIAL_JUICE,DEFAULT_LOG,null);
@@ -347,9 +351,11 @@ public class Context {
 		long memorySpend=0L; // usually zero
 
 		if (juiceFailure) {
-			// consume whole balance
+			// consume whole balance, reset state
 			juiceFees=balance;
+			state=initialState;
 		} else if (!rc.context.isExceptional()) {
+			// Transaction appears to have succeeded, and will do unless memory accounting fails
 			// do memory accounting as long as we didn't fail for any other reason
 			// compute memory delta (memUsed) and store in ResultContext
 			long memUsed=state.getMemorySize()-initialState.getMemorySize();
@@ -387,6 +393,11 @@ public class Context {
 				long allowanceCredit=-memUsed;
 				account=account.withMemory(allowance+allowanceCredit);
 			}
+		} else {
+			// Transaction failed for reason other than juice usage exceeding balance
+			AExceptional ex=rc.context.getExceptional();
+			// It's user :CODE that caused the error if catchable, otherwise :CVM source 
+			rc.source=(ex.isCatchable())?SourceCodes.CODE:SourceCodes.CVM;
 		}
 
 		// Compute total fees
@@ -411,8 +422,10 @@ public class Context {
 		Context rctx=this.withState(state);
 		if (juiceFailure) {
 			rctx=rctx.withError(ErrorCodes.JUICE, "Insuffienct balance to cover juice fees of "+rc.getJuiceFees());
+			rc.source=SourceCodes.CVM;
 		} else if (memoryFailure) {
 			rctx=rctx.withError(ErrorCodes.MEMORY, "Unable to allocate additional memory required for transaction ("+rc.memUsed+" bytes)");
+			rc.source=SourceCodes.CVM;
 		}
 		return rctx;
 	}
@@ -513,23 +526,11 @@ public class Context {
 	/**
 	 * Looks up a symbol's value in the current execution context, without any effect on the Context (no juice consumed etc.)
 	 *
-	 * @param symbol Symbol to look up. May be qualified
+	 * @param symbol Symbol to look up
 	 * @return Context with the result of the lookup (may be an undeclared exception)
 	 */
 	public Context lookup(Symbol symbol) {
 		// try lookup in dynamic environment
-		return lookupDynamic(symbol);
-	}
-
-	/**
-	 * Looks up a value in the dynamic environment. Consumes no juice.
-	 *
-	 * Returns an UNDECLARED exception if the symbol cannot be resolved.
-	 *
-	 * @param symbol Symbol to look up
-	 * @return Updated Context
-	 */
-	public Context lookupDynamic(Symbol symbol) {
 		Address address=getAddress();
 		return lookupDynamic(address,symbol);
 	}
@@ -545,7 +546,7 @@ public class Context {
 	 */
 	public Context lookupDynamic(Address address, Symbol symbol) {
 		AccountStatus as=getAccountStatus(address);
-		if (as==null) return withError(ErrorCodes.NOBODY,"No account found for: "+address+"/"+symbol.toString());
+		if (as==null) return withError(ErrorCodes.NOBODY,"No account found for: "+address);
 		MapEntry<Symbol,ACell> envEntry=lookupDynamicEntry(as,symbol);
 
 		// if not found, return UNDECLARED error
@@ -564,18 +565,7 @@ public class Context {
 	 * @return Metadata for given symbol (may be empty) or null if undeclared
 	 */
 	public AHashMap<ACell,ACell> lookupMeta(Symbol sym) {
-		AHashMap<Symbol, ACell> env=getEnvironment();
-		if ((env!=null)&&env.containsKey(sym)) {
-			return getMetadata().get(sym,Maps.empty());
-		}
-		AccountStatus as = getAliasedAccount(env);
-		if (as==null) return null;
-
-		env=as.getEnvironment();
-		if (env.containsKey(sym)) {
-			return as.getMetadata().get(sym,Maps.empty());
-		}
-		return null;
+		return lookupMeta(getAddress(),sym);
 	}
 
 	/**
@@ -585,12 +575,19 @@ public class Context {
 	 * @return Metadata for given symbol (may be empty) or null if undeclared
 	 */
 	public AHashMap<ACell,ACell> lookupMeta(Address address,Symbol sym) {
-		if (address==null) return lookupMeta(sym);
-		AccountStatus as=getAccountStatus(address);
-		if (as==null) return null;
-		AHashMap<Symbol, ACell> env=as.getEnvironment();
-		if (env.containsKey(sym)) {
-			return as.getMetadata().get(sym,Maps.empty());
+		if (address==null) address=getAddress();
+		for (int i=0; i<Constants.LOOKUP_DEPTH; i++) {
+			AccountStatus as=getAccountStatus(address);
+			if (as==null) return null;
+			AHashMap<Symbol, ACell> env=as.getEnvironment();
+			if (env.containsKey(sym)) {
+				return as.getMetadata().get(sym,Maps.empty());
+			}
+			
+			// go to parent
+			if (Core.CORE_ADDRESS.equals(address)) break;
+			address=getParentAddress(as);
+			if (address==null) return null;
 		}
 		return null;
 	}
@@ -599,30 +596,26 @@ public class Context {
 	 * Looks up the address of the account that defines a given Symbol
 	 * @param sym Symbol to look up
 	 * @param address Address to look up in first instance (null for current address).
-	 * @return Context with result as the address defining the given symbol (or null if undeclared)
+	 * @return Address defining the given symbol (or null if undeclared)
 	 */
-	public Context lookupDefiningAddress(Address address,Symbol sym) {
-		Context ctx=this;
+	public Address lookupDefiningAddress(Address address,Symbol sym) {
 		Address addr=(address==null)?getAddress():address;
-
-		while (addr!=null) {
+		for (int i=0; i<Constants.LOOKUP_DEPTH; i++) {
+			if (addr==null) break;
 			AccountStatus as=getAccountStatus(addr);
-			if (as==null) return ctx.withResult(Juice.LOOKUP, null);
+			if (as==null) return null;
 			
 			AHashMap<Symbol, ACell> env=as.getEnvironment();
 			MapEntry<Symbol, ACell> entry = env.getEntry(sym);
 			if (entry!=null) {
-				return ctx.withResult(Juice.LOOKUP, addr);
+				return addr;
 			}
 			
-			ctx=ctx.consumeJuice(Juice.LOOKUP);
-			if (ctx.isExceptional()) return ctx;
-			
+			// go to parent
 			if (addr.equals(Core.CORE_ADDRESS)) break;
 			addr=getParentAddress(as);
 		}
-		
-		return ctx.withResult(Juice.LOOKUP, null);
+		return null;
 	}
 
 	private Address getParentAddress(AccountStatus as) {
@@ -638,7 +631,7 @@ public class Context {
 	 */
 	@SuppressWarnings("unchecked")
 	public <T extends ACell> T lookupValue(String symName) {
-		return (T) lookupValue(Symbol.create(symName));
+		return (T) lookupValue(getAddress(),Symbol.create(symName));
 	}
 	
 	/**
@@ -647,17 +640,7 @@ public class Context {
 	 * @return Value for the given symbol or null if undeclared
 	 */
 	public ACell lookupValue(Symbol sym) {
-		AHashMap<Symbol, ACell> env=getEnvironment();
-
-		// Lookup in current environment first
-		MapEntry<Symbol,ACell> me=env.getEntry(sym);
-		if (me!=null) {
-			return me.getValue();
-		}
-
-		AccountStatus as = getAliasedAccount(env);
-		if (as==null) return null;
-		return as.getEnvironment().get(sym);
+		return lookupValue(getAddress(),sym);
 	}
 
 	/**
@@ -667,11 +650,9 @@ public class Context {
 	 * @return Value for the given symbol or null if undeclared
 	 */
 	public ACell lookupValue(Address address,Symbol sym) {
-		if (address==null) return lookupValue(sym);
-		AccountStatus as=getAccountStatus(address);
-		if (as==null) return null;
-		AHashMap<Symbol, ACell> env=as.getEnvironment();
-		return env.get(sym);
+		MapEntry<Symbol,ACell> entry=lookupDynamicEntry(address,sym);
+		if (entry==null) return null;
+		return entry.getValue();
 	}
 
 	/**
@@ -682,31 +663,24 @@ public class Context {
 	 * @return Environment entry
 	 */
 	public MapEntry<Symbol,ACell> lookupDynamicEntry(Address address,Symbol sym) {
+		if (address==null) address=getAddress();
 		AccountStatus as=getAccountStatus(address);
 		if (as==null) return null;
 		return lookupDynamicEntry(as,sym);
 	}
 
-
-
 	private MapEntry<Symbol,ACell> lookupDynamicEntry(AccountStatus as,Symbol sym) {
 		// Get environment for Address, or default to initial environment
-		AHashMap<Symbol, ACell> env = (as==null)?Core.ENVIRONMENT:as.getEnvironment();
+		for (int i=0; i<Constants.LOOKUP_DEPTH; i++) {
+			if (as==null) return Core.ENVIRONMENT.getEntry(sym);
 
-
-		MapEntry<Symbol,ACell> result=env.getEntry(sym);
-
-		if (result==null) {
-			AccountStatus aliasAccount=getAliasedAccount(env);
-			result = lookupAliasedEntry(aliasAccount,sym);
+			MapEntry<Symbol,ACell> result=as.getEnvironment().getEntry(sym);
+			if (result!=null) return result;
+			
+			Address parent=getParentAddress(as);
+			as=getAccountStatus(parent); // if not found, will be null
 		}
-		return result;
-	}
-
-	private MapEntry<Symbol,ACell> lookupAliasedEntry(AccountStatus as,Symbol sym) {
-		if (as==null) return null;
-		AHashMap<Symbol, ACell> env = as.getEnvironment();
-		return env.getEntry(sym);
+		return null;
 	}
 
 	/**
@@ -721,21 +695,6 @@ public class Context {
 		if (a==null) return null;
 
 		return chainState.state.getAccount(a);
-	}
-
-	/**
-	 * Looks up the account for an Symbol alias in the given environment.
-	 * @param env
-	 * @param path An alias path
-	 * @return AccountStatus for the alias, or null if not present
-	 */
-	private AccountStatus getAliasedAccount(AHashMap<Symbol, ACell> env) {
-		// TODO: alternative core accounts
-		return getCoreAccount();
-	}
-
-	private AccountStatus getCoreAccount() {
-		return getState().getAccount(Core.CORE_ADDRESS);
 	}
 
 	/**
@@ -829,7 +788,7 @@ public class Context {
 	 * @return an AExceptional instance
 	 */
 	public AExceptional getExceptional() {
-		if (exception==null) throw new Error("Can't get exceptional value for context with result: "+exception);
+		if (exception==null) throw new IllegalStateException("Can't get exceptional value for context with result: "+exception);
 		return exception;
 	}
 
@@ -876,7 +835,7 @@ public class Context {
 	public Context withJuiceError() {
 		// set juice to zero. Can't consume more that we have!
 		this.juice=juiceLimit;
-		return withError(ErrorCodes.JUICE,"Out of juice!");
+		return withException(Failure.juice());
 	}
 
 	public Context withException(AExceptional exception) {
@@ -920,10 +879,15 @@ public class Context {
 
 	private Context withChainState(ChainState newChainState) {
 		if (chainState==newChainState) return this;
-		long oldBalance=chainState.getOriginAccount().getBalance();
+		
+		// if the chain state changed, we need to check if coin balance was reduced: 
+		// in which case we have to check the juice limit again
+		AccountStatus oldOrigin=chainState.getOriginAccount();
 		chainState=newChainState;
-		long newBalance=newChainState.getOriginAccount().getBalance();
-		if (newBalance<oldBalance) {
+		AccountStatus newOrigin=newChainState.getOriginAccount();
+		if (oldOrigin==newOrigin) return this;
+		long newBalance=newOrigin.getBalance();
+		if (newBalance<oldOrigin.getBalance()) {
 			reviseJuiceLimit(newBalance);
 		}
 		return this;
@@ -931,7 +895,6 @@ public class Context {
 
 	private void reviseJuiceLimit(long newBalance) {
 		long juicePrice=chainState.state.getJuicePrice().longValue();
-		
 		juiceLimit=Math.min(juiceLimit, Juice.calcAvailable(newBalance, juicePrice));
 	}
 
@@ -971,7 +934,7 @@ public class Context {
 	}
 	
 	/**
-	 * Executes a form at the top level. Handles top level halt, recur and return.
+	 * Executes a form at the top level in the current account. Handles top level halt, recur and return.
 	 *
 	 * Returning an updated context containing the result or an exceptional error.
 	 *
@@ -1038,9 +1001,9 @@ public class Context {
 				return ctx.withResult(val);
 			}
 
-			if (v instanceof ErrorValue) {
+			if (v instanceof AThrowable) {
 				if (fn instanceof CoreFn) {
-					ErrorValue ev=(ErrorValue)v;
+					AThrowable ev=(AThrowable)v;
 					ev.addTrace("In core function: "+RT.str(fn)); // TODO: Core.getCoreName() ?
 				}
 			}
@@ -1781,15 +1744,19 @@ public class Context {
 				rv=((ReturnValue<?>)ex).getValue();
 			} else {
 				rollback=true;
-				String msg;
-				if (ex instanceof ATrampoline) {
-					msg="attempt to recur or tail call outside of a function body";
-				} if (ex instanceof Reduced) {
-					msg="reduced used outside of a reduce operation";
+				if (ex instanceof Failure) {
+					rv=ex;
 				} else {
-					msg="Unhandled Exception with Code:"+ex.getCode();
+					String msg;
+					if (ex instanceof ATrampoline) {
+						msg="attempt to recur or tail call outside of a function body";
+					} if (ex instanceof ReducedValue) {
+						msg="reduced used outside of a reduce operation";
+					} else {
+						msg="Unhandled Exception with Code:"+ex.getCode();
+					}
+					rv=ErrorValue.create(ErrorCodes.EXCEPTION, msg);
 				}
-				rv=ErrorValue.create(ErrorCodes.EXCEPTION, msg);
 			}
 		} else {
 			rv=returnContext.getResult();
@@ -2182,7 +2149,7 @@ public class Context {
 	 * @return Result type of new Context
 	 */
 	public Context forkWithAddress(Address newAddress) {
-		return createFake(getState(),newAddress);
+		return create(getState(),newAddress);
 	}
 
 	/**
@@ -2200,11 +2167,12 @@ public class Context {
 	 */
 	public Context appendLog(AVector<ACell> values) {
 		Address addr=getAddress();
+		ACell scope=getScope();
 		AVector<AVector<ACell>> log=this.log;
 		if (log==null) {
 			log=Vectors.empty();
 		}
-		AVector<ACell> entry = Vectors.of(addr,values);
+		AVector<ACell> entry = Vectors.of(addr,scope,null,values);
 		log=log.conj(entry);
 
 		this.log=log;

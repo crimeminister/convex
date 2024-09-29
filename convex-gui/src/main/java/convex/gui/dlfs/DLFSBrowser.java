@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 
+import javax.swing.JFrame;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 
@@ -13,7 +14,6 @@ import convex.core.data.AVector;
 import convex.dlfs.DLFS;
 import convex.dlfs.DLFileSystem;
 import convex.dlfs.DLPath;
-import convex.dlfs.impl.DLFSLocal;
 import convex.gui.components.AbstractGUI;
 import convex.gui.state.StateExplorer;
 import convex.gui.utils.Toolkit;
@@ -88,9 +88,11 @@ public class DLFSBrowser extends AbstractGUI {
 			}
 			panel.refreshView();
 		}));
-		
+	}
+	
+	@Override
+	public void afterRun() {
 		getFrame().setJMenuBar(menuBar);
-		
 	}
 	
 	public DLFileSystem getDrive() {
@@ -102,8 +104,8 @@ public class DLFSBrowser extends AbstractGUI {
 	}
 
 
-	public static DLFSLocal createDemoDrive() {
-		DLFSLocal drive=DLFS.createLocal();
+	public static DLFileSystem createDemoDrive() {
+		DLFileSystem drive=DLFS.createLocal();
 		drive.updateTimestamp();
 		
 		DLPath p=drive.getRoot();
@@ -138,6 +140,14 @@ public class DLFSBrowser extends AbstractGUI {
 		
 		DLFSBrowser gui=new DLFSBrowser();
 		gui.run();
+		gui.waitForClose();
+		System.exit(0);
+	}
+
+	@Override
+	public void setupFrame(JFrame frame) {
+		frame.getContentPane().setLayout(new MigLayout());
+		frame.getContentPane().add(this,"dock center");
 	}
 	
 

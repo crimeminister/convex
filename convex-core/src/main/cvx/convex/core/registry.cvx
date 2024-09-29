@@ -1,0 +1,296 @@
+'convex.registry
+
+(set-holding *address*
+             {:description ["CNS Registry - for resolving arbitrary symbols to addresses."
+                            "Hosts the CNS root namespace(s)."]
+              :name        "Convex Name Service"})
+
+;;
+;;
+;; Deployed by default during network initialisation at a well-known address.
+;; Initialization takes care of registering this registry alongside other actors and libraries.
+;;
+;; This make it accessible from early in network bootstrap as a way to register and locate Accounts.
+;;
+;;
+
+(declare update create)
+
+;;;;;;;;;; Values
+
+(def trust
+  ^{:private true}
+  ;; Address of `convex.trust`, it is deployed right after this account, hence it is predictable.
+  (address (inc (long *address*))))
+
+;;;;;;;;;; Address metadata registry
+
+(defn lookup
+  ^{:callable true
+    :doc       {:description "Looks up registry metadata for a given address."
+                :examples    [{:code "(call *registry* (lookup somebody)"}]
+                :signature   [{:params [addr]}]}}
+  [addr]
+  (get-holding (address addr)))
+
+
+(defn register
+  ^{:callable true
+    :doc       {:description "Registers metadata for the *caller* account. Metadata can be an arbitrary value, but by convention is a map with defined fields."
+                :examples    [{:code "(call *registry* (register  {:name \"My Name\"})"}]
+                :signature   [{:params [metadata]}]}}
+  [data]
+  (set-holding *caller* data))
+
+;;;;;;;;;;;;;; Convex Name System root
+
+;; CNS root reference, i.e. this registry with an empty vector key
+(def root [~*address* []])
+
+;; Root controller: the Convex governance account #6
+(def root-controller #6)
+
+;; Map of `path vector` -> `segment name` -> `[value trust-monitor meta child]`
+;; Where:
+;;    value = Target value for CNS resolution, usually an address or scoped address
+;;	  trust-monitor = controller for this CNS record
+;;    meta = metadata field		
+;;    child = child CNS node, may be nil. Usually a scoped address defining an actor and a path key e.g. [#5675 "bob"] 
+;;
+;; Trust monitor may be called with following actions:
+;;   :update  - Update CNS record
+;;
+;; Node key is implementation defined in general, but for main registry uses:
+;;    Empty vector for CNS root
+;;    Vector of segment strings for paths
+(def cns-database
+   ^{:private? true}
+  {[] {"init" [#1 #1 nil nil]}})
+
+;; Controllers for each CNS node managed under this actor
+;; Default root is controlled by INIT account
+;; Checked for permissions:
+;;   :control - change CNS node ownership
+;;   :create  - create new CNS entry in this node (child path segment as object)
+;;   :delete  - delete CNS entry in this node     (child path segment as object)
+(def cns-owners 
+  {[] root-controller})
+
+(defn -check [sym]
+  (cond (symbol? sym) 
+    (split (name sym) \.)	  
+    (fail :ARGUMENT "CNS name must be a Symbol")))
+
+(defn -check-values [values]
+  (cond 
+    (vector? values) 
+       (cond 
+    	 (= 4 (count values)) values
+    	 (fail :ARGUMENT "CNS record must have 4 elements")) 
+    (fail :ARGUMENT "CNS record must be a Vector")))
+
+;; ========================================================
+;; CNS User API - See CAD014
+
+(defn read ^{
+	:callable    true    ;; can be called or used a library function
+	:doc         {:description "Reads a CNS record as a [value controller metadata child] vector, or nil if record does not exist."
+    :examples    [{:code "(*registry*/read 'my.actor.name)"}]
+    :signature   [{:params [sym]}]}}
+  [sym]
+	(query  ;; wrap in query because this should all be read-only, no nasty state surprises
+	  (let [path (-check sym)
+	        n (count path)]
+        (loop [i 0 
+               ref root]
+          (let [pname (nth path i)
+                rec (call ref (cns-read pname))]
+            (cond 
+              ;; return nil if no entry found
+        	  (nil? rec) (return nil)
+              
+              ;; Return record if at end of path
+              (>= (inc i) n) (return rec)
+        	  
+              ;; recurse into next level CNS node
+              (if-let [child (nth rec 3)]
+            	(recur (inc i) child))
+      
+              ;; otherwise fall through with nil return value
+              ))))))
+
+(defn resolve ^{
+	:callable    true    ;; can be called or used a library function
+	:doc         {:description "Resolves a CNS entry. Returns nil if entry does not exist"
+    :examples    [{:code "(*registry*/resolve 'my.actor.name)"}]
+    :signature   [{:params [sym]}]}}
+  [sym]
+  (get (read sym) 0))
+
+(defn create ^{
+	:doc  {:description "Creates a CNS entry with given data [value, controller, metadata, child]"
+	       :examples    [{:code "(*registry*/create 'my.actor.name target *address* {:some :metadata})"}]
+	       :signature   [{:params [sym]}
+	                     {:params [sym value]}
+	                     {:params [sym value cont]}
+	                     {:params [sym value cont meta]}
+	                     {:params [sym value cont meta child]}]}}
+  ([sym & vals] 
+	(let [nv (count vals)
+	      _ (cond (> nv 4) (fail :ARITY "Too many CNS record values"))
+	      path (-check sym)
+	      n (count path)]
+	  (cond (zero? n) (fail :ARGUMENT "CNS path must have at least one segment"))
+	  (loop [i 0 
+		     ref root]
+	    (let [pname (get path i)]
+		 (cond 
+		    (nil? ref) 
+		      (fail :STATE (str "No CNS child path at: " (slice path 0 i)))
+		    
+			;; are we at end of path? if so, perform write at current position
+		    (>= (inc i) n) 
+			   (let [rec (cond (< nv 4) 
+					   (let [evs (call ref (cns-read pname))
+					         evs (or evs [nil *address* nil nil])] 
+						  (concat vals (slice evs nv 4)))
+			           vals) ]
+				  (call ref (cns-write pname rec)))
+			
+			;; check for existing mapping at this node
+			(let [rec (call ref (cns-read pname))]
+		    	(if-let [child (get rec 3)]
+		    		(recur (inc i) child)	
+				
+		    		;; need to construct a new (empty) intermediate CNS child node here
+		    		(let [cont (or (get vals 1) *address*) ;; controller for intermediate node
+		    		      nref (call ref (cns-create-node pname cont))
+		    		      rec (cond rec 
+		    		    		  (assoc rec 3 nref) ;; update existing child node link
+		    		    		  [nil cont nil nref])] 
+			    	   (call ref (cns-write pname rec))
+			    	   (recur (inc i) nref))))
+		 ))
+	  )
+	  ;; TODO: Not clear what default return value should be? [~*address* path]?
+	  )))
+
+(defn update
+	^{:doc  {:description "Updates a CNS entry with given value. Record must already exist."
+    :signature   [{:params [sym value]}]}}
+  [sym value]
+  (if-let [rec (read sym)]
+	(apply create sym (assoc rec 0 value))
+	(fail :STATE (str "CNS record to update does not exist: " sym))))
+
+(defn control
+	^{:doc {:description "Change controller for a CNS node."
+			:signature   [{:params [name controller]}]}}
+  [sym cont]
+  (if-let [rec (read sym)]
+    (apply create sym (assoc rec 1 cont))
+    (fail :STATE "CNS record does not exist")))
+
+;; ============================================================================
+;; Standard CNS SPI - exprected to be callable by libraries / advanced users
+
+;; private function to get controller for a rexcord
+(defn -controller [path]
+  (cond
+	(empty? path) (cond (vector? path) root-controller (fail :ARGMENT "CNS path must be a vector"))
+	(let [[& ps p] path]
+	  (get-in cns-database [ps p 1]))))
+
+
+(defn change-control
+  ^{:callable true
+    :doc       {:description "Changes controller for a CNS node. May only be performed by a current controller."
+                :examples    [{:code "(call *registry* (cns-control 'my.actor trust-monitor-address)"}]
+                :signature   [{:params [name addr]}]}}
+  [controller]
+  (let [path *scope*]
+    (when (not (trust/trusted? (get cns-owners path) *caller* :control))
+      (fail :TRUST "Forbidden to change CNS node controller"))
+    (set-in! cns-owners [path] controller)))
+
+(defn cns-create-node
+	^{:callable true
+	  :doc {:description "Creates a child CNS node, if it does not yet exist. Returns child node scoped reference."
+			:examples    [{:code "(call parent-node (cns-create-node \\\"child-name\\\"))"}]
+			:signature   [{:params [sym]}]}}
+	[pname owner]
+	(or (trust/trusted? (get cns-owners *scope*) *caller* :create pname) (fail :TRUST "Forbidden to create CNS node"))
+	(let [rec (get-in cns-database [*scope* pname])
+	      _ (if-let [existing (get rec 3)] (return existing))
+	      path (conj *scope* pname)
+	      ref [~*address* path]]
+	  (set-in! cns-owners [path] owner)  ;; new node owner
+	  (set-in! cns-database [path] {})   ;; new mapping to child records
+	  ref))
+
+(defn cns-delete-node
+		^{:callable true
+		  :doc {:description "Deletes a child CNS node. Returns true if deleted"
+				:examples    [{:code "(call parent-node (cns-create-node \\\"child-name\\\"))"}]
+				:signature   [{:params [sym]}]}}
+		[pname owner]
+		(or (trust/trusted? (get cns-owners *scope*) *caller* :delete pname) 
+				(fail :TRUST "Forbidden to delete CNS node"))
+		(let [path (conj *scope* pname)
+		      existing (get cns-database path)]
+		  (when existing
+			;; if node exists in this actor, delete it
+			(set! cns-owners (dissoc cns-owners path))
+			(set! cns-database (dissoc cns-database path)))
+		  
+		  ;; delete record
+		  (set! cns-database (dissoc-in cns-database [*scope* pname])) ;; delete record
+		  (boolean existing)))
+
+(defn cns-read
+	^{:callable true
+	  :doc {:description "Reads a child CNS record from this CNS node. Assumes a path vector passed in *scope*."
+			:examples    [{:code "(call [cns-node cns-key] (cns-read \\\"my-name\\\"))"}]
+			:signature   [{:params [sym]}]}}
+	[pname]
+	(get-in cns-database [*scope* pname]))
+
+(defn cns-write
+	^{:callable true
+	  :doc {:description "Writes a CNS record from this Actor. Assumes a path vector passed in *scope*."
+	  :examples    [{:code "(call [cns-node cns-key] (cns-write \"my-name\" new-record))"}]
+						:signature   [{:params [sym]}]}}
+	[pname values]
+	(or (str? pname) (fail :ARGUMENT "CNS path element must be a String"))  
+	(-check-values values)  
+    (let [sm (get cns-database *scope*)]
+	  (or sm (error :STATE "CNS Node key not valid"))
+	  (if-let [rec (get sm pname)]
+    	;; This is an existing record, so check record controller
+    	(or (trust/trusted? (get rec 1) *caller* :update) (fail :TRUST "Forbidden to update CNS record"))
+    	
+    	;; This is a new record, so check create permission
+    	(or (trust/trusted? (-controller *scope*) *caller* :create pname) (fail :TRUST "Forbidden to create CNS record")))
+    		
+      ;; update record since at this point all required checks have passed
+	  (set-in! cns-database [*scope* pname] values)
+	  values))
+
+;; =========================================
+;; Trust SPI
+;;
+;; Yes, CNS records are trust monitors!
+;; Delegates trust check to the record controller
+
+(defn check-trusted? 
+  ^:callable
+  [subject action object]
+  (cond
+	(empty? *scope*) (trust/trusted? root-controller subject action object)
+	(let [[& ps pname] *scope*
+	      cont (get-in cns-database [ps pname 1])]
+	  (trust/trusted? cont subject action object))))
+
+
+
+

@@ -22,6 +22,7 @@ import convex.core.data.prim.CVMChar;
 import convex.core.data.prim.CVMDouble;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
+import convex.core.exceptions.MissingDataException;
 import convex.core.lang.AFn;
 import convex.core.lang.AOp;
 import convex.core.lang.Core;
@@ -38,6 +39,8 @@ import convex.core.transactions.Transfer;
 import convex.core.util.Bits;
 import convex.core.util.Trees;
 import convex.core.util.Utils;
+
+import convex.core.exceptions.Panic;
 
 /**
  * Static utility class for message format encoding
@@ -606,8 +609,10 @@ public class Format {
 			throw e;
 		} catch (IndexOutOfBoundsException e) {
 			throw new BadFormatException("Read out of blob bounds when decoding with tag 0x"+Utils.toHexString(tag));
+		} catch (MissingDataException e) {
+			throw e;
 		} catch (Exception e) {
-			throw new BadFormatException("Unexpected Exception when decoding: "+e.getMessage(), e);
+			throw new BadFormatException("Unexpected Exception when decoding ("+tag+"): "+e.getMessage(), e);
 		}
 		throw new BadFormatException(badTagMessage(tag));
 	}
@@ -839,7 +844,7 @@ public class Format {
 		if (result==null) return null; // null value OK at top level
 		
 		int rl=Utils.checkedInt(result.getEncodingLength());
-		if (rl==ml) return result; // Already complete
+		if (rl==ml) return result; // Fast path if already complete
 		
 		// read remaining cells
 		HashMap<Hash,ACell> hm=new HashMap<>();
@@ -1024,7 +1029,7 @@ public class Format {
 			if (ix>0) ix=Format.writeVLCCount(msg,ix,elen);
 			ix=enc.getBytes(msg, ix);
 		}
-		if (ix!=ml) throw new Error("Bad message length expected "+ml+" but was: "+ix);
+		if (ix!=ml) throw new Panic("Bad message length expected "+ml+" but was: "+ix);
 		return Blob.wrap(msg);
 	}
 
@@ -1059,7 +1064,7 @@ public class Format {
 			
 			ix=enc.getBytes(msg,ix);
 		}
-		if (ix!=ml) throw new Error("Bad message length expected "+ml+" but was: "+ix);
+		if (ix!=ml) throw new Panic("Bad message length expected "+ml+" but was: "+ix);
 		
 		return Blob.wrap(msg);
 	}

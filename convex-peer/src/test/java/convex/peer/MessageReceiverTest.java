@@ -1,13 +1,13 @@
 package convex.peer;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Random;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import convex.core.Result;
 import convex.core.data.ABlob;
@@ -23,11 +23,12 @@ import convex.net.MemoryByteChannel;
 import convex.net.Message;
 import convex.net.MessageReceiver;
 import convex.net.MessageType;
+import convex.net.impl.HandlerException;
 
 public class MessageReceiverTest {
 
 	@Test
-	public void testSimpleMessages() throws IOException, BadFormatException {
+	public void testSimpleMessages() throws IOException, BadFormatException, HandlerException {
 		final ArrayList<Message> received = new ArrayList<>();
 
 		MemoryByteChannel chan = MemoryByteChannel.create(10000);
@@ -57,7 +58,7 @@ public class MessageReceiverTest {
 	}
 	
 	@Test
-	public void testBigMessage() throws IOException, BadFormatException {
+	public void testBigMessage() throws IOException, BadFormatException, HandlerException {
 		final ArrayList<Message> received = new ArrayList<>();
 
 		MemoryByteChannel chan = MemoryByteChannel.create(1000);

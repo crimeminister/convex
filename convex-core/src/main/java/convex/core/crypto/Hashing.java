@@ -7,6 +7,7 @@ import java.security.NoSuchAlgorithmException;
 import org.bouncycastle.jcajce.provider.digest.Keccak;
 
 import convex.core.data.Hash;
+import convex.core.exceptions.Panic;
 
 /**
  * Class for static Hashing functionality
@@ -118,7 +119,7 @@ public class Hashing {
 	 */
 	private static final ThreadLocal<MessageDigest> sha256Store;
 	/**
-	 * Private store for thread-local MessageDigent objects. Avoids cost of
+	 * Private store for thread-local MessageDigest objects. Avoids cost of
 	 * recreating these every time they are needed.
 	 */
 	private static final ThreadLocal<MessageDigest> sha3Store;
@@ -127,7 +128,7 @@ public class Hashing {
 			try {
 				return MessageDigest.getInstance("SHA-256");
 			} catch (NoSuchAlgorithmException e) {
-				throw new Error("SHA-256 algorithm not available", e);
+				throw new Panic("SHA-256 algorithm not available", e);
 			}
 		});
 		
@@ -135,12 +136,12 @@ public class Hashing {
 			try {
 				return MessageDigest.getInstance("SHA3-256");
 			} catch (NoSuchAlgorithmException e) {
-				throw new Error("SHA3-256 algorithm not available", e);
+				throw new Panic("SHA3-256 algorithm not available", e);
 			}
 		});
 	}
 	/**
-	 * Threadlocal store for MessageDigest instances. TODO: figure out if this is
+	 * Thread local store for MessageDigest instances. TODO: figure out if this is
 	 * useful for performance. Probably not since digest initialisation is the
 	 * bottleneck anyway?
 	 */

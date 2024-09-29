@@ -16,6 +16,7 @@ import javax.crypto.spec.PBEKeySpec;
 
 import convex.core.data.Blob;
 import convex.core.util.Utils;
+import convex.core.exceptions.Panic;
 
 public class BIP39 {
 	static final String[] wordlist = { "abandon", "ability", "able", "about", "above", "absent", "absorb",
@@ -244,7 +245,7 @@ public class BIP39 {
 	}
 
 	/**
-	 * Converts a BIP39 seed to an Ed25519 seed. This is defined as the SHA3-256 hash of the BIP39 seed
+	 * Converts a BIP39 seed to an Ed25519 seed. This is done by taking the first 32 bytes of the SLIP-10 master key
 	 * 
 	 * Note: longer term users may want hierarchical deterministic wallet generation
 	 * 
@@ -261,14 +262,14 @@ public class BIP39 {
 	}
 	
 	/**
-	 * Return true if the string is a valid mnemonic phrase
+	 * Tests if the string is a valid mnemonic phrase, returns null if no problem
 	 * @param s String to be tested as a mnemonic phrase
 	 * @return String containing reason that mnemonic is not valid, or null if OK
 	 */
 	public static String checkMnemonic(String s) {
 		List<String> words=getWords(s);
 		if (words.size()<MIN_WORDS) return "Insufficient words in BIP39 mnemonic (min="+MIN_WORDS+")";
-		return null;
+		return checkWords(words);
 	}
 	
 	/**
@@ -299,14 +300,15 @@ public class BIP39 {
 		    byte[] bs = key.getEncoded();
 		    return Blob.wrap(bs);
 		} catch (NoSuchAlgorithmException| InvalidKeySpecException e) {
-			throw new Error("Security error getting BIP39 seed",e);
+			throw new Panic("Security error getting BIP39 seed",e);
 		}
 	}
-
-	public static String createSecureMnemonic() {
-		return createSecureMnemonic(12);
-	}
 	
+	/**
+	 * Creates a normalised BIP39 mnemonic with the specified number of words
+	 * @param numWords Number of words to generate
+	 * @return String containing normalised BIP39 mnemonic
+	 */
 	public static String createSecureMnemonic(int numWords) {
 		return Utils.joinStrings(createWords(new SecureRandom(),numWords)," ");
 	}
@@ -367,6 +369,18 @@ public class BIP39 {
 			sb.append(w);
 		}
 		return sb.toString();
+	}
+
+	/**
+	 * Check a list of words, returns the first word not in word list
+	 * @param words List of words to check
+	 * @return First incorrect word, or null if all OK
+	 */
+	public static String checkWords(List<String> words) {
+		for (String w: words) {
+			if (!lookup.containsKey(w)) return w;
+		}
+		return null;
 	}
 	
 }

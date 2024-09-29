@@ -8,6 +8,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+
+import java.io.IOException;
 
 import convex.core.Constants;
 import convex.core.data.Refs.RefTreeStats;
@@ -22,7 +25,7 @@ import convex.core.util.Utils;
 import convex.test.Samples;
 
 /**
- * Generic test functions for arbitrary Data Objects.
+ * Generic test functions for arbitrary Data values.
  */
 public class ObjectsTest {
 	/**
@@ -34,7 +37,11 @@ public class ObjectsTest {
 	public static void doAnyValueTests(ACell a) {
 		Hash h=Hash.get(a);
 				
-		a=Cells.persist(a);
+		try {
+			a=Cells.persist(a);
+		} catch (IOException e) {
+			fail(e);
+		}
 		Ref<ACell> r = Ref.get(a);
 		assertEquals(h,r.getHash());
 		assertSame(a, r.getValue()); // shouldn't get GC'd because we have a strong reference
@@ -47,7 +54,7 @@ public class ObjectsTest {
 
 
 	/**
-	 * Generic tests for an arbitrary vaid Cell. May or may not be a valid CVM value. 
+	 * Generic tests for an arbitrary valid Cell. May or may not be a valid CVM value. 
 	 * 
 	 * Checks required Cell properties across a number of themes.
 	 * 
@@ -64,9 +71,53 @@ public class ObjectsTest {
 		doRefContainerTests(a);
 		doCellRefTests(a);
 		doPrintTests(a);
+		doBranchTests(a);
 		doMemorySizeTests(a);
 	}
 	
+	private static void doBranchTests(ACell a) {
+		int bc=a.getBranchCount();
+		assertTrue(bc>=0);
+		assertTrue(bc<=Cells.MAX_BRANCH_COUNT);
+		
+		// out of range branches should be null
+		assertNull(a.getBranchRef(-1));
+		assertNull(a.getBranchRef(bc));
+		
+		// bc of zero equivalent to completely encoded
+		assertEquals(a.isCompletelyEncoded(),bc==0);
+		
+		int rc=a.getRefCount();
+		if (rc==0) {
+			// if no Refs, clearly none of them can be branches!
+			assertEquals(0,bc);
+		} else if (rc==1) {
+			Ref<?> cr=a.getRef(0);
+			if (cr.isEmbedded()) {
+				assertEquals(bc,cr.branchCount());
+			} else {
+				assertEquals(1,bc);
+			}
+		}
+		
+		if (bc==0) {
+			assertNull(a.getBranchRef(0));
+			Cells.visitBranches(a, v->fail("Shouldn't visit any branch!"));
+		} else {
+			// branch refs within range should be non-null
+			assertNotNull(a.getBranchRef(0));
+			assertNotNull(a.getBranchRef(bc-1));
+			
+			int[] tmp=new int[1];
+			Cells.visitBranches(a, v->{
+				tmp[0]++;
+				assertFalse(v.isEmbedded());
+			});
+			
+			assertEquals(bc,tmp[0]);
+		}
+	}
+
 	private static void doMemorySizeTests(ACell a) {
 		long ms=a.calcMemorySize();
 		long fms=Cells.storageSize(a);
@@ -156,7 +207,8 @@ public class ObjectsTest {
 		try {
 			b = Format.read(enc);
 		} catch (BadFormatException e) {
-			throw new Error("Reload from complete encoding failed for: " + a + " with encoding "+enc);
+			fail("Reload from complete encoding failed for: " + a + " with encoding "+enc);
+			return;
 		}
 		assertEquals(a,b);
 		assertEquals(enc,b.getEncoding()); // Encoding should be the same
@@ -212,7 +264,8 @@ public class ObjectsTest {
 			ACell a3= Format.read(offsetEncoding);
 			assertEquals(a, a3);
 		} catch (BadFormatException e) {
-			throw new Error("Can't read encoding: 0x" + encoding.toHexString(), e);
+			fail("Can't read encoding: 0x" + encoding.toHexString(), e);
+			return;
 		}
 		
 		assertThrows(BadFormatException.class,()->Format.read(encoding.append(Samples.SMALL_BLOB).toFlatBlob()));
@@ -315,7 +368,7 @@ public class ObjectsTest {
 	}
 
 	@SuppressWarnings("unused")
-	private static void doCellStorageTest(ACell a) throws InvalidDataException {
+	private static void doCellStorageTest(ACell a) throws InvalidDataException, IOException {
 		
 		AStore temp=Stores.current();
 		try {

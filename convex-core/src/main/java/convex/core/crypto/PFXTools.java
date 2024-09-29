@@ -2,19 +2,24 @@ package convex.core.crypto;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.security.Key;
 import java.security.KeyStore;
+import java.security.KeyStore.PasswordProtection;
+import java.security.KeyStore.SecretKeyEntry;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.UnrecoverableKeyException;
 
 import javax.crypto.SecretKey;
+import javax.crypto.spec.PBEParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
-import convex.core.util.Utils;
+import convex.core.Constants;
+import convex.core.util.FileUtils;
 
 
 /**
@@ -45,7 +50,7 @@ public class PFXTools {
 	/**
 	 * Loads an existing PKCS12 Key store.
 	 * @param keyFile File for the existing key store
-	 * @param storePassword Passphrase for decrypting the key store. May be blank or null if not encrypted.
+	 * @param storePassword Passphrase for integrity check of the key store. May be blank. If null, no integrity check is performed.
 	 * @return Found key store
 	 * @throws IOException If an IO error occurs
 	 * @throws GeneralSecurityException If a security error occurs
@@ -54,6 +59,8 @@ public class PFXTools {
 		// Need to load in bouncy castle crypto providers to set/get keys from the keystore.
 		Providers.init();
 
+		if (!keyFile.exists()) throw new FileNotFoundException();
+		
 		KeyStore ks = KeyStore.getInstance(KEYSTORE_TYPE);
 
 		try (FileInputStream fis = new FileInputStream(keyFile)) {
@@ -72,7 +79,7 @@ public class PFXTools {
 	 * @throws GeneralSecurityException if a security exception occurs
 	 */
 	public static KeyStore saveStore(KeyStore ks, File keyFile, char[] storePassword) throws GeneralSecurityException, IOException {
-		Utils.ensurePath(keyFile);
+		FileUtils.ensureFilePath(keyFile);
 
 		try (FileOutputStream fos = new FileOutputStream(keyFile)) {
 		    ks.store(fos, storePassword);
@@ -126,8 +133,17 @@ public class PFXTools {
 		if (keyPassword == null) throw new IllegalArgumentException("Password is mandatory for private key");
 
 		byte[] bs=((AKeyPair)kp).getSeed().getBytes();
-		SecretKey secretKeyPrivate = new SecretKeySpec(bs, "Ed25519");
-		ks.setKeyEntry(alias, secretKeyPrivate, keyPassword, null);
+		SecretKey secretKeySeed = new SecretKeySpec(bs, "Ed25519");
+		
+		// See https://neilmadden.blog/2017/11/17/java-keystores-the-gory-details/
+		SecretKeyEntry keyEntry=new SecretKeyEntry(secretKeySeed);
+		byte[] salt=new byte[20];
+		
+		PasswordProtection protection= new PasswordProtection(keyPassword,
+                "PBEWithHmacSHA512AndAES_128",
+                new PBEParameterSpec(salt, Constants.PBE_ITERATIONS));
+		ks.setEntry(alias, keyEntry, protection);
+		// ks.setKeyEntry(alias, secretKeySeed, keyPassword, null);
 
 		return ks;
 	}

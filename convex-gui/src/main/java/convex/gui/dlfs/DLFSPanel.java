@@ -97,9 +97,14 @@ public class DLFSPanel extends JPanel {
 					Thread.sleep(100);
 				}
 			} catch (InterruptedException e) {
-				// finished
+				// set interrupt flag	
+				Thread.currentThread().interrupt();  
 			}
 		});
+	}
+	
+	public DLFileSystem getFileSystem() {
+		return fileSystem;
 	}
 	
 	void setSelectedPath(Path newPath) {

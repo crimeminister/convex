@@ -6,33 +6,37 @@ import java.io.PrintWriter;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.event.Level;
 
-import ch.qos.logback.classic.Level;
 import convex.cli.account.Account;
 import convex.cli.client.Query;
 import convex.cli.client.Status;
 import convex.cli.client.Transact;
+import convex.cli.desktop.Desktop;
 import convex.cli.etch.Etch;
 import convex.cli.key.Key;
 import convex.cli.local.Local;
 import convex.cli.output.Coloured;
 import convex.cli.peer.Peer;
+import convex.core.util.FileUtils;
 import convex.core.util.Utils;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.IExecutionExceptionHandler;
 import picocli.CommandLine.IVersionProvider;
 import picocli.CommandLine.Option;
+import picocli.CommandLine.ParameterException;
 import picocli.CommandLine.ParseResult;
 import picocli.CommandLine.ScopeType;
 
 /**
  * Convex CLI implementation
+ * 
+ * This is the main `convex` command and root for child commands.
  */
 @Command(name = "convex", 
-		subcommands = { Account.class, Key.class, Local.class, Peer.class, Query.class, Status.class,
-		Etch.class, Transact.class,
-		CommandLine.HelpCommand.class }, 
+		subcommands = { Account.class, Key.class, Local.class, Peer.class, Query.class, Status.class, Desktop.class,
+		Etch.class, Transact.class, Help.class }, 
 		usageHelpAutoWidth = true, 
 		sortOptions = true, 
 		mixinStandardHelpOptions = true,
@@ -47,8 +51,12 @@ import picocli.CommandLine.ScopeType;
 public class Main extends ACommand {
 	private static Logger log = LoggerFactory.getLogger(Main.class);
 
-	public CommandLine commandLine = new CommandLine(this);
-
+	public CommandLine commandLine;
+	
+	public Main() {
+		commandLine= new CommandLine(this);
+		commandLine.setExecutionExceptionHandler(new Main.ExceptionHandler());
+	}
 
 	@Option(names = { "-S","--strict-security" }, 
 			defaultValue = "false", 
@@ -69,16 +77,17 @@ public class Main extends ACommand {
 
 	@Option(names = { "-v","--verbose" }, 
 			scope = ScopeType.INHERIT, 
-			defaultValue = "${env:CONVEX_VERBOSE_LEVEL:-2}", 
+			defaultValue = "${env:CONVEX_VERBOSE_LEVEL:-"+Constants.DEFAULT_VERBOSE_LEVEL+"}", 
 			description = "Specify verbosity level. Use -v0 to suppress user output, -v5 for all log output. Default: ${DEFAULT-VALUE}") 
-	Integer verbose;
-
-	public Main() {
-		commandLine = commandLine.setExecutionExceptionHandler(new Main.ExceptionHandler());
-	}
+	private Integer verbose;
 
 	@Override
-	public void run() {
+	public void execute() {
+		String art=Helpers.getConvexArt();
+		if (isColoured()) art=Coloured.blue(art);
+		inform(2,art);
+		inform(2,Coloured.blue("Version: "+Utils.getVersion()));
+		
 		// no command provided - so show help
 		showUsage();
 	}
@@ -109,9 +118,9 @@ public class Main extends ACommand {
 			// in the defaults before running the full execute
 			try {
 				commandLine.parseArgs(args);
-			} catch (Exception t) {
-				commandLine.getErr().println(Coloured.red("ERROR: Unable to parse arguments: " + t.getMessage()));
-				commandLine.getErr().println("For more information on options and commands try 'convex help'.");
+			} catch (ParameterException t) {
+				informError("ERROR: Unable to parse arguments: " + t.getMessage());
+				informWarning("For more information on options and commands try 'convex help'.");
 				return ExitCodes.ERROR;
 			}
 
@@ -123,18 +132,7 @@ public class Main extends ACommand {
 				return ExitCodes.SUCCESS;
 			}
 
-			Level[] verboseLevels = { Level.OFF, Level.WARN, Level.INFO, Level.DEBUG, Level.TRACE, Level.ALL };
-
-			if (verbose == null)
-				verbose = 0;
-			if (verbose >= 0 && verbose < verboseLevels.length) {
-				// Set root logger level?
-				ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
-				root.setLevel(verboseLevels[verbose]);
-			} else {
-				commandLine.getErr().println("ERROR: Invalid verbosity level: " + verbose);
-				return ExitCodes.ERROR;
-			}
+			setupVerbosity();
 
 			int result = commandLine.execute(args);
 			return result;
@@ -145,16 +143,35 @@ public class Main extends ACommand {
 		}
 	}
 
+	private void setupVerbosity() {
+		Level[] verboseLevels = { Level.ERROR, Level.WARN, Level.INFO, Level.DEBUG, Level.TRACE, Level.TRACE };
+
+		if (verbose == null)
+			verbose = 0;
+		if (verbose >= 0 && verbose < verboseLevels.length) {
+			// Set root logger level?
+//			try {
+//			ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
+//			root.setLevel(verboseLevels[verbose]);
+//			} catch (XXException e) {
+//				informWarning("Failed to set verbosity level: "+e.getMessage());
+//			}
+		} else {
+			throw new CLIError(ExitCodes.USAGE,"Invalid verbosity level: " + verbose);
+		}
+	}
+
 	/**
-	 * Version provider class
+	 * Version provider class. 
+	 * 
 	 */
+	// Note: GitHub Maven builds seem to need this to be public?
 	public static final class VersionProvider implements IVersionProvider {
 		@Override
 		public String[] getVersion() throws Exception {
-			String s = Main.class.getPackage().getImplementationVersion();
-			return new String[] { "Convex version: " + s };
+			String s = Utils.getVersion();
+			return new String[] { s };
 		}
-
 	}
 
 	/**
@@ -211,21 +228,31 @@ public class Main extends ACommand {
 	public boolean isInteractive() {
 		return !nonInteractive;
 	}
+	
+	@Override
+	protected int verbose() {
+		if (verbose==null) verbose=Constants.DEFAULT_VERBOSE_LEVEL;
+		return verbose;
+	}
 
+	/**
+	 * Sets output to the specified file. 
+	 * @param outFile String specifying file. `-` or `null` specifies STDOUT
+	 */
 	public void setOut(String outFile) {
-		if (outFile == null || outFile.equals("-")) {
-			log.trace("Setting output to STDOUT");
-			commandLine.setOut(new PrintWriter(System.out));
-		} else {
-			File file = new File(outFile);
-			try {
-				file = Utils.ensurePath(file);
-				log.trace("Setting output to "+file);
+		try {
+			if (outFile == null || outFile.equals("-")) {
+				log.debug("Setting output to STDOUT");
+				commandLine.setOut(new PrintWriter(System.out));
+			} else {
+				File file = new File(outFile);
+				file = FileUtils.ensureFilePath(file);
+				log.debug("Setting output to "+file);
 				PrintWriter pw = new PrintWriter(file);
 				commandLine.setOut(pw);
-			} catch (IOException e) {
-				Utils.sneakyThrow(e);
 			}
+		} catch (IOException e) {
+			throw new CLIError("Unavble to open output file: "+outFile);
 		}
 	}
 

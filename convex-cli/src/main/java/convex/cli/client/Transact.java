@@ -1,8 +1,5 @@
 package convex.cli.client;
 
-import java.io.IOException;
-import java.util.concurrent.TimeoutException;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,8 +34,7 @@ public class Transact extends AClientCommand {
 	private String transactionCode;
 
 	@Override
-	public void run() {
-
+	public void execute() throws InterruptedException {
 		Address a=getUserAddress();
 		if (a==null) throw new CLIError(ExitCodes.USAGE,"You must specify a valid origin address for the transaction.");
 		
@@ -46,20 +42,15 @@ public class Transact extends AClientCommand {
 		
 		Address address=convex.getAddress();
 		log.trace("Executing transaction: '{}'\n", transactionCode);
-			
+		
+//			if (transactionCode==null) {
+//				transactionCode=prompt("Enter trasnaction command: ");
+//			}
+		
 		ACell message = Reader.read(transactionCode);
 		ATransaction transaction = Invoke.create(address, ATransaction.UNKNOWN_SEQUENCE, message);
-		
-		try {
-			Result result = convex.transactSync(transaction, timeout);
-			mainParent.printResult(result);
-		} catch (IOException e) {
-			throw new CLIError(ExitCodes.IOERR,"IO Error executing transaction",e);
-		} catch (TimeoutException e) {
-			throw new CLIError(ExitCodes.TEMPFAIL,"Timeout executing transaction",e);
-			
-		}
+		Result result = convex.transactSync(transaction);
+		mainParent.printResult(result);
+
 	}
-
-
 }

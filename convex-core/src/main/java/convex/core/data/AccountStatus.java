@@ -7,7 +7,7 @@ import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.InvalidDataException;
 import convex.core.lang.AFn;
 import convex.core.lang.RT;
-import convex.core.lang.impl.RecordFormat;
+import convex.core.lang.RecordFormat;
 
 /**
  * Class representing the current on-chain status of an account.
@@ -52,7 +52,7 @@ public class AccountStatus extends ARecord {
 	private static final int HAS_METADATA=1<<FORMAT.indexFor(Keywords.METADATA);
 	private static final int HAS_PARENT=1<<FORMAT.indexFor(Keywords.PARENT);
 	
-	protected static final int INCLUSION_MASK=0xff;
+	protected static final int INCLUSION_MASK=0x01ff;
 
 	private AccountStatus(long sequence, AccountKey publicKey, long balance,
 			long memory, 

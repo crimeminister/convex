@@ -51,16 +51,17 @@ public abstract class ACVMTest {
 	 * @param genesis Genesis State to use for this CVM test
 	 */
 	protected ACVMTest(State genesis) {
-		Context c = Context.createFake(genesis, Init.GENESIS_ADDRESS);
-		c=buildContext(c);
-		this.INITIAL=c.getState();
-		this.CONTEXT=c;
+		Context c = Context.create(genesis, Init.GENESIS_ADDRESS);
 		HERO = BaseTest.HERO;
 		VILLAIN = BaseTest.VILLAIN;
-		c=c.withJuice(0); // reset juice used
 		INITIAL_JUICE = c.getJuiceAvailable();
 		HERO_BALANCE = c.getAccountStatus(HERO).getBalance();
 		VILLAIN_BALANCE = c.getAccountStatus(VILLAIN).getBalance();
+		c=buildContext(c);
+		if (c.isError()) throw new Error("Error initialising context: "+c.getExceptional());
+		c=c.withJuice(0); // reset juice used
+		this.INITIAL=c.getState();
+		this.CONTEXT=c;
 	}
 
 	/**
@@ -75,7 +76,7 @@ public abstract class ACVMTest {
 	}
 	
 	/**
-	 * Builds the Context for this test class instance. Subclasses may override
+	 * Builds the base Context for this test class instance. Subclasses may override
 	 * to generate a separate context
 	 * @param ctx Context to modify
 	 * @return
@@ -137,9 +138,9 @@ public abstract class ACVMTest {
 	 * @return Updates Context
 	 */
 	public static Context stepAs(Address address, Context c, String source) {
-		Context rc = Context.createFake(c.getState(), address);
+		Context rc = Context.create(c.getState(), address);
 		rc = step(rc, source);
-		return Context.createFake(rc.getState(), c.getAddress()).withValue(rc.getValue());
+		return Context.create(rc.getState(), c.getAddress()).withValue(rc.getValue());
 	}
 
 	public Address evalA(String source) {

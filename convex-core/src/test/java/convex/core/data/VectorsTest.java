@@ -31,13 +31,14 @@ public class VectorsTest {
 
 	@Test
 	public void testEmptyVector() {
-		AVector<AString> lv = Vectors.empty();
-		AArrayBlob d = lv.getEncoding();
+		AVector<AString> e = Vectors.empty();
+		RefTest.checkInternal(e);
+		AArrayBlob d = e.getEncoding();
 		assertArrayEquals(new byte[] { Tag.VECTOR, 0 }, d.getBytes());
-		
-		assertSame(lv,Vectors.empty());
-		
-		assertSame(lv,Vectors.wrap(Cells.EMPTY_ARRAY));
+		assertSame(e,Vectors.empty());
+		assertSame(e,Vectors.wrap(Cells.EMPTY_ARRAY));
+		assertSame(e,Vectors.create(new ACell[0]));
+		assertSame(e,Vectors.create(new ACell[0],0,0));
 	}
 
 	@Test
@@ -78,6 +79,31 @@ public class VectorsTest {
 		assertEquals(Samples.INT_VECTOR_16, Samples.INT_VECTOR_300.getChunk(0));
 		AVector<CVMLong> v = Samples.INT_VECTOR_300.getChunk(0);
 		assertEquals(VectorTree.class, v.getChunk(0).concat(v).getClass());
+	}
+	
+	@Test
+	public void testMaxBranches() {
+		// non-embedded vector with 16 elements 
+		AVector<ACell> nonEmbed=Vectors.repeat(Samples.INT_VECTOR_10, 16);
+		assertFalse(nonEmbed.isEmbedded());
+		
+		// embedded tail with 4 branches, count 64
+		AVector<ACell> tail=nonEmbed.concat(nonEmbed).concat(nonEmbed).concat(nonEmbed);
+		assertEquals(4,tail.getBranchCount());
+		assertEquals(64,tail.count());
+		assertTrue(tail.isEmbedded());
+
+		
+		AVector<ACell> bigEmbed=Vectors.repeat(tail,16);
+		assertEquals(16,bigEmbed.getRefCount());
+		assertEquals(64,bigEmbed.getBranchCount()); // maximum for vector?
+		
+		AVector<ACell> v=tail.concat(bigEmbed);
+		assertFalse(v.isCompletelyEncoded());
+		
+		doVectorTests(nonEmbed);
+		doVectorTests(bigEmbed);
+		doVectorTests(v);
 	}
 
 	@Test

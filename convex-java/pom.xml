@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>world.convex</groupId>
 		<artifactId>convex</artifactId>
-		<version>0.7.14-SNAPSHOT</version>
+		<version>0.7.16-SNAPSHOT</version>
 	</parent>
 
 	<name>Convex Java Client Library</name>
@@ -13,7 +13,7 @@
 	<url>https://convex.world</url>
 
 	<properties>
-		<maven.compiler.release>11</maven.compiler.release>
+		<maven.compiler.release>21</maven.compiler.release>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 	</properties>
 

@@ -80,7 +80,13 @@ public class Juice {
 	 * Very cheap, no allocs.
 	 */
 	public static final long DO = 5;
-
+	
+	/**
+	 * Juice required to execute a Try block
+	 * 
+	 * Pretty cheap, more expensive than do because of potential for rollbacks.
+	 */
+	public static final long TRY = 50;
 
 	/**
 	 * Juice required to execute a Let block
@@ -89,8 +95,6 @@ public class Juice {
 	 * costs?
 	 */
 	public static final long LET = 30;
-
-
 
 	/**
 	 * Juice required to execute a Cond expression
@@ -254,17 +258,16 @@ public class Juice {
 	/**
 	 * Juice cost to compile a lookup which is defined in account
 	 */
-	public static final long COMPILE_LOOKUP_DEFINED = COMPILE_LOOKUP+LOOKUP;
+	public static final long COMPILE_LOOKUP_DEFINED = COMPILE_LOOKUP+LOOKUP; // ??
 
 	/**
 	 * Juice cost to compile a lookup which is defined in core
 	 */
-	public static final long COMPILE_LOOKUP_CORE = COMPILE_LOOKUP+LOOKUP*2;
-	
+	public static final long COMPILE_LOOKUP_CORE = COMPILE_LOOKUP; //+LOOKUP*2?	
 	/**
 	 * Juice cost to compile a lookup which is undefined in account and core
 	 */
-	public static final long COMPILE_LOOKUP_UNDEFINED = COMPILE_LOOKUP+LOOKUP*3;
+	public static final long COMPILE_LOOKUP_UNDEFINED = COMPILE_LOOKUP; //+LOOKUP*3?	
 
 	/**
 	 * Juice cost to compile a general AST node
@@ -355,6 +358,7 @@ public class Juice {
 	private static final int MIN_NUMERIC_COST = 8;
 
 	public static final int MEMORY_TRADE = 200;
+
 
 	/**
 	 * Saturating multiply and add: result = a + (b * c)

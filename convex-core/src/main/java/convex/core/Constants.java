@@ -169,7 +169,7 @@ public class Constants {
 	/**
 	 * Default print limit
 	 */
-	public static final long PRINT_LIMIT = 4096;
+	public static final long PRINT_LIMIT = 65536;
 
 	public static final String PRINT_EXCEEDED_STRING = "<<Print limit exceeded>>";
 	public static final AString PRINT_EXCEEDED_MESSAGE = Strings.create(PRINT_EXCEEDED_STRING);
@@ -219,5 +219,15 @@ public class Constants {
 	 * Maximum time a block can be resurrected from the past (1 min)
 	 */
 	public static final long MAX_BLOCK_BACKDATE = 60*1000;
+
+	public static final int PBE_ITERATIONS = 100000;
+	
+	public static final String DEFAULT_KEYSTORE_FILENAME = "~/.convex/keystore.pfx";
+
+	/**
+	 * Maximum depth of lookups via parent accounts
+	 */
+	public static final int LOOKUP_DEPTH = 16;
+
 
 }

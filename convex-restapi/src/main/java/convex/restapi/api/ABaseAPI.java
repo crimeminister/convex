@@ -2,6 +2,10 @@ package convex.restapi.api;
 
 import java.util.Map;
 
+import convex.core.data.ACell;
+import convex.core.data.Blob;
+import convex.core.data.Format;
+import convex.core.lang.Reader;
 import convex.java.JSON;
 import convex.peer.Server;
 import convex.restapi.RESTServer;
@@ -24,7 +28,7 @@ public abstract class ABaseAPI {
 	
 	/**
 	 * Gets JSON body from a Context as a Java Object
-	 * @param ctx
+	 * @param ctx Request context
 	 * @return JSON Object
 	 * @throws BadRequestResponse if the JSON body is invalid
 	 */
@@ -32,8 +36,40 @@ public abstract class ABaseAPI {
 		try {
 			Map<String, Object> req= JSON.toMap(ctx.body());
 			return req;
-		} catch (Exception e) {
+		} catch (IllegalArgumentException e) {
 			throw new BadRequestResponse(jsonError("Invalid JSON body"));
+		}
+	}
+	
+	/**
+	 * Gets CVX body from a Context as a cell
+	 * @param ctx Request context
+	 * @return CVM Value
+	 * @throws BadRequestResponse if the body is invalid
+	 */
+	protected <T extends ACell> T getCVXBody(Context ctx) {
+		try {
+			@SuppressWarnings("unchecked")
+			T req= (T) Reader.read(ctx.body());
+			return req;
+		} catch (Exception e) {
+			throw new BadRequestResponse(jsonError("Invalid CVX body"));
+		}
+	}
+	
+	/**
+	 * Gets body from a Context as a cell
+	 * @param ctx Request context
+	 * @return CVM Value
+	 * @throws BadRequestResponse if the body is invalid
+	 */
+	protected <T extends ACell> T getRawBody(Context ctx) {
+		try {
+			byte[] bs=ctx.bodyAsBytes();
+			T result=Format.decodeMultiCell(Blob.wrap(bs));
+			return result;
+		} catch (Exception e) {
+			throw new BadRequestResponse(jsonError("Invalid Raw body"));
 		}
 	}
 	

@@ -5,6 +5,9 @@ import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.TreeMap;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * So the JVM doesn't give us a nice way to run shutdown hooks in a defined order.
  *
@@ -14,24 +17,34 @@ public class Shutdown {
 
 	public static final int CLIENTHTTP = 60;
 	public static final int SERVER = 80;
+	public static final int CONNECTION = 90;
 	public static final int ETCH = 100;
 	public static final int EXECUTOR = 110;
 	public static final int CLI = 120;
+	
+	private static final Logger log=LoggerFactory.getLogger(Shutdown.class.getName());
 
 	static {
 		try {
 			Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
 				@Override
 				public void run() {
+					log.debug("Running Convex shutdown hooks");
 					Shutdown.runHooks();
 				}
 			},"Convex Shutdown"));
-		} catch(IllegalStateException e) {
+		} catch(Exception e) {
 			// Ignore, already shutting down
 		}
 	}
 
-	private static class Group {
+	protected static class Group {
+		protected final int level;
+
+		public Group(int level) {
+			this.level=level;
+		}
+		
 		private final IdentityHashMap<Runnable, Runnable> hookSet=new IdentityHashMap<>();
 
 		public synchronized void addHook(Runnable r) {
@@ -39,10 +52,17 @@ public class Shutdown {
 		}
 
 		public synchronized void runHooks() {
+			// System.out.println("Running shutdown hooks at level: "+level);
 			Collection<Runnable> hooks=hookSet.keySet();
 			hooks.stream().forEach(r->{
-				r.run();
-			});
+				log.trace("Running shutdown hook: "+Utils.getClassName(r));
+				try {
+					r.run();
+				} catch (Throwable t) {
+					t.printStackTrace();
+					// Otherwise ignore. This is the same as what the JVM shutdown does
+				}
+ 			});
 			hookSet.clear();
 		}
 
@@ -57,10 +77,10 @@ public class Shutdown {
 	 * @param priority Priority number for shutdown hook
 	 * @param shutdownTask Runnable instance to execute on shutdown
 	 */
-	public static synchronized void addHook(int priority,Runnable shutdownTask) {
+	public static void addHook(int priority,Runnable shutdownTask) {
 		Group g=order.get(priority);
 		if (g==null) {
-			g=new Group();
+			g=new Group(priority);
 			order.put(priority, g);
 		}
 		g.addHook(shutdownTask);
@@ -69,10 +89,16 @@ public class Shutdown {
 	/**
 	 * Execute all hooks. Called by standard Java shutdown process.
 	 */
-	private synchronized static void runHooks() {
+	private static void runHooks() {
 		for (Map.Entry<Integer,Group> me: order.entrySet()) {
+			log.debug("Running shutdown hooks at level: "+me.getKey());
 			me.getValue().runHooks();
 		}
 		order.clear();
+		log.debug("Convex shutdown hooks complete");
+	}
+	
+	public void shoutDownNow() {
+		runHooks();
 	}
 }

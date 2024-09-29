@@ -1,8 +1,10 @@
 package convex.core.util;
 
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -11,12 +13,18 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Utilities for threading and concurrency
  */
 public class ThreadUtils {
 
 	private static ExecutorService virtualExecutor = null;
+	
+	private static final Logger log=LoggerFactory.getLogger(ThreadUtils.class.getName());
+
 
 	/**
 	 * Get the current virtual thread ExecutorService, intended for IO-bound blocking operations 
@@ -28,15 +36,24 @@ public class ThreadUtils {
 			
 			Shutdown.addHook(Shutdown.EXECUTOR, ()-> {
 				ExecutorService executor=virtualExecutor;
+				List<Runnable> tasks=List.of();
 				if (executor==null) return;
-				// Try a gentle termination. If not fast enough, terminate with extreme prejudice
-				executor.shutdown();
 				try {
-				    if (!executor.awaitTermination(200, TimeUnit.MILLISECONDS)) {
-				    	executor.shutdownNow();
+					// Try a gentle termination. If not fast enough, terminate with extreme prejudice
+					executor.shutdown();
+				    if (!executor.awaitTermination(5000, TimeUnit.MILLISECONDS)) {
+				    	// These are tasks still awaiting execution
+				    	tasks=executor.shutdownNow();
+				    	if (!tasks.isEmpty()) {
+				    		log.warn("Still pending executor tasks: "+tasks);
+				    	}
+				    	if (!executor.awaitTermination(10000, TimeUnit.MILLISECONDS)) {
+					    	log.warn("Slow shutdown of executor task threads");
+				    	}     
 				    } 
 				} catch (InterruptedException e) {
 					executor.shutdownNow();
+					Thread.currentThread().interrupt();
 				} 
 			});
 		}
@@ -48,7 +65,8 @@ public class ThreadUtils {
 		try{
 		    Method method = Executors.class.getMethod("newVirtualThreadPerTaskExecutor");
 		    ex = (ExecutorService) method.invoke(null);
-		} catch (Exception e) {
+		} catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+			// fall back to a cached thread pool
 		    ex = Executors.newCachedThreadPool();
 		}
 		return ex;

@@ -1,8 +1,8 @@
 package convex.api;
  
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeoutException;
 import java.util.function.Predicate;
 
 import convex.core.Result;
@@ -35,6 +35,7 @@ public class ConvexLocal extends Convex {
 	protected ConvexLocal(Server server, Address address, AKeyPair keyPair) {
 		super(address, keyPair);
 		this.server=server;
+		this.preCompile=true; // pre-compile by default if local peer
 	}
 	
 	public static ConvexLocal create(Server server, Address address, AKeyPair keyPair) {
@@ -56,7 +57,11 @@ public class ConvexLocal extends Convex {
 			if (ref==null) {
 				f.completeExceptionally(new MissingDataException(peerStore,hash));
 			} else {
-				ref=store.storeTopRef(ref, Ref.PERSISTED, null);
+				try {
+					ref=store.storeTopRef(ref, Ref.PERSISTED, null);
+				} catch (IOException e) {
+					f.completeExceptionally(e);
+				}
 				f.complete((T) ref.getValue());
 			}
 		});
@@ -117,7 +122,7 @@ public class ConvexLocal extends Convex {
 	}
 
 	@Override
-	public CompletableFuture<State> acquireState() throws TimeoutException {
+	public CompletableFuture<State> acquireState() {
 		return CompletableFuture.completedFuture(getState());
 	}
 	

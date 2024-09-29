@@ -276,9 +276,14 @@ public class CoreTest extends ACVMTest {
 	public void testLetDestructuring() {
 		assertNull(eval("(let[[] []])"));
 		assertSame(Vectors.empty(),eval("(let [[& a] []] a)"));
+		assertEquals(Vectors.of(2,3),eval("(let [[a & more] [1 2 3]] more)"));
 		
 		// nil treated as empty sequence
 		assertSame(Vectors.empty(),eval("(let [[& a] nil] a)"));
+		
+		// _ is never bound, ignores argument
+		assertCVMEquals(1,eval("(let [[a _] [1 2]] a)"));
+		assertUndeclaredError(step("(let [[a _] [1 2]] _)"));
 		
 		assertEquals(2L,evalL("(let [[a b] [1 2]] b)"));
 		assertEquals(2L,evalL("(let [[a b] '(1 2)] b)"));
@@ -287,8 +292,12 @@ public class CoreTest extends ACVMTest {
 
 		assertArityError(step("(let [[a b] nil] b)"));
 		assertArityError(step("(let [[a b] [1]] b)"));
+		
+		// extra values to bind
+		assertArityError(step("(let [[a b] [1 2 3]] b)"));
+		assertEquals(Vectors.of(1,2),eval("(let [[a b & _] [1 2 3 4]] [a b])"));
 
-		// See issue #62
+		// too few values to bind, See issue #62
 		assertArityError(step("(let [[a b & c d] [1 2]] c)"));
 	}
 
@@ -571,7 +580,7 @@ public class CoreTest extends ACVMTest {
 		
 		// fallthroughs not taken
 		assertEquals(1L,evalL("(cond true 1 2)"));
-		assertEquals(2L,evalL("(cond false 1 true 2 3)"));
+		assertEquals(2L,evalL("(cond false (fail) true 2 (fail))"));
 		
 		// fallthroughs to default value
 		assertEquals(2L,evalL("(cond false 1 2)"));
@@ -585,8 +594,42 @@ public class CoreTest extends ACVMTest {
 		assertNull(eval("(cond false 1)"));
 		assertEquals(CVMLong.ONE,eval("(cond true 1)"));
 		
-		// No expressions, fall through to null
+		// No expressions, fall through to nil
 		assertNull(eval("(cond)"));
+	}
+	
+	@Test public void testSwitch() {
+		// basic matches
+		assertEquals(1L,evalL("(switch true true 1)"));
+		assertEquals(4L,evalL("(switch 3 1 2 3 4)"));
+		assertEquals(4L,evalL("(switch 3 1 2 3 4 (fail))")); // default value ignored
+		assertEquals(7L,evalL("(switch 4 1 2 3 4 7)")); // default value taken
+		assertEquals(666L,evalL("(switch 88 666)")); // single default value
+		
+		// expressions work at runtime
+		assertEquals(6L,evalL("(switch (+ 2 3) (+ 1 4) (* 2 3) :missed)"));
+		
+		// later / missed branches not evaluated
+		assertEquals(1L,evalL("(switch true true 1 (fail))"));
+		assertEquals(1L,evalL("(switch true false (fail) true 1)"));
+		assertEquals(1L,evalL("(switch true true 1 (fail) (fail))"));
+		
+		// fail on early test
+		assertArgumentError(step("(switch 1 2 3 (fail :ARGUMENT \"bad test reached\") nil 7)"));
+		
+		// nil can be matched
+		assertEquals(1L,evalL("(switch nil nil 1 (fail))"));
+
+		// nil as default if not otherwise provided
+		assertNull(eval("(switch 1)"));
+		assertNull(eval("(switch nil 2 3)"));
+		assertNull(eval("(switch :foo 2 (fail) 4 5)"));
+		
+		// basic expansions
+		assertEquals(Reader.read("(let [v# 1] (cond))"),expand("(switch 1)"));
+		
+		// No expressions, fall through to null
+		assertArityError(step("(switch)"));
 	}
 
 	@Test
@@ -684,7 +727,9 @@ public class CoreTest extends ACVMTest {
 		assertNotNull(log);
 
 		assertEquals(1,log.count()); // one log entry only
-		assertEquals(v0,log.get(0).get(1));
+		AVector<ACell> entry=log.get(0);
+		assertEquals(Log.ENTRY_LENGTH,entry.size()); // should be two entries now
+		assertEquals(v0,entry.get(Log.P_VALUES));
 
 		// do second log in same context
 		AVector<ACell> v1=Vectors.of(3L, 4L);
@@ -692,8 +737,8 @@ public class CoreTest extends ACVMTest {
 		log=c.getLog();
 
 		assertEquals(2,log.count()); // should be two entries now
-		assertEquals(v0,log.get(0).get(1));
-		assertEquals(v1,log.get(1).get(1));
+		assertEquals(v0,log.get(0).get(Log.P_VALUES));
+		assertEquals(v1,log.get(1).get(Log.P_VALUES));
 	}
 
 
@@ -711,13 +756,13 @@ public class CoreTest extends ACVMTest {
 		AVector<AVector<ACell>> log = c.getLog();
 
 		assertEquals(1,log.count()); // should be one entry by the actor
-		assertEquals(v0,log.get(0).get(1));
+		assertEquals(v0,log.get(0).get(Log.P_VALUES));
 
 		// call actor function which rolls back - should also roll back log
 		c=step(c,"(call "+actor+" (non-event 3 4))");
 		log = c.getLog();
 		assertEquals(1,log.count()); // should be one entry by the actor
-		assertEquals(v0,log.get(0).get(1));
+		assertEquals(v0,log.get(0).get(Log.P_VALUES));
 
 	}
 
@@ -1249,11 +1294,11 @@ public class CoreTest extends ACVMTest {
 		assertArgumentError(step("(assoc (index) 1 2)"));
 		assertArgumentError(step("(assoc [1 2 3] :foo 7)"));
 	
-		// Definitiely Non-associative values
+		// Definitely non-associative values
 		assertCastError(step("(assoc 1 2 3)"));
 		assertCastError(step("(assoc :foo 2 3)"));
 		
-		// TODO: Not currently associative, but maybe should be?
+		// Not associative
 		assertCastError(step("(assoc \"abc\" 2 \\d)"));
 		assertCastError(step("(assoc 0xabcdef 2 12)"));
 		
@@ -1311,6 +1356,82 @@ public class CoreTest extends ACVMTest {
 		assertArityError(step("(assoc #{} 1 2 3)")); // arity before cast
 		assertArityError(step("(assoc #{} 1)"));
 	}
+	
+	@Test
+	public void testUpdate() {
+		assertEquals(Vectors.of(1,2,4),eval("(update [1 2 3] 2 inc)"));
+		assertEquals(Vectors.of(3),eval("(update [[1 2 3]] 0 count)"));
+
+		assertEquals(Vectors.of(1,2,3),eval("(update [1 2 3] 1 identity)"));
+
+		// nil works as empty map 
+		assertEquals(Maps.of(2,Sets.of(2,3)),eval("(update nil 2 union #{2,3})"));
+		
+		assertEquals(2L, evalL("(:count (update {:count 1} :count inc))")); // Example from docstring
+
+		// 666 is a bad value in all cases
+		assertCastError(step("(update [1 2 3] 2 666)"));
+		assertCastError(step("(update 666 2 inc)"));
+
+		assertArityError(step("(update)"));
+		assertArityError(step("(update {} :k)"));
+		
+		// arity error on count
+		assertArityError(step("(update [[2]] 0 count 666)"));
+	}
+	
+	@Test
+	public void testUpdateIn() {
+		assertEquals(Vectors.of(1,2,4),eval("(update-in [1 2 3] [2] inc)"));
+		assertCVMEquals(3,eval("(update-in [1 2 3] [] count)"));
+
+		assertEquals(Vectors.of(1,2,3),eval("(update-in [1 2 3] [1] identity)"));
+
+		// nil works as empty map 
+		assertEquals(Maps.of(2,Sets.of(2,3)),eval("(update-in nil [2] union #{2,3})"));
+		
+		assertEquals(2L, evalL("(:count (update-in {:count 1} [:count] inc))")); // Example from docstring
+
+		// special case: no cast error if no path
+		assertCVMEquals(667,eval("(update-in 666 [] inc)"));
+		
+		// 666 is a bad value in all cases
+		assertCastError(step("(update-in [1 2 3] [2] 666)"));
+		assertCastError(step("(update-in 666 [2] inc)"));
+
+		assertArityError(step("(update-in)"));
+		assertArityError(step("(update-in {} :k)"));
+		
+		// arity error on count
+		assertArityError(step("(update-in [[2]] [0] count 666)"));
+	}
+	
+	@Test
+	public void testDissocIn() {
+		assertEquals(Maps.of(1,2),eval("(dissoc-in {1 2,3 4} [3])"));
+		assertSame(Maps.empty(),eval("(dissoc-in {:data {:count 1}} [:data :count])"));
+		
+		assertEquals(Maps.of(1,Maps.of(2,Maps.of(5,6))),eval("(dissoc-in {1 {2 {3 4, 5 6}}} [1 2 3])"));
+		assertEquals(Maps.of(1,Maps.of(2,Maps.of(5,6))),eval("(dissoc-in {1 {2 {5 6}}} [1 2 3])"));
+		assertEquals(Maps.empty(),eval("(dissoc-in {1 {2 {5 6}}} [1 2])"));
+		
+		// special case: no change for empty keys
+		assertCVMEquals(3,eval("(dissoc-in 3 [])"));
+		
+		// dissoc preserves Index type
+		assertEquals(Index.EMPTY,eval("(dissoc-in (index 0x 1) [0x])"));
+
+		// nil works as empty map 
+		assertSame(Maps.empty(),eval("(dissoc-in nil [2 3])"));
+		
+		// can't dissoc from a vector or list
+		assertCastError(step("(dissoc-in [1 2 3] [2])"));
+		assertCastError(step("(dissoc-in '(1 2 3) [0])"));
+
+		assertArityError(step("(dissoc-in)"));
+		assertArityError(step("(dissoc-in {})"));
+		assertArityError(step("(dissoc-in {} [] :foo)"));
+	}
 
 	@Test
 	public void testAssocIn() {
@@ -1337,6 +1458,9 @@ public class CoreTest extends ACVMTest {
 		assertEquals(Sets.of(1L,2L),eval("(assoc-in #{1} [2] true)"));
 		assertArgumentError(step("(assoc-in #{3} [2] :fail)")); // bad value type
 		assertCastError(step("(assoc-in #{3} [3 2] :fail)")); // 'true' is not a data structure
+		
+		// nil cases
+		assertEquals(Maps.of(1L,Maps.of(5L,6L)), eval("(assoc-in nil [1 5] 6)"));
 
 		// Cast error - wrong key types
 		assertCastError(step("(assoc-in (index) :foo :bar)"));
@@ -2468,7 +2592,7 @@ public class CoreTest extends ACVMTest {
 		}
 
 		{ // test deploy and CNS import in a single form. See #107
-			Context ctx2=step(ctx,"(do (let [addr (deploy nil)] (call *registry* (cns-update 'foo addr)) (import foo :as foo2)))");
+			Context ctx2=step(ctx,"(query-as #6 `(let [addr (deploy nil)] (*registry*/create 'foo addr) (import foo :as foo2)))");
 			assertNotError(ctx2);
 		}
 		
@@ -2519,6 +2643,7 @@ public class CoreTest extends ACVMTest {
 		assertNobodyError(step("(lookup #77777777 count)"));
 		assertNobodyError(step("(do (def foo 1) (lookup #66666666 foo))"));
 
+		
 		// COMPILE Errors for bad symbols
 		assertCompileError(step("(lookup :count)"));
 		assertCompileError(step("(lookup \"count\")"));
@@ -2532,6 +2657,9 @@ public class CoreTest extends ACVMTest {
 		// CAST Errors for bad Addresses
 		assertCastError(step("(lookup 8 count)"));
 		assertCastError(step("(lookup :foo count)"));
+		
+		// CAST for lookups on a nil address?
+		assertCastError(step("(lookup nil count)"));
 
 		assertArityError(step("(lookup)"));
 		assertArityError(step("(lookup 1 2 3)"));
@@ -2542,9 +2670,7 @@ public class CoreTest extends ACVMTest {
 		AHashMap<ACell,ACell> countMeta=Core.METADATA.get(Symbols.COUNT);
 		assertSame(countMeta, (eval("(lookup-meta 'count)")));
 		assertSame(countMeta, (eval("(lookup-meta "+Init.CORE_ADDRESS+ " 'count)")));
-		
-		// Not actually defined in current address
-		assertNull(eval("(lookup-meta *address* 'count)"));
+		assertSame(countMeta, eval("(lookup-meta *address* 'count)"));
 
 		assertNull(eval("(lookup-meta 'non-existent-symbol)"));
 		assertNull(eval("(lookup-meta #666666 'count)")); // invalid address
@@ -2880,6 +3006,29 @@ public class CoreTest extends ACVMTest {
 		// Arity checks
 		assertArityError(step("(deploy)"));
 	}
+	
+	@Test 
+	public void testParent() {
+		Context ctx = context();
+		
+		// Create parent actor
+		ctx = exec(ctx,"(def dad (deploy `(defn baz [x] :foo) `(set-controller ~*address*) `(def CONST ^:static :bar)))");
+		Address dad=ctx.getResult();
+		
+		// create a child actor
+		ctx=exec(ctx,("(def son (deploy `(set-parent ~dad) `(set-controller ~*address*)))"));
+		
+		// call a function in parent
+		assertEquals(Keywords.FOO,eval(ctx,"(query-as son `(baz 'convex.core))"));
+		
+		assertEquals(Keywords.FOO,eval(ctx,"(son/baz :doesnt-matter)"));
+		
+		// *parent* is correctly set
+		assertEquals(dad,eval(ctx,"(query-as son '*parent*)"));
+		
+		// compilation of constants from parent
+		assertEquals(Constant.of(Keywords.BAR),eval(ctx,"(query-as son '(compile CONST))"));
+	}
 
 	@Test
 	public void testActorQ() {
@@ -3176,7 +3325,7 @@ public class CoreTest extends ACVMTest {
 			assertNotError(rc);
 			assertEquals(PS+1000000,rc.getState().getPeer(MY_PEER).getTotalStake());
 			assertEquals(1000000,rc.getState().getPeer(MY_PEER).getDelegatedStake());
-			assertEquals(Constants.MAX_SUPPLY, rc.getState().computeTotalFunds());
+			assertEquals(Constants.MAX_SUPPLY, rc.getState().computeTotalBalance());
 		}
 
 		// staking on an account key that isn't a peer
@@ -3832,7 +3981,7 @@ public class CoreTest extends ACVMTest {
 	@Test
 	public void testLongPred() {
 		assertTrue(evalB("(long? 1)"));
-		assertTrue(evalB("(long? (long *balance*))")); // TODO: is this sane?
+		assertTrue(evalB("(long? *balance*)")); 
 		assertTrue(evalB("(long? (byte 1))"));
 		
 		assertFalse(evalB("(long? nil)"));
@@ -4114,11 +4263,10 @@ public class CoreTest extends ACVMTest {
 		assertTrue(evalB("(do (def foobar [2 3]) (defined? 'foobar))"));
 		assertTrue(evalB("(do (def foobar [2 3]) (defined? *address* 'foobar))"));
 		
-		// Note: defined by reference to core. TODO: is this OK?
 		assertTrue(evalB("(defined? 'count)"));
 		
-		// Not defined in explicit environment. TODO: is this OK?
-		assertFalse(evalB("(defined? *address* 'count)"));
+		// Not defined in explicit environment, but indirectly by core. TODO: is this OK?
+		assertTrue(evalB("(defined? *address* 'count)"));
 
 		// invalid names
 		assertCastError(step("(defined? :count)")); // not a Symbol
@@ -4209,6 +4357,7 @@ public class CoreTest extends ACVMTest {
 		// set! fails on undeclared values
 		assertUndeclaredError(step("(set! not-declared 1)"));
 		assertUndeclaredError(step("(do (set! a 13) a)"));
+		assertUndeclaredError(step("(let [foo 3] (set! a 13) a)"));
 
 		// set! works in a function body
 		assertEquals(35L,evalL("(let [a 13 f (fn [x] (set! a 25) (+ x a))] (f 10))"));
@@ -4242,6 +4391,9 @@ public class CoreTest extends ACVMTest {
 			// def within let does affect environment
 			assertCVMEquals(3L, eval(ctx,"(do (let [a 2] (def a 3)) a)"));
 		}
+		
+		// Set on a earlier definition
+		assertSame(CVMLong.ZERO, eval("(do (def a 3) (set! a 0) a)"));
 		
 		// Bad types
 		assertSyntaxError(step("(set! :a 2)"));
@@ -4548,7 +4700,7 @@ public class CoreTest extends ACVMTest {
 		BlockResult br = s.applyBlock(sb);
 		State s2 = br.getState();
 
-		Context ctx2 = Context.createInitial(s2, HERO, INITIAL_JUICE);
+		Context ctx2 = Context.create(s2, HERO, INITIAL_JUICE);
 		assertEquals(2L, evalL(ctx2, "a"));
 	}
 

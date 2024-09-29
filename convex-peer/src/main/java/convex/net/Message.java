@@ -1,5 +1,6 @@
 package convex.net;
 
+import java.io.IOException;
 import java.util.function.Predicate;
 
 import org.slf4j.Logger;
@@ -8,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import convex.core.Belief;
 import convex.core.ErrorCodes;
 import convex.core.Result;
+import convex.core.SourceCodes;
 import convex.core.data.ACell;
 import convex.core.data.AString;
 import convex.core.data.AVector;
@@ -52,7 +54,13 @@ public class Message {
 	}
 
 	public static Message create(Connection conn, MessageType type, Blob data) {
-		Predicate<Message> handler=conn::sendMessage;
+		Predicate<Message> handler=t -> {
+			try {
+				return conn.sendMessage(t);
+			} catch (IOException e) {
+				return false;
+			}
+		};
 		return new Message(type, null,data,handler);
 	}
 	
@@ -111,9 +119,9 @@ public class Message {
 	@SuppressWarnings("unchecked")
 	public <T extends ACell> T getPayload() throws BadFormatException {
 		if (payload!=null) return (T) payload;
-		if (messageData==null) return null;
+		if (messageData==null) return null; // no message data, so must actually be null
 		
-		// actual null payload :-)
+		// detect actual message data for null payload :-)
 		if ((messageData.count()==1)&&(messageData.byteAt(0)==Tag.NULL)) return null;
 		
 		switch(type) {
@@ -171,7 +179,7 @@ public class Message {
 			return "#message {:type " + getType() + " :payload " + ps + "}";
 		} catch (MissingDataException e) {
 			return "#message {:type " + getType() + " :payload <partial, some still missing>}";
-		} catch (Exception e) {
+		} catch (BadFormatException e) {
 			return "#message <CORRUPED "+getType()+": "+e.getMessage();
 		}
 	}
@@ -215,6 +223,45 @@ public class Message {
 				default: return null;
 			}
 		} catch (BadFormatException e) {
+			return null;
+		}
+	}
+	
+	/**
+	 * Sets the message ID, if supported
+	 * @param id ID to set for message
+	 * @return Message with updated ID, or null if message does not support IDs
+	 */
+	@SuppressWarnings("unchecked")
+	public Message withID(CVMLong id) {
+		try {
+			switch (type) {
+				// Query and transact use a vector [ID ...]
+				case QUERY:
+				case TRANSACT: 
+					return Message.create(type, ((AVector<ACell>)getPayload()).assoc(0, id));
+	
+				// Result is a special record type
+				case RESULT: 
+					return Message.create(type, ((Result)getPayload()).withID(id));
+	
+				// Status ID is the single value
+				case STATUS: 
+					return Message.create(type, id);
+				
+				case DATA: {
+					ACell o=getPayload();
+					if (o instanceof AVector) {
+						AVector<ACell> v = (AVector<ACell>)o; 
+						if (v.count()==0) return null;
+						// first element assumed to be ID
+						return Message.create(type, v.assoc(0, id));
+					}
+				}
+	
+				default: return null;
+			}
+		} catch (BadFormatException | ClassCastException | IndexOutOfBoundsException e) {
 			return null;
 		}
 	}
@@ -308,8 +355,8 @@ public class Message {
 			default:
 				return Result.create(getID(), Strings.create("Unexpected message type for Result: "+type), ErrorCodes.UNEXPECTED);
 			}
-		} catch (Exception e) {
-			return Result.create(null, Strings.create("Error building Result: "+e.getMessage()), ErrorCodes.FATAL);
+		} catch (BadFormatException e) {
+			return Result.fromException(e).withSource(SourceCodes.CLIENT);
 		}
 	}
 

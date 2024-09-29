@@ -1,15 +1,13 @@
 package convex.cli.peer;
 
 import convex.cli.ACommand;
-import convex.cli.CLIError;
-import convex.cli.ExitCodes;
 import convex.cli.Main;
 import convex.cli.mixins.EtchMixin;
 import convex.cli.mixins.KeyMixin;
 import convex.cli.mixins.PeerKeyMixin;
-import convex.cli.mixins.StoreMixin;
+import convex.cli.mixins.KeyStoreMixin;
 import convex.core.crypto.AKeyPair;
-import etch.EtchStore;
+import convex.etch.EtchStore;
 import picocli.CommandLine.Mixin;
 import picocli.CommandLine.ParentCommand;
 
@@ -25,7 +23,7 @@ public abstract class APeerCommand extends ACommand {
 	protected PeerKeyMixin peerKeyMixin;
 	
 	@Mixin
-	protected StoreMixin storeMixin; 
+	protected KeyStoreMixin storeMixin; 
 	
 
 	@ParentCommand
@@ -41,49 +39,33 @@ public abstract class APeerCommand extends ACommand {
 	}
 	
 	/**
-	 * Get the keypair for the peer. Always returns a valid key pair, may generate one.
+	 * Get the keypair for the peer. May return null if not specified or not available in store
 	 */
-	protected AKeyPair ensurePeerKey() {
+	protected AKeyPair specifiedPeerKey() {
 		String peerPublicKey=peerKeyMixin.getPublicKey();
 		if (peerPublicKey==null) {
-			if (!isInteractive()) {
-				throw new CLIError(ExitCodes.USAGE,"--peer-key must be specified in non-interactive mode");
-			} else {
-				boolean shouldGenerate=question("No --peer-key specified. Generate one? (y/n)");
-				if (shouldGenerate) {
-					AKeyPair kp=AKeyPair.generate();
-					inform(2,"Generated peer key: "+kp.getAccountKey().toChecksumHex());
-					char[] keyPass=peerKeyMixin.getKeyPassword();
-					storeMixin.addKeyPairToStore(kp, keyPass);
-					storeMixin.saveKeyStore();
-					return kp;
-				} else {
-					throw new CLIError("Opertation cancelled");
-				}
-			}
+			paranoia("You must specify a --peer-key for the peer");
+			return null;
 		} else {
 			char[] keyPass=peerKeyMixin.getKeyPassword();
 			AKeyPair result=storeMixin.loadKeyFromStore(peerPublicKey, keyPass);
-			if (result==null) throw new CLIError("Peer key not found in store");
 			return result;
 		}
 	}
 	
 	/**
-	 * Get the keypair for the peer controller account
+	 * Get the keypair for the peer controller account. Returns null if not specified
 	 */
 	protected AKeyPair ensureControllerKey() {
-		String peerPublicKey=keyMixin.getPublicKey();
-		if (peerPublicKey==null) {
-			if (!isInteractive()) {
-				throw new CLIError(ExitCodes.USAGE,"Controller --key must be specified in non-interactive mode");
-			} 
+		String controllerKey=keyMixin.getPublicKey();
+		if (controllerKey==null) {
+			paranoia("You must specify a --key for the peer controller");
+			return null;
 		}
 		
 		char[] keyPass=keyMixin.getKeyPassword();
 		
-		AKeyPair result=storeMixin.loadKeyFromStore(peerPublicKey, keyPass);
-		if (result==null) throw new CLIError("Peer controller key not found in store");
+		AKeyPair result=storeMixin.loadKeyFromStore(controllerKey, keyPass);
 		return result;
 	}
 }

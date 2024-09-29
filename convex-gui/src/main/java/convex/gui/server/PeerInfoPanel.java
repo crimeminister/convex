@@ -86,6 +86,7 @@ public class PeerInfoPanel extends JPanel {
 			sb.append("Running:              " + s.isLive() + "\n");
 			sb.append("Key:                  " + s.getPeerKey() + "\n");
 			sb.append("Address:              " + s.getHostAddress() + "\n");
+			sb.append("Store:                " + s.getStore() + "\n");
 			sb.append("\n");
 	
 			sb.append(s.getStatusVector()+"\n");
@@ -107,7 +108,6 @@ public class PeerInfoPanel extends JPanel {
 			sb.append("- Belief Propagator:    "+load(s.getBeliefPropagator())+"\n");
 			sb.append("- CVM Executor:         "+load(s.getCVMExecutor())+"\n");
 			sb.append("- Connection Manager:   "+load(s.getConnectionManager())+"\n");
-
 		}
 		
 		textArea.setText(sb.toString());

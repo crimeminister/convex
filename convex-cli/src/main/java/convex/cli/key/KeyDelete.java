@@ -28,14 +28,14 @@ public class KeyDelete extends AKeyCommand {
 	}
 	
 	@Override
-	public void run() {
+	public void execute() {
 		
 		if ((keys==null)||(keys.length==0)) {
 			showUsage();
 			return;
 		}
 		
-		KeyStore keyStore = storeMixin.loadKeyStore();
+		KeyStore keyStore = storeMixin.ensureKeyStore();
 		if (keyStore==null) throw new CLIError("Keystore does not exist. Specify a valid --keystore or use `convex key gen` to create one.");
 		
 		HashSet<String> toDelete=new HashSet<>();

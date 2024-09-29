@@ -1,8 +1,10 @@
 package convex.peer;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
@@ -16,6 +18,7 @@ import convex.core.State;
 import convex.core.crypto.AKeyPair;
 import convex.core.data.AccountKey;
 import convex.core.data.Address;
+import convex.core.exceptions.ResultException;
 import convex.core.init.Init;
 import convex.core.util.Utils;
 
@@ -62,18 +65,14 @@ public class TestNetwork {
 		// Use fresh State
 		GENESIS_STATE=Init.createState(PEER_KEYS);
 		HERO=Address.create(Init.GENESIS_ADDRESS);
-		VILLAIN=HERO.offset(1);
+		VILLAIN=HERO.offset(2);
 	}
 
-	private void waitForLaunch() {
+	private void waitForLaunch() throws PeerException, InterruptedException {
 		if (SERVERS == null) {
 			SERVERS=API.launchLocalPeers(PEER_KEYPAIRS, GENESIS_STATE);
-			try {
-				SERVER = SERVERS.get(0);
-				CONVEX=Convex.connect(SERVER, HERO, HERO_KEYPAIR);
-			} catch (Throwable t) {
-				throw Utils.sneakyThrow(t);
-			}
+			SERVER = SERVERS.get(0);
+			CONVEX=Convex.connect(SERVER, HERO, HERO_KEYPAIR);
 		}
 		log.debug("*** Test Network ready ***");
 	}
@@ -98,8 +97,11 @@ public class TestNetwork {
 			network.CONVEX.transferSync(addr, Coin.GOLD);
 			ConvexRemote client=Convex.connect(network.SERVER.getHostAddress(),addr,kp);
 			return client;
-		} catch (Throwable t) {
+		} catch (IOException | ResultException | TimeoutException t) {
 			throw Utils.sneakyThrow(t);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			return null;
 		}
 	}
 
@@ -107,7 +109,11 @@ public class TestNetwork {
 		if (instance == null) {
 			instance = new TestNetwork();
 		}
-		instance.waitForLaunch();
+		try {
+			instance.waitForLaunch();
+		} catch (Exception e) {
+			throw Utils.sneakyThrow(e);
+		} 
 		return instance;
 	}
 }

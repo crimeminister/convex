@@ -201,7 +201,7 @@ public abstract class ACell extends AObject implements IWriteable, IValidated {
 				pos=encode(bs,pos);
 				break;
 			} catch (IndexOutOfBoundsException be) {
-				if (capacity>Format.LIMIT_ENCODING_LENGTH) throw new Error("Encoding size limit exceeded in cell: "+this);
+				if (capacity>Format.LIMIT_ENCODING_LENGTH) throw new IllegalStateException("Encoding size limit exceeded in cell: "+this);
 				
 				// We really want to eliminate these, because exception handling is expensive
 				// However don't want to be too conservative or we waste memory
@@ -424,6 +424,55 @@ public abstract class ACell extends AObject implements IWriteable, IValidated {
 	}
 	
 	/**
+	 * Gets the number of Branches referenced from this Cell. This number is
+	 * final / immutable for any given instance and is defined by the Cell encoding rules.
+	 * 
+	 * @return The number of Branches from this Cell
+	 */
+	public int getBranchCount() {
+		ACell c=getCanonical();
+		int rc=c.getRefCount();
+		int result=0;
+		for (int i=0; i<rc; i++) {
+			Ref<?> r=c.getRef(i);
+			if (r.isEmbedded()) {
+				// need to recursively count branches in embedded Ref
+				result+=r.branchCount();
+			} else {
+				// we found a branch!
+				result+=1;
+			}
+		}
+		return result;
+	}
+	
+	/**
+	 * Gets the number of Branches referenced from this Cell. This number is
+	 * final / immutable for any given instance and is defined by the Cell encoding rules.
+	 * 
+	 * @return The Ref for the branch, or null if an invalid index
+	 */
+	@SuppressWarnings("unchecked")
+	public <T extends ACell> Ref<T> getBranchRef(int index) {
+		ACell c=getCanonical();
+		int rc=c.getRefCount();
+		for (int i=0; i<rc; i++) {
+			Ref<?> r=c.getRef(i);
+			if (r.isEmbedded()) {
+				ACell child=r.getValue();
+				if (child==null) continue; // no branch here!
+				int cbc=child.getBranchCount();
+				if (cbc>index) return child.getBranchRef(index);
+				index-=cbc;
+			} else {
+				if (index==0) return (Ref<T>) r; // we are pointing to exactly this branch
+				index-=1;
+			}
+		}
+		return null;
+	}
+	
+	/**
 	 * Gets a numbered child Ref from within this Cell.
 	 * WARNING: May need to convert to a canonical instance
 	 * 
@@ -439,7 +488,10 @@ public abstract class ACell extends AObject implements IWriteable, IValidated {
 	}
 	
 	/**
-	 * Updates all Refs in this object using the given function.
+	 * Updates all child Refs in this object using the given function.
+	 * 
+	 * This clears the currently cached Ref if an update occurred. This is because, presumably, 
+	 * a new Ref for this cell needs to be created.
 	 * 
 	 * The function *must not* change the hash value of Refs, in order to ensure
 	 * structural integrity of modified data structures.
@@ -504,17 +556,24 @@ public abstract class ACell extends AObject implements IWriteable, IValidated {
 	}
 	
 	/**
-	 * Updates the cached ref of this Cell
+	 * Sets the cached ref of this Cell if it is not already set. USe with caution.
 	 * 
 	 * @param ref Ref to assign
 	 */
 	@SuppressWarnings("unchecked")
 	public void attachRef(Ref<?> ref) {
+		Ref<?> current=this.cachedRef;
+		if (current!=null) {
+			// This solves problem of trashing internal cached refs
+			if (ref.getStatus()<=current.getStatus()) return;
+		//	return;
+		//	// throw new IllegalStateException("Cell of type "+Utils.getClassName(this)+" already has cached Ref");
+		}
 		this.cachedRef=(Ref<ACell>) ref;
 	}
 
 	/**
-	 * Tests if this Cell is completely encoded, i.e. has no external Refs. This implies that the 
+	 * Tests if this Cell is completely encoded, i.e. has no external branch Refs. This implies that the 
 	 * complete Cell can be represented in a single encoding.
 	 * @return true if completely encoded, false otherwise
 	 */
