@@ -1,5 +1,6 @@
 package convex.core.data;
 
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -46,27 +47,26 @@ public final class Index<K extends ABlobLike<?>, V extends ACell> extends AIndex
 	public static final Index<?, ?> EMPTY = Cells.intern(new Index<ABlob, ACell>(0, null, EMPTY_CHILDREN,(short) 0, 0L));
 	
 	/**
-	 * Child entries, i.e. nodes with keys where this node is a common prefix. Only contains children where mask is set.
-	 * Child entries must have at least one entry.
-	 */
-	private final Ref<Index<K, V>>[] children;
-
-	/**
 	 * Entry for this node of the radix tree. Invariant assumption that the prefix
-	 * is correct. May be null if there is no entry at this node.
+	 * is correct. Will be null if there is no entry at this node.
 	 */
 	private final MapEntry<K, V> entry;
-
-	/**
-	 * Mask of child entries, 16 bits for each hex digit that may be present.
-	 */
-	private final short mask;
 
 	/**
 	 * Depth of radix tree entry in number of hex digits.
 	 */
 	private final long depth;
 
+	/**
+	 * Mask of child entries, 16 bits for each hex digit that may be present.
+	 */
+	private final short mask;
+	
+	/**
+	 * Child entries, i.e. nodes with keys where this node is a common prefix. Only contains children where mask is set.
+	 * Child entries must have at least one entry.
+	 */
+	private final Ref<Index<K, V>>[] children;
 
 	@SuppressWarnings({ "rawtypes", "unchecked" })
 	protected Index(long depth, MapEntry<K, V> entry, Ref<Index>[] entries,
@@ -121,11 +121,6 @@ public final class Index<K extends ABlobLike<?>, V extends ACell> extends AIndex
 	}
 	
 	@Override public final boolean isCVMValue() {
-		return true;
-	}
-	
-	@Override
-	public boolean isDataValue() {
 		return true;
 	}
 
@@ -289,9 +284,9 @@ public final class Index<K extends ABlobLike<?>, V extends ACell> extends AIndex
 	}
 
 	@Override
-	protected void accumulateEntrySet(Set<Entry<K, V>> h) {
+	protected void accumulateEntries(Collection<Entry<K, V>> h) {
 		for (int i = 0; i < children.length; i++) {
-			children[i].getValue().accumulateEntrySet(h);
+			children[i].getValue().accumulateEntries(h);
 		}
 		if (entry != null) h.add(entry);
 	}
@@ -516,17 +511,31 @@ public final class Index<K extends ABlobLike<?>, V extends ACell> extends AIndex
 
 	@Override
 	public int encodeRaw(byte[] bs, int pos) {
-		pos = Format.writeVLCCount(bs,pos, count);
+		pos = Format.writeVLQCount(bs,pos, count);
 		if (count == 0) return pos; // nothing more to know... this must be the empty singleton
 
-		pos = MapEntry.encodeCompressed(entry,bs,pos); // entry may be null
-		if (count == 1) return pos; // must be a single entry
+		if (count == 1) {
+			// directly encode single entry
+			pos=entry.getKeyRef().encode(bs,pos);
+			pos=entry.getValueRef().encode(bs,pos);
+			return pos; // must be a single entry, exit early
+		} else {
+			if (entry==null) {
+				bs[pos++]=Tag.NULL; // no entry present
+			} else {
+				bs[pos++]=Tag.VECTOR;
+				pos=entry.getKeyRef().encode(bs,pos);
+				pos=entry.getValueRef().encode(bs,pos);
+			}
+		}
 
 		// We only have a meaningful depth if more than one entry
-		pos = Format.writeVLCCount(bs,pos, depth);
+		bs[pos++] = (byte)depth;
+		
+		// write mask
+		pos = Utils.writeShort(bs,pos,mask);
 
 		// finally write children
-		pos = Utils.writeShort(bs,pos,mask);
 		int n = children.length;
 		for (int i = 0; i < n; i++) {
 			pos = encodeChild(bs,pos,i);
@@ -556,23 +565,31 @@ public final class Index<K extends ABlobLike<?>, V extends ACell> extends AIndex
 	
 	@SuppressWarnings({ "unchecked", "rawtypes" })
 	public static <K extends ABlobLike<?>, V extends ACell> Index<K, V> read(Blob b, int pos) throws BadFormatException {
-		long count = Format.readVLCCount(b,pos+1);
+		long count = Format.readVLQCount(b,pos+1);
 		if (count < 0) throw new BadFormatException("Negative count!");
 		if (count == 0) return (Index<K, V>) EMPTY;
 		
-		int epos=pos+1+Format.getVLCCountLength(count);
+		// index for reading
+		int epos=pos+1+Format.getVLQCountLength(count);
 		
-
-		byte etype=b.byteAt(epos++);
 		MapEntry<K,V> me;
-		if (etype==Tag.NULL) {
-			me=null;
-		} else if (etype==Tag.VECTOR){
+		boolean hasEntry;
+		if (count==1) {
+			hasEntry=true;
+		} else {
+			byte c=b.byteAt(epos++); // Read byte
+			switch (c) {
+			case Tag.NULL: hasEntry=false; break;
+			case Tag.VECTOR: hasEntry=true; break;
+			default: throw new BadFormatException("Invalid MapEntry tag in Index: "+c);
+			}
+		}
+		if (hasEntry) {
 			Ref<K> kr=Format.readRef(b,epos);
 			epos+=kr.getEncodingLength();
 			Ref<V> vr=Format.readRef(b,epos);
 			epos+=vr.getEncodingLength();
-			me=MapEntry.createRef(kr, vr);
+			me=MapEntry.fromRefs(kr, vr);
 			
 			if (count == 1) {
 				// single entry map, doesn't need separate depth encoding
@@ -582,17 +599,16 @@ public final class Index<K extends ABlobLike<?>, V extends ACell> extends AIndex
 				return result;
 			} 
 		} else {
-			throw new BadFormatException("Invalid MapEntry tag in Index: "+etype);
+			me=null;
 		}
 
 		Index<K,V> result;
-		long depth = Format.readVLCCount(b,epos);
-		if (depth < 0) throw new BadFormatException("Negative depth!");
+		int depth = 0xFF & b.byteAt(epos);
 		if (depth >=MAX_DEPTH) {
 			if (depth==MAX_DEPTH) throw new BadFormatException("More than one entry and MAX_DEPTH");
 			throw new BadFormatException("Excessive depth!");
 		}
-		epos+=Format.getVLCCountLength(depth);
+		epos+=1;
 
 		// Need to include children
 		short mask = b.shortAt(epos);
@@ -836,7 +852,17 @@ public final class Index<K extends ABlobLike<?>, V extends ACell> extends AIndex
 		}
 		return (R) result;
 	}
-
-
+	
+	@SuppressWarnings("unchecked")
+	public static <R extends AIndex<K, V>, K extends ABlobLike<?>, V extends ACell> R create(AHashMap<K, V> map) {
+		Index<K,V> result=(Index<K, V>) EMPTY;
+		long n=map.count();
+		for (long i=0; i<n; i++) {
+			MapEntry<K,V> me=map.entryAt(i);
+			result=result.assoc(me.getKey(), me.getValue());
+			if (result==null) return null;
+		}
+		return (R) result;
+	}
 
 }

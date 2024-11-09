@@ -9,7 +9,7 @@ import java.util.function.Predicate;
 
 import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.InvalidDataException;
-import convex.core.util.Errors;
+import convex.core.util.ErrorMessages;
 import convex.core.util.Utils;
 
 /**
@@ -45,8 +45,16 @@ public class VectorLeaf<T extends ACell> extends AVector<T> {
 	/** Maximum size of a single VectorLeaf before a tail is required */
 	public static final int MAX_SIZE = Vectors.CHUNK_SIZE;
 
-	private final Ref<T>[] items;
+	/**
+	 * Ref to prefix vector. May be null, indicating a leaf node of 0-16 elements
+	 */
 	private Ref<AVector<T>> prefix;
+	
+	/**
+	 * Refs to items at end of vector. May be 0-16 elements
+	 * Can only be 16 items if no prefix is present (otherwise promotes to VectorTree)
+	 */
+	private final Ref<T>[] items;
 
 	VectorLeaf(Ref<T>[] items, Ref<AVector<T>> prefix, long count) {
 		super(count);
@@ -131,10 +139,10 @@ public class VectorLeaf<T extends ACell> extends AVector<T> {
 				return new VectorLeaf<T>(newItems, prefix, count + 1);
 			}
 		} else {
-			// this must be a full single chunk already, so turn this into tail of new
+			// this must be a full single chunk already, so turn this into prefix of new
 			// VectorLeaf
-			AVector<T> newTail = this;
-			return new VectorLeaf<T>(new Ref[] { Ref.get(value) }, newTail.getRef(), count + 1);
+			AVector<T> newPrefix = this;
+			return new VectorLeaf<T>(new Ref[] { Ref.get(value) }, newPrefix.getRef(), count + 1);
 		}
 	}
 
@@ -242,7 +250,7 @@ public class VectorLeaf<T extends ACell> extends AVector<T> {
 			n = VectorLeaf.MAX_SIZE; // we know this must be true since zero already caught
 		}
 		
-		int rpos=pos+1+Format.getVLCCountLength(count); // skip tag and count
+		int rpos=pos+1+Format.getVLQCountLength(count); // skip tag and count
 		Ref<T>[] items = (Ref<T>[]) new Ref<?>[n];
 		for (int i = 0; i < n; i++) {
 			Ref<T> ref = Format.readRef(b,rpos);
@@ -250,14 +258,14 @@ public class VectorLeaf<T extends ACell> extends AVector<T> {
 			rpos+=ref.getEncodingLength();
 		}
 		
-		Ref<AVector<T>> tail = null;
+		Ref<AVector<T>> pfx = null;
 		boolean prefixPresent = count > MAX_SIZE;
 		if (prefixPresent) {
-			tail=Format.readRef(b,rpos);
-			rpos+=tail.getEncodingLength();
+			pfx=Format.readRef(b,rpos);
+			rpos+=pfx.getEncodingLength();
 		}
 
-		VectorLeaf<T> result=new VectorLeaf<T>(items, tail, count);
+		VectorLeaf<T> result=new VectorLeaf<T>(items, pfx, count);
 		result.attachEncoding(b.slice(pos, rpos));
 		return result;
 	}
@@ -275,7 +283,7 @@ public class VectorLeaf<T extends ACell> extends AVector<T> {
 		boolean hasPrefix = hasPrefix();
 
 		// count field
-		pos = Format.writeVLCCount(bs,pos, count);
+		pos = Format.writeVLQCount(bs,pos, count);
 
 		for (int i = 0; i < ilength; i++) {
 			pos= items[i].encode(bs,pos);
@@ -304,7 +312,7 @@ public class VectorLeaf<T extends ACell> extends AVector<T> {
 		if (encoding!=null) return encoding.size();
 		
 		// tag and count
-		int length=1+Format.getVLCCountLength(count);
+		int length=1+Format.getVLQCountLength(count);
 		int n = items.length;
 		if (prefix!=null) length+=prefix.getEncodingLength();
 		for (int i = 0; i < n; i++) {
@@ -313,7 +321,7 @@ public class VectorLeaf<T extends ACell> extends AVector<T> {
 		return length;
 	}
 	 
-	public static final int MAX_ENCODING_LENGTH = 1 + Format.MAX_VLC_COUNT_LENGTH + VectorTree.MAX_EMBEDDED_LENGTH+Format.MAX_EMBEDDED_LENGTH * (MAX_SIZE);
+	public static final int MAX_ENCODING_LENGTH = 1 + Format.MAX_VLQ_COUNT_LENGTH + VectorTree.MAX_EMBEDDED_LENGTH+Format.MAX_EMBEDDED_LENGTH * (MAX_SIZE);
 
 	/**
 	 * Returns true if this VectorLeaf has a prefix AVector.
@@ -327,6 +335,7 @@ public class VectorLeaf<T extends ACell> extends AVector<T> {
 	public VectorLeaf<T> withPrefix(AVector<T> newPrefix) {
 		if ((newPrefix == null) && !hasPrefix()) return this;
 		long newPC = (newPrefix == null) ? 0L : newPrefix.count();
+		if ((newPC&0x0F)!=0) throw new IllegalArgumentException("Prefix must be fully packed!");
 		return new VectorLeaf<T>(items, (newPrefix == null) ? null : newPrefix.getRef(), newPC + items.length);
 	}
 
@@ -412,17 +421,17 @@ public class VectorLeaf<T extends ACell> extends AVector<T> {
 
 		@Override
 		public void remove() {
-			throw new UnsupportedOperationException(Errors.immutable(this));
+			throw new UnsupportedOperationException(ErrorMessages.immutable(this));
 		}
 
 		@Override
 		public void set(T e) {
-			throw new UnsupportedOperationException(Errors.immutable(this));
+			throw new UnsupportedOperationException(ErrorMessages.immutable(this));
 		}
 
 		@Override
 		public void add(T e) {
-			throw new UnsupportedOperationException(Errors.immutable(this));
+			throw new UnsupportedOperationException(ErrorMessages.immutable(this));
 		}
 
 	}
@@ -447,7 +456,7 @@ public class VectorLeaf<T extends ACell> extends AVector<T> {
 	}
 
 	@Override
-	public long longIndexOf(Object o) {
+	public long longIndexOf(ACell o) {
 		if (prefix != null) {
 			long pi = prefix.getValue().longIndexOf(o);
 			if (pi >= 0L) return pi;
@@ -459,7 +468,7 @@ public class VectorLeaf<T extends ACell> extends AVector<T> {
 	}
 
 	@Override
-	public long longLastIndexOf(Object o) {
+	public long longLastIndexOf(ACell o) {
 		for (int i = items.length - 1; i >= 0; i--) {
 			if (Utils.equals(items[i].getValue(), o)) return (count - items.length + i);
 		}

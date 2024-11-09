@@ -24,14 +24,14 @@ import convex.core.util.Utils;
  */
 public final class CVMDouble extends ANumeric {
 
-	public static final CVMDouble ZERO = CVMDouble.create(0.0);
-	public static final CVMDouble NEGATIVE_ZERO = CVMDouble.create(-0.0);
-	public static final CVMDouble ONE = CVMDouble.create(1.0);
-	public static final CVMDouble MINUS_ONE = CVMDouble.create(-1.0);
+	public static final CVMDouble ZERO = new CVMDouble(0.0);
+	public static final CVMDouble NEGATIVE_ZERO = new CVMDouble(-0.0);
+	public static final CVMDouble ONE = new CVMDouble(1.0);
+	public static final CVMDouble MINUS_ONE = new CVMDouble(-1.0);
 
-	public static final CVMDouble NaN = CVMDouble.create(Double.NaN);
-	public static final CVMDouble POSITIVE_INFINITY = CVMDouble.create(Double.POSITIVE_INFINITY);
-	public static final CVMDouble NEGATIVE_INFINITY = CVMDouble.create(Double.NEGATIVE_INFINITY);
+	public static final CVMDouble NaN = new CVMDouble(Double.NaN);
+	public static final CVMDouble POSITIVE_INFINITY = new CVMDouble(Double.POSITIVE_INFINITY);
+	public static final CVMDouble NEGATIVE_INFINITY = new CVMDouble(Double.NEGATIVE_INFINITY);
 	
 	private final double value;
 	
@@ -45,13 +45,15 @@ public final class CVMDouble extends ANumeric {
 	}
 
 	/**
-	 * Creates a CVMDouble. Forces NaN to be canonical instance.
+	 * Creates a CVMDouble. Forces NaNs to be canonical instance.
 	 * @param value Double value to wrap
 	 * @return CVMDouble value
 	 */
 	public static CVMDouble create(double value) {
 		// We must use a canonical NaN value (0x7ff8000000000000L);
-		if (Double.isNaN(value)) value=Double.NaN;
+		if (Double.isNaN(value)) {
+			return CVMDouble.NaN;
+		}
 		return new CVMDouble(value);
 	}
 	
@@ -76,7 +78,8 @@ public final class CVMDouble extends ANumeric {
 
 	@Override
 	public CVMDouble toDouble() {
-		return this;
+		if (!Double.isNaN(value)) return this;
+		return NaN;
 	}
 	
 	@Override
@@ -94,9 +97,15 @@ public final class CVMDouble extends ANumeric {
 
 	@Override
 	public void validateCell() throws InvalidDataException {
-		if (Double.isNaN(value)) {
-			if (Double.doubleToRawLongBits(value)!=RAW_NAN_BITS) throw new InvalidDataException("Non-canonical NaN value",this);
-		}
+		// always OK, though might not be CVM value
+	}
+	
+	protected static final boolean isStandardNaN(double value) {
+		return Double.doubleToRawLongBits(value)==RAW_NAN_BITS;
+	}
+	
+	@Override public boolean isCVMValue() {
+		return true;
 	}
 
 	@Override
@@ -120,7 +129,12 @@ public final class CVMDouble extends ANumeric {
 				return "##-Inf";
 			}
 		} else if (Double.isNaN(value)) {
-			return "##NaN";
+			long bits=Double.doubleToRawLongBits(value);
+			if (bits==RAW_NAN_BITS) {
+				return "##NaN";
+			} else {
+				return "#[1d"+Utils.toHexString(bits)+"]";
+			}
 		} else {
 			return Double.toString(value);
 		}
@@ -145,33 +159,27 @@ public final class CVMDouble extends ANumeric {
 	/**
 	 * Parses a CVM Double value. 
 	 * @param s String to parse
-	 * @return CVMDouble value
-	 * @throws NumberFormatException If number format is invalid
+	 * @return CVMDouble value, or null if not parseable as a double
 	 */
 	public static CVMDouble parse(String s) {
-		return create(Double.parseDouble(s));
+		try {
+			double d=Double.parseDouble(s);
+			return create(d);
+		} catch (NumberFormatException e) {
+			return null;
+		}
 	}
 	
 	@Override
-	public byte getTag() {
+	public final byte getTag() {
 		return Tag.DOUBLE;
-	}
-
-	public static CVMDouble read(double value) throws BadFormatException {
-		// Need to check for non-canonical NaN values
-		if (Double.isNaN(value)) {
-			if (Double.doubleToRawLongBits(value)!=RAW_NAN_BITS) {
-				throw new BadFormatException("Non-canonical NaN value");
-			}
-		}
-		return create(value);
 	}
 	
 	public static CVMDouble read(byte tag, Blob blob, int offset) throws BadFormatException {
 		if (blob.count()<offset+1+8) throw new BadFormatException("Insufficient blob bytes to read Double");
 		long bits=Utils.readLong(blob.getInternalArray(), blob.getInternalOffset()+offset+1,8);
 		double d=Double.longBitsToDouble(bits);
-		CVMDouble result= read(d);
+		CVMDouble result= unsafeCreate(d);
 		result.attachEncoding(blob.slice(offset,offset+1+8));
 		return result;
 	}
@@ -217,7 +225,7 @@ public final class CVMDouble extends ANumeric {
 
 	@Override
 	public CVMLong ensureLong() {
-		// TODO: possible conversion of some values?
+		// This is not a Long, even if it might be numerically equal to a Long
 		return null;
 	}
 

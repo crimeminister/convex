@@ -1,6 +1,7 @@
 package convex.core.lang;
 
-import static convex.test.Assertions.*;
+import static convex.test.Assertions.assertCVMEquals;
+import static convex.test.Assertions.assertParseException;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -9,18 +10,22 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.junit.jupiter.api.Test;
 
+import convex.core.Result;
 import convex.core.data.ACell;
 import convex.core.data.AList;
 import convex.core.data.AString;
 import convex.core.data.Address;
 import convex.core.data.Blob;
 import convex.core.data.Blobs;
+import convex.core.data.Index;
 import convex.core.data.Keyword;
 import convex.core.data.Keywords;
 import convex.core.data.Lists;
 import convex.core.data.Maps;
+import convex.core.data.Sets;
 import convex.core.data.Strings;
 import convex.core.data.Symbol;
+import convex.core.data.Symbols;
 import convex.core.data.Syntax;
 import convex.core.data.Vectors;
 import convex.core.data.prim.CVMBigInteger;
@@ -28,6 +33,7 @@ import convex.core.data.prim.CVMBool;
 import convex.core.data.prim.CVMDouble;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.ParseException;
+import convex.core.text.Text;
 import convex.test.Samples;
 
 /**
@@ -59,6 +65,9 @@ public class ReaderTest {
 		
 		assertEquals(Keyword.create("nil"), Reader.read(":nil"));
 		
+		// special case, since "/" is a valid name on its own
+		assertEquals(Keyword.create("/"), Reader.read(":/"));
+		
 		assertThrows(ParseException.class,()->Reader.read(":"));
 
 	}
@@ -68,9 +77,8 @@ public class ReaderTest {
 		assertParseException( () -> Reader.read(":"));
 		assertParseException( () -> Reader.read(" : "));
 		
-		// TODO: fix Case spotted in #441
-		// ACell a=Reader.readAll("() : ()"); // Getting a null here?
-		//assertThrows(ParseException.class, () -> Reader.readAll("() : ()"));
+		// Case spotted in #441
+		assertParseException(()->Reader.readAll("() : ()")); 
 	}
 
 	@Test
@@ -93,8 +101,7 @@ public class ReaderTest {
 		assertEquals(Symbol.create("foo.bar"), Reader.read("foo.bar"));
 		assertEquals(Symbol.create(".bar"), Reader.read(".bar"));
 		
-		// TODO: What should happen here?
-		// assertEquals(Symbols.NIL, Reader.read("'nil"));
+		assertEquals(Lists.of(Symbols.QUOTE,null), Reader.read("'nil")); // sane?
 		
 		// Interpret leading dot as symbols always. Addresses Issue #65
 		assertEquals(Symbol.create(".56"), Reader.read(".56"));
@@ -116,6 +123,15 @@ public class ReaderTest {
 	public void testSymbolPath() {
 		ACell form=Reader.read("foo/bar/baz");
 		assertEquals(Lists.of(Symbols.LOOKUP,Lists.of(Symbols.LOOKUP,Symbols.FOO,Symbols.BAR),Symbols.BAZ),form) ;
+
+		assertParseException(()->Reader.read("foo/12"));
+		
+		// space after slash not valid
+		assertParseException(()->Reader.read("foo/ bar"));
+		assertParseException(()->Reader.read("foo / bar")); // technically 3 symbols
+
+		assertEquals(Lists.of(Symbols.LOOKUP,Address.ZERO,Symbols.FOO),Reader.read("#0/foo"));
+		assertEquals(Lists.of(Symbols.LOOKUP,Address.ZERO,Symbols.DIVIDE),Reader.read("#0//"));
 	}
 	
 	@Test 
@@ -132,6 +148,7 @@ public class ReaderTest {
 
 	@Test
 	public void testSymbolsRegressionCases() {
+		// symbol staring with "nil"
 		assertEquals(Symbol.create("nils"), Reader.read("nils"));
 
 		// symbol starting with a boolean value
@@ -156,8 +173,16 @@ public class ReaderTest {
 	@Test
 	public void testAddress() {
 		assertEquals(Address.ZERO, Reader.read("#0"));
-		// TODO: too generous with whitespace?
-		assertEquals(Address.ZERO, Reader.read(" # 0 "));
+
+		assertParseException(()->Reader.read(" # 0 "));
+	}
+	
+	@Test
+	public void testBooleans() {
+		assertSame(CVMBool.TRUE, Reader.read("true"));
+		assertSame(CVMBool.FALSE, Reader.read(" false"));
+		assertSame(CVMBool.TRUE, Reader.read("#[B1]"));
+		assertSame(CVMBool.FALSE, Reader.read("#[b0]"));
 	}
 
 	@Test
@@ -171,12 +196,11 @@ public class ReaderTest {
 		assertCVMEquals(0.2, Reader.read("2.0e-1"));
 		assertCVMEquals(12.0, Reader.read("12e0"));
 		
+		
 		assertParseException(() -> {
 			Reader.read("2.0e0.1234");
 		});
-		// assertNull( Reader.read("[2.0e0.1234]"));
-		// TODO: do we want this?
-		//assertThrows(Error.class, () -> Reader.read("[2.0e0.1234]")); // Issue #70
+		assertParseException( () -> Reader.read("[2.0e0.1234]")); // Issue #70
 
 		// metadata ignored
 		assertEquals(Syntax.create(RT.cvm(3.23),Maps.of(Keywords.FOO, CVMBool.TRUE)), Reader.read("^:foo 3.23"));
@@ -193,9 +217,14 @@ public class ReaderTest {
 	
 	@Test
 	public void testSpecialNumbers() {
+		assertNotEquals(CVMDouble.NaN, Reader.read("#[1d7ff8000000ffffff]"));
 		assertEquals(CVMDouble.NaN, Reader.read("##NaN"));
 		assertEquals(CVMDouble.POSITIVE_INFINITY, Reader.read("##Inf "));
 		assertEquals(CVMDouble.NEGATIVE_INFINITY, Reader.read(" ##-Inf"));
+		
+		// A non-CVM NaN
+		doReadPrintTest("#[1d7ff8000000ffffff]");
+		doReadPrintTest("##NaN");
 	}
 	
 	@Test
@@ -230,7 +259,6 @@ public class ReaderTest {
 
 		// Multi-line String
 		assertEquals(Strings.create("\n"), Reader.read("\"\n\""));
-
 	}
 
 	@Test
@@ -238,6 +266,15 @@ public class ReaderTest {
 		assertSame(Lists.empty(), Reader.read(" ()"));
 		assertEquals(Lists.of(1L, 2L), Reader.read("(1 2)"));
 		assertEquals(Lists.of(Vectors.empty()), Reader.read(" ([] )"));
+	}
+	
+	@Test
+	public void testSets() {
+		assertSame(Sets.empty(), Reader.read("#{}"));
+		assertEquals(Sets.of(1L, 2L), Reader.read("#{1 2}"));
+		assertEquals(Sets.of(1L, 2L), Reader.read("#{1 2 2 1}"));
+		assertEquals(Sets.of(Vectors.empty()), Reader.read("#{[]}"));
+		assertParseException(()->Reader.read("# {}"));
 	}
 
 	@Test
@@ -256,7 +293,8 @@ public class ReaderTest {
 	
 	@Test
 	public void testMapError() {
-		assertThrows(ParseException.class,()->Reader.read("{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"));
+		assertParseException(()->Reader.read("{1}"));
+		assertParseException(()->Reader.read("{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"));
 	}
 
 	@Test
@@ -274,6 +312,7 @@ public class ReaderTest {
 	public void testResolve() {
 		assertEquals(Lists.of(Symbols.RESOLVE, Symbols.FOO), Reader.read("@foo"));
 		assertParseException(() -> Reader.read("@(foo)"));
+		assertParseException(() -> Reader.read("@ foo"));
 	}
 	
 	@Test public void testUnprintablePrint() {
@@ -316,6 +355,7 @@ public class ReaderTest {
 	@Test
 	public void testReadMetadata() {
 		assertEquals(Syntax.create(Keywords.FOO),Reader.read("^{} :foo"));
+		assertEquals(Syntax.create(Keywords.FOO),Reader.read("^ {}:foo"));
 	}
 
 	@SuppressWarnings("unchecked")
@@ -338,13 +378,37 @@ public class ReaderTest {
 		doIdempotencyTest(CVMBool.TRUE);
 		doIdempotencyTest(Samples.LONG_MAP_10);
 		doIdempotencyTest(Samples.BAD_HASH);
+		doIdempotencyTest(Samples.INT_INDEX_7);
 		doIdempotencyTest(Reader.readAll("(def ^{:foo 2} a 1)"));
 		doIdempotencyTest(Reader.readAll("(fn ^{:foo 2} [] bar/baz)"));
+		
+		// small signed data (embedded)
+		doIdempotencyTest(Samples.KEY_PAIR.signData(CVMLong.MAX_VALUE));
+
+		// moderate sized sized data
+		doIdempotencyTest(Samples.KEY_PAIR.signData(Samples.INT_VECTOR_256));
+
 	}
 	
 	public void doIdempotencyTest(ACell cell) {
 		String s=RT.toString(cell);
 		assertEquals(s,RT.toString(Reader.read(s)));
+	}
+	
+	@Test public void testTagged() {
+		// Unrecognised tags
+		assertEquals(null,Reader.read("#foo nil"));
+		assertEquals(Vectors.empty(),Reader.read("#foo []"));
+		
+		// Index types
+		assertEquals(Index.EMPTY,Reader.read("#Index {}"));
+		assertEquals(Index.of(Blob.EMPTY,CVMLong.ONE),Reader.read("#Index {0x 1}"));
+		assertEquals(Index.of(Blob.fromHex("1234"),CVMLong.ONE,Blob.fromHex("12"),CVMLong.ZERO),Reader.read("#Index {0x12 0 0x1234 1}"));
+		assertParseException(()->Reader.read("#Index nil"));
+		assertParseException(()->Reader.read("#Index {true false}"));
+		
+		// Result types
+		assertEquals(Result.create(CVMLong.ZERO,null),Reader.read("#Result {:id 0}"));
 	}
 	
 	/**
@@ -359,9 +423,21 @@ public class ReaderTest {
 		doReadPrintTest("\"[\""); // string containing a single square bracket should be OK
 		doReadPrintTest("1.0");
 		doReadPrintTest("[:foo bar]");
+		doReadPrintTest("#Index {}");
 		doReadPrintTest("^{} 0xa89e59cc8ab9fc6a13785a37938c85b306b24663415effc01063a6e25ef52ebcd3647d3a77e0a33908a372146fdccab6");
 	}
 	
+	/**
+	 * Test cases for strings with Java escapes
+	 */
+	@Test public void testJavaEscapes() {
+		doEscapeTest("!0\\","\\410\\");
+	}
+	
+	private void doEscapeTest(String raw, String escaped) {
+		assertEquals(raw,Text.unescapeJava(escaped));
+	}
+
 	/**
 	 * Test cases that should read and print identically
 	 */

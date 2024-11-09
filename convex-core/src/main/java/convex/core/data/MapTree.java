@@ -1,6 +1,9 @@
 package convex.core.data;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.function.BiConsumer;
@@ -10,6 +13,7 @@ import java.util.function.Function;
 import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.InvalidDataException;
 import convex.core.exceptions.TODOException;
+import convex.core.lang.RT;
 import convex.core.exceptions.Panic;
 import convex.core.util.Bits;
 import convex.core.util.MergeFunction;
@@ -45,9 +49,9 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 	 */
 	private final short mask;
 
-	private MapTree(Ref<AHashMap<K, V>>[] blocks, int shift, short mask, long count) {
+	private MapTree(Ref<AHashMap<K, V>>[] children, int shift, short mask, long count) {
 		super(count);
-		this.children = blocks;
+		this.children = children;
 		this.shift = shift;
 		this.mask = mask;
 	}
@@ -68,15 +72,60 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 		}
 		return n;
 	}
+	
+	/**
+	 * Create MapTree with specific children at specified shift level
+	 * Children must branch at the given shift level
+	 */
+	@SafeVarargs
+	static <K extends ACell, V extends ACell> MapTree<K, V> create(int shift, AHashMap<K,V> ... children) {
+		int n=children.length;
+		Arrays.sort(children,shiftComparator(shift));
+		@SuppressWarnings("unchecked")
+		Ref<AHashMap<K,V>>[] rs=new Ref[n];
+		long count=0;
+		short mask=0;
+		for (int i=0; i<n; i++) {
+			AHashMap<K,V> child=children[i];
+			rs[i]=Ref.get(child);
+			count+=child.count;
+			int digit=child.getFirstHash().getHexDigit(shift);
+			mask|=(1<<digit);
+		}
+		if (Integer.bitCount(mask&0xFFFF)!=n) {
+			throw new IllegalArgumentException("Children do not differ at specified digit");
+		}
+		return new MapTree<>(rs,shift,mask,count);
+	}
 
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	static Comparator<AHashMap>[] COMPARATORS=new Comparator[64];
+	
+	@SuppressWarnings("rawtypes")
+	private static Comparator<AHashMap> shiftComparator(int shift) {
+		if (COMPARATORS[shift]==null) {
+			COMPARATORS[shift]=new Comparator<AHashMap>() {
+				@Override
+				public int compare(AHashMap o1, AHashMap o2) {
+					int d1= o1.getFirstHash().getHexDigit(shift);
+					int d2= o2.getFirstHash().getHexDigit(shift);
+					return d1-d2;
+				}
+			};
+		};
+		return COMPARATORS[shift];
+	}
+
+	// Used to promote a MapLeaf to a MapTree
 	@SuppressWarnings("unchecked")
-	public static <K extends ACell, V extends ACell> MapTree<K, V> create(MapEntry<K, V>[] newEntries, int shift) {
+	static <K extends ACell, V extends ACell> MapTree<K, V> create(MapEntry<K, V>[] newEntries) {
 		int n = newEntries.length;
 		if (n <= MapLeaf.MAX_ENTRIES) {
 			throw new IllegalArgumentException(
 					"Insufficient distinct entries for TreeMap construction: " + newEntries.length);
 		}
 
+		int shift=computeShift(newEntries);
 		// construct full child array
 		Ref<AHashMap<K, V>>[] children = new Ref[FANOUT];
 		for (int i = 0; i < n; i++) {
@@ -86,11 +135,27 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 			if (ref == null) {
 				children[ix] = MapLeaf.create(e).getRef();
 			} else {
-				AHashMap<K, V> newChild=ref.getValue().assocEntry(e, shift + 1);
+				AHashMap<K, V> newChild=ref.getValue().assocEntry(e);
 				children[ix] = newChild.getRef();
 			}
 		}
 		return (MapTree<K, V>) createFull(children, shift);
+	}
+	
+	/**
+	 * Computes the common shift for a vector of entries.
+	 * This is the shift at which the first split occurs, i.e length of common prefix
+	 * @param es Entries
+	 * @return
+	 */
+	protected static <K extends ACell, V extends ACell> int computeShift(MapEntry<K,V>[] es) {
+		int shift=63; // max possible
+		Hash h=es[0].getKeyHash();
+		int n=es.length;
+		for (int i=1; i<n; i++) {
+			shift=Math.min(shift, h.commonHexPrefixLength(es[i].getKeyHash(),shift));
+		}
+		return shift;
 	}
 
 	/**
@@ -102,21 +167,23 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 	 */
 	private static <K extends ACell, V extends ACell> AHashMap<K, V> createFull(Ref<AHashMap<K, V>>[] children, int shift, long count) {
 		if (children.length != FANOUT) throw new IllegalArgumentException("16 children required!");
-		Ref<AHashMap<K, V>>[] newChildren = Utils.filterArray(children, a -> {
-			if (a == null) return false;
-			AMap<K, V> m = a.getValue();
-			return ((m != null) && !m.isEmpty());
-		});
-
-		if (children != newChildren) {
-			return create(newChildren, shift, Utils.computeMask(children, newChildren), count);
-		} else {
-			return create(children, shift, (short) 0xFFFF, count);
+		int mask=0;
+		for (int i=0; i<FANOUT; i++) {
+			Ref<AHashMap<K, V>> ch=children[i];
+			if (ch!=null) {
+				AMap<K, V> m = ch.getValue();
+				if ((m!=null)&&(!m.isEmpty())) {
+					mask|=(1<<i);
+				}
+			}
 		}
+		if (mask==0xFFFF) return create(children, shift, (short) 0xFFFF, count);
+		Ref<AHashMap<K, V>>[] newChildren = Refs.filterSmallArray(children, mask);
+		return create(newChildren, shift, (short)mask, count);
 	}
 
 	/**
-	 * Create a MapTree with a full compliment of children.
+	 * Create a MapTree with a full complement of children.
 	 * @param <K>
 	 * @param <V>
 	 * @param newChildren
@@ -131,7 +198,7 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 	 * Creates a Map with the specified child map Refs. Removes empty maps passed as
 	 * children.
 	 * 
-	 * Returns a ListMap for small maps.
+	 * Returns a MapLeaf for small maps.
 	 * 
 	 * @param children Array of Refs to child maps for each bit in mask
 	 * @param shift    Shift position (hex digit of key hashes for this map)
@@ -171,7 +238,7 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 			}
 		}
 		if (mask != newMask) {
-			return new MapTree<K, V>(Utils.filterSmallArray(children, sel), shift, newMask, count);
+			return new MapTree<K, V>(Refs.filterSmallArray(children, sel), shift, newMask, count);
 		}
 		return new MapTree<K, V>(children, shift, mask, count);
 	}
@@ -225,29 +292,33 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 		return children[i].getValue().getEntryByHash(hash);
 	}
 
-	@SuppressWarnings("unchecked")
 	@Override
 	public AHashMap<K, V> dissoc(ACell key) {
-		return dissocRef((Ref<K>) Ref.get(key));
+		return dissocHash(Cells.getHash(key));
 	}
 
 	@Override
 	@SuppressWarnings("unchecked")
-	public AHashMap<K, V> dissocRef(Ref<K> keyRef) {
-		int digit = keyRef.getHash().getHexDigit(shift);
+	public AHashMap<K, V> dissocHash(Hash keyHash) {
+		int digit = keyHash.getHexDigit(shift);
 		int i = Bits.indexForDigit(digit, mask);
 		if (i < 0) return this; // not present
 
 		// dissoc entry from child
 		AHashMap<K, V> child = children[i].getValue();
-		AHashMap<K, V> newChild = child.dissocRef(keyRef);
+		AHashMap<K, V> newChild = child.dissocHash(keyHash);
 		if (child == newChild) return this; // no removal, no change
 
 		if (count - 1 == MapLeaf.MAX_ENTRIES) {
 			// reduce to a ListMap
-			HashSet<Entry<K, V>> eset = entrySet();
-			boolean removed = eset.removeIf(e -> Utils.equals(((MapEntry<K, V>) e).getKeyRef(), keyRef));
-			if (!removed) throw new Panic("Expected to remove at least one entry!");
+			ArrayList<Entry<K, V>> eset = new ArrayList<>();
+			for (int j=0; j<children.length; j++) {
+				AHashMap<K, V> c = (i==j)?newChild:children[j].getValue();
+				c.accumulateEntries(eset);
+			}
+			if (!(eset.size()==MapLeaf.MAX_ENTRIES)) {
+				throw new Panic("Expected to remove at least one entry!");
+			}
 			return MapLeaf.create(eset.toArray((MapEntry<K, V>[]) MapLeaf.EMPTY_ENTRIES));
 		} else {
 			// replace child
@@ -259,13 +330,17 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 	@SuppressWarnings("unchecked")
 	private AHashMap<K, V> dissocChild(int i) {
 		int bsize = children.length;
+		if (bsize==2) {
+			// just return other child!
+			return children[1-i].getValue();
+		}
 		AHashMap<K, V> child = children[i].getValue();
-		Ref<AHashMap<K, V>>[] newBlocks = (Ref<AHashMap<K, V>>[]) new Ref<?>[bsize - 1];
-		System.arraycopy(children, 0, newBlocks, 0, i);
-		System.arraycopy(children, i + 1, newBlocks, i, bsize - i - 1);
+		Ref<AHashMap<K, V>>[] newChildren = (Ref<AHashMap<K, V>>[]) new Ref<?>[bsize - 1];
+		System.arraycopy(children, 0, newChildren, 0, i);
+		System.arraycopy(children, i + 1, newChildren, i, bsize - i - 1);
 		short newMask = (short) (mask & (~(1 << digitForIndex(i, mask))));
 		long newCount = count - child.count();
-		return create(newBlocks, shift, newMask, newCount);
+		return create(newChildren, shift, newMask, newCount);
 	}
 
 	@SuppressWarnings("unchecked")
@@ -316,41 +391,43 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 	public MapTree<K, V> assoc(ACell key, ACell value) {
 		K k= (K)key;
 		Ref<K> keyRef = Ref.get(k);
-		return assocRef(keyRef, (V) value, shift);
+		return assocRef(keyRef, (V) value);
 	}
 
 	@Override
 	public MapTree<K, V> assocRef(Ref<K> keyRef, V value) {
-		return assocRef(keyRef, value, shift);
-	}
-
-	@Override
-	protected MapTree<K, V> assocRef(Ref<K> keyRef, V value, int shift) {
-		if (this.shift != shift) {
-			throw new Panic("Invalid shift!");
+		Hash kh= keyRef.getHash();
+		int shift= kh.commonHexPrefixLength(getFirstHash(), this.shift);
+		if (shift<this.shift) {
+			// branch at an earlier position
+			MapLeaf<K,V> newLeaf=MapLeaf.create(MapEntry.fromRefs(keyRef, Ref.get(value)));
+			return create(shift,newLeaf,this);
 		}
-		int digit = keyRef.getHash().getHexDigit(shift);
+		
+		int digit=kh.getHexDigit(shift);
 		int i = Bits.indexForDigit(digit, mask);
 		if (i < 0) {
 			// location not present, need to insert new child
-			AHashMap<K, V> newChild = MapLeaf.create(MapEntry.createRef(keyRef, Ref.get(value)));
+			AHashMap<K, V> newChild = MapLeaf.create(MapEntry.fromRefs(keyRef, Ref.get(value)));
 			return insertChild(digit, newChild.getRef());
 		} else {
 			// child exists, so assoc in new ref at lower shift level
 			AHashMap<K, V> child = children[i].getValue();
-			AHashMap<K, V> newChild = child.assocRef(keyRef, value, shift + 1);
+			AHashMap<K, V> newChild = child.assocRef(keyRef, value);
 			return replaceChild(i, newChild.getRef());
 		}
 	}
 
 	@Override
 	public AHashMap<K, V> assocEntry(MapEntry<K, V> e) {
-		assert (this.shift == 0); // should never call this on a different shift
-		return assocEntry(e, 0);
-	}
+		Hash kh= e.getKeyHash();
+		int shift= kh.commonHexPrefixLength(getFirstHash(), this.shift);
+		if (shift<this.shift) {
+			// branch at an earlier position
+			MapLeaf<K,V> newLeaf=MapLeaf.create(e);
+			return create(shift,newLeaf,this);
+		}
 
-	@Override
-	public MapTree<K, V> assocEntry(MapEntry<K, V> e, int shift) {
 		assert (this.shift == shift); // should always be correct shift
 		Ref<K> keyRef = e.getKeyRef();
 		int digit = keyRef.getHash().getHexDigit(shift);
@@ -362,7 +439,7 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 		} else {
 			// location needs update
 			AHashMap<K, V> child = children[i].getValue();
-			AHashMap<K, V> newChild = child.assocEntry(e, shift + 1);
+			AHashMap<K, V> newChild = child.assocEntry(e);
 			if (child == newChild) return this;
 			return replaceChild(i, newChild.getRef());
 		}
@@ -391,9 +468,9 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 	}
 
 	@Override
-	protected void accumulateEntrySet(Set<Entry<K, V>> h) {
+	protected void accumulateEntries(Collection<Entry<K, V>> h) {
 		for (Ref<AHashMap<K, V>> mr : children) {
-			mr.getValue().accumulateEntrySet(h);
+			mr.getValue().accumulateEntries(h);
 		}
 	}
 
@@ -407,7 +484,7 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 	@Override
 	public int encodeRaw(byte[] bs, int pos) {
 		int ilength = children.length;
-		pos = Format.writeVLCLong(bs,pos, count); // TODO: Count instead?
+		pos = Format.writeVLQCount(bs,pos, count); 
 		
 		bs[pos++] = (byte) shift;
 		pos = Utils.writeShort(bs, pos,mask);
@@ -440,7 +517,7 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 	 */
 	@SuppressWarnings("unchecked")
 	public static <K extends ACell, V extends ACell> MapTree<K, V> read(Blob b, int pos, long count) throws BadFormatException {
-		int epos=pos+1+Format.getVLCLength(count);
+		int epos=pos+1+Format.getVLQCountLength(count);
 		int shift=b.byteAt(epos);
 		short mask=b.shortAt(epos+1);
 		epos+=3;
@@ -472,16 +549,6 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 	public boolean isCanonical() {
 		if (count <= MapLeaf.MAX_ENTRIES) return false;
 		return true;
-	}
-	
-	@Override public final boolean isCVMValue() {
-		// A MapTree is only a valid CVM value at the top level (shift == 0)
-		return (shift==0);
-	}
-	
-	@Override public final boolean isDataValue() {
-		// A MapTree is only a valid data value at the top level (shift == 0)
-		return (shift==0);
 	}
 
 	@Override
@@ -598,7 +665,7 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 			if (value != null) {
 				// include only new keys where function result is not null. Re-use existing
 				// entry if possible.
-				result = result.assocEntry(e.withValue(value), shift);
+				result = result.assocEntry(e.withValue(value));
 			}
 		}
 		return result;
@@ -624,7 +691,7 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 
 	@SuppressWarnings("unchecked")
 	private AHashMap<K, V> mergeDifferences(MapTree<K, V> b, MergeFunction<V> func, int shift) {
-		// assume two treemaps with identical prefix and shift
+		// assume two MapTrees with identical prefix and shift
 		if (this.equals(b)) return this; // no differences to merge
 		int fullMask = mask | b.mask;
 		Ref<AHashMap<K, V>>[] newChildren = null; // going to build new full child list if needed
@@ -685,7 +752,7 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 			if (value != null) {
 				// include only new keys where function result is not null. Re-use existing
 				// entry if possible.
-				result = result.assocEntry(e.withValue(value), shift);
+				result = result.assocEntry(e.withValue(value));
 			}
 		}
 		return result;
@@ -771,17 +838,22 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 	public void validate() throws InvalidDataException {
 		super.validate();
 		
-		// Perform full tree validation with prefix if this is a top level element
-		if (isCVMValue()) validateWithPrefix("");
+		try {
+			Hash firstHash=getFirstHash();
+			// Perform child validation
+			validateWithPrefix(firstHash,shift);
+		} catch (ClassCastException e) {
+			throw new InvalidDataException("Can't get first hash of map: "+e.getMessage(),e);
+		}
 	}
 
 	@Override
-	protected void validateWithPrefix(String prefix) throws InvalidDataException {
+	protected void validateWithPrefix(Hash prefix, int shift) throws InvalidDataException {
 		if (mask == 0) throw new InvalidDataException("TreeMap must have children!", this);
-		if (shift != prefix.length()) {
-			throw new InvalidDataException("Invalid prefix [" + prefix + "] for TreeMap with shift=" + shift, this);
-		}
 		int bsize = children.length;
+		if (bsize<2) {
+			throw new InvalidDataException("Non-canonical MapTree with child count "+bsize,this);
+		}
 
 		long childCount=0;;
 		for (int i = 0; i < bsize; i++) {
@@ -791,15 +863,26 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 			ACell o = children[i].getValue();
 			if (!(o instanceof AHashMap)) {
 				throw new InvalidDataException(
-						"Expected map child at " + prefix + Utils.toHexChar(digitForIndex(i, mask)), this);
+						"Expected AHashMap child at " + prefix + Utils.toHexChar(digitForIndex(i, mask)), this);
 			}
-			@SuppressWarnings("unchecked")
-			AHashMap<K, V> child = (AHashMap<K, V>) o;
+			AHashMap<K, V> child = RT.ensureHashMap(o);
+			if (child==null) {
+				throw new InvalidDataException("Non-hashmap child at position "+i,this);
+			}
 			if (child.isEmpty())
 				throw new InvalidDataException("Empty child at " + prefix + Utils.toHexChar(digitForIndex(i, mask)),
 						this);
 			int d = digitForIndex(i, mask);
-			child.validateWithPrefix(prefix + Utils.toHexChar(d));
+			Hash ch=child.getFirstHash();
+			if (ch.getHexDigit(shift)!=d) {
+				throw new InvalidDataException("Wrong child digit at position "+i,this);
+			}
+			if (prefix.commonHexPrefixLength(ch, Hash.HEX_LENGTH)<shift) {
+				throw new InvalidDataException("Inconsistent child at position "+i,this);
+			}
+			if (child instanceof MapLeaf) {
+				child.validateWithPrefix(ch, shift+1);
+			}
 			
 			childCount += child.count();
 		}
@@ -918,6 +1001,20 @@ public class MapTree<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 			items[i]=entryAt(start+i);
 		}
 		return MapLeaf.unsafeCreate(items);
+	}
+
+	@Override
+	public boolean isCVMValue() {
+		return true;
+	}
+
+	// Cache of first hash, we don't want to descend tree repeatedly to find this
+	private Hash firstHash;
+	
+	@Override
+	protected Hash getFirstHash() {
+		if (firstHash==null) firstHash=children[0].getValue().getFirstHash();
+		return firstHash;
 	}
 
 

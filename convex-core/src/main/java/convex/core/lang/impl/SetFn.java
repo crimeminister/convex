@@ -1,16 +1,16 @@
 package convex.core.lang.impl;
 
+import convex.core.cvm.Context;
 import convex.core.data.ACell;
 import convex.core.data.ASet;
 import convex.core.data.prim.CVMBool;
 import convex.core.data.util.BlobBuilder;
-import convex.core.lang.Context;
 
 public class SetFn<T extends ACell> extends ADataFn<CVMBool> {
 
 	private ASet<T> set;
 
-	public SetFn(ASet<T> m) {
+	SetFn(ASet<T> m) {
 		this.set = m;
 	}
 
@@ -33,6 +33,11 @@ public class SetFn<T extends ACell> extends ADataFn<CVMBool> {
 	@Override
 	public boolean print(BlobBuilder sb,long limit) {
 		return set.print(sb,limit);
+	}
+
+	@Override
+	public ACell toCanonical() {
+		return set.getCanonical();
 	}
 
 }

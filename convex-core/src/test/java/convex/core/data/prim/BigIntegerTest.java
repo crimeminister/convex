@@ -18,6 +18,7 @@ import convex.core.data.ABlob;
 import convex.core.data.AString;
 import convex.core.data.Blob;
 import convex.core.data.Blobs;
+import convex.core.data.Cells;
 import convex.core.data.Format;
 import convex.core.data.ObjectsTest;
 import convex.core.data.Strings;
@@ -44,6 +45,13 @@ public class BigIntegerTest {
 		assertNull(RT.print(bi,10));
 		
 		assertEquals(s.substring(0, 20)+Constants.PRINT_EXCEEDED_MESSAGE,bi.print(20).toString());
+	}
+	
+	@Test public void testHashCode() {
+		CVMLong a=CVMLong.create(100);
+		CVMBigInteger b=CVMBigInteger.wrap(new byte[] {0x64});
+		assertFalse(b.isCanonical());
+		assertEquals(a.hashCode(),b.hashCode());
 	}
 	
 	@Test public void testZero() throws BadFormatException {
@@ -77,6 +85,16 @@ public class BigIntegerTest {
 		assertFalse(bi.isCanonical());
 		
 		doBigTest(bi);
+	}
+	
+	@Test public void testMemorySize() {
+		int N=1000;
+		byte[] bs=new byte[N];
+		bs[0]=40; // have a leading high byte 
+		Blob b=Blob.wrap(bs);
+		CVMBigInteger bi=CVMBigInteger.create(b);
+		assertEquals(b.getMemorySize(),bi.getMemorySize());
+		assertEquals(Cells.storageSize(b),Cells.storageSize(bi));
 	}
 	
 	@Test public void test0980Regression () {

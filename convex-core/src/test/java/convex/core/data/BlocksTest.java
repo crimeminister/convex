@@ -4,14 +4,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import org.junit.jupiter.api.Test;
 
-import convex.core.Block;
 import convex.core.Constants;
+import convex.core.cpos.Block;
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.transactions.ATransaction;
+import convex.core.cvm.transactions.Transfer;
 import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.BadSignatureException;
 import convex.core.init.InitTest;
-import convex.core.transactions.ATransaction;
-import convex.core.transactions.Transfer;
 
 public class BlocksTest {
 

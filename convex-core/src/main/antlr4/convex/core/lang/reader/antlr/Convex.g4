@@ -1,9 +1,17 @@
 grammar Convex;
+
+/*  =========================================
+ *  Grammar for Convex Reader
+ *  =========================================
+ *  
+ *  Refers to tokens defined in the lexer at the bottom of this file
+ */ 
  
 form
 	: quoted
 	| pathSymbol
 	| primary
+	| taggedForm
 	;
 	
 primary
@@ -22,13 +30,19 @@ allForms: forms EOF;
 dataStructure:
 	list | vector | set | map;
 
-list : '(' forms ')';
+list : LPAREN forms RPAREN;
 
-vector : '[' forms ']';
+vector : LVEC forms RVEC;
 
-set : HASH '{' forms '}';
+set : SET_LBR forms RBR;
 
-map : '{' forms '}';
+map : LBR forms RBR;
+
+taggedForm: tag form;
+
+tag: HASH_TAG;
+
+cad3: CAD3;
 
 atom
   : symbol 
@@ -48,24 +62,23 @@ literal
 	| longValue
 	| doubleValue
 	| specialLiteral
+	| cad3
 	;
    
 longValue: 
-   DIGITS | SIGNED_DIGITS;   
+   LONG_VALUE;   
    
 doubleValue:
    DOUBLE;
 
-// Note slash is a special case that is a Symbol on its own
 symbol
-   : SLASH 
-   | SYMBOL;
+   : SYMBOL;
    
-implicitSymbol: HASH SYMBOL;
+implicitSymbol: INTRINSIC_SYMBOL;
    
-specialLiteral: HASH HASH SYMBOL;
+specialLiteral: HASH_HASH_SYMBOL;
    
-address: HASH DIGITS;
+address: ADDRESS;
 
 nil: NIL;
 
@@ -77,10 +90,13 @@ character: CHARACTER;
 
 keyword: KEYWORD;
 
-resolve: AT symbol;
+resolve: AT_SYMBOL;
+
+slashSymbol:
+  SLASH_SYMBOL;
 
 pathSymbol
-   : primary ('/' symbol)+
+   : primary (slashSymbol)+
    ;
 
 syntax: META form form;
@@ -98,13 +114,21 @@ commented: COMMENTED form;
  
 COMMENTED: '#_';
 
-HASH: '#';
+LPAREN: '(';
 
-AT: '@';
+RPAREN: ')';
+
+LVEC: '[';
+
+RVEC: ']';
+
+SET_LBR: '#{';
+
+LBR: '{';
+
+RBR: '}';
 
 META: '^';
-
-SLASH: '/';
 
 NIL: 'nil';
 
@@ -125,11 +149,34 @@ DECIMAL:
   
 fragment 
 EPART:
-  [eE] (DIGITS | SIGNED_DIGITS);  
+  [eE] (DIGITS | SIGNED_DIGITS) SYMBOL_FOLLOWING*;  
 
+ADDRESS:
+  '#' [0-9]+;
+  
+HASH_HASH_SYMBOL:
+  '##' NAME;
+
+INTRINSIC_SYMBOL:
+  '#%' NAME;
+  
+HASH_TAG:
+  '#' TAG_NAME;
+  
+CAD3:
+  '#[' HEX_BYTE* ']';
+  
+AT_SYMBOL: 
+  '@' NAME;
+
+LONG_VALUE:
+  DIGITS | SIGNED_DIGITS;
+
+fragment
 DIGITS:
   [0-9]+;
-  
+
+fragment  
 SIGNED_DIGITS:
   '-' DIGITS;
   
@@ -140,6 +187,9 @@ HEX_BYTE: HEX_DIGIT HEX_DIGIT;
 
 fragment 
 HEX_DIGIT: [0-9a-fA-F];
+
+fragment
+DOT: '.';
 
 STRING: '"' STRING_CHAR* '"' ;
 	
@@ -168,17 +218,35 @@ QUOTING: '\'' | '`' | '~' | '~@';
 
 // Symbols and Keywords
 
+fragment
+SLASH: '/';
+
+fragment    
+NAME
+	: SYMBOL_FIRST SYMBOL_FOLLOWING*;
 
 KEYWORD:
    ':'+ (SLASH | NAME);
 
 SYMBOL
-    : NAME
+    : SLASH | NAME
     ;
     
-fragment    
-NAME
-	: SYMBOL_FIRST SYMBOL_FOLLOWING*;
+SLASH_SYMBOL:
+   SLASH (SLASH | NAME);
+
+
+fragment
+TAG_FOLLOWING
+  : TAG_FIRST | [0-9] | DOT;
+
+fragment
+TAG_FIRST
+  : ALPHA;
+
+fragment	
+TAG_NAME
+	: TAG_FIRST TAG_FOLLOWING*;
 
 CHARACTER
   : '\\u' HEX_BYTE HEX_BYTE
@@ -193,7 +261,6 @@ SPECIAL_CHARACTER
            | 'tab'
            | 'formfeed'
            | 'backspace' ) ;
-
 
 // Test case "a*+!-_?<>=!" should be a symbol
 
@@ -215,15 +282,12 @@ ALPHA: [a-z] | [A-Z];
 
 /*
  * Whitespace and comments
+ *
+ * TODO: Should these be skip or channel(HIDDEN)?
  */
  
-fragment
-WS: [ \n\r\t,] ;
+WS: [ \n\r\t,]+ -> skip;
 
-fragment
-COMMENT: ';' ~[\r\n]* ;
+COMMENT: ';' ~[\r\n]* -> skip;
 
-TRASH
-    : ( WS | COMMENT ) -> channel(HIDDEN)
-    ;
 

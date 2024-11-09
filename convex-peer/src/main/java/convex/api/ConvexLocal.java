@@ -5,12 +5,16 @@ import java.net.InetSocketAddress;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Predicate;
 
+import convex.core.ErrorCodes;
 import convex.core.Result;
-import convex.core.State;
+import convex.core.SourceCodes;
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.AccountStatus;
+import convex.core.cvm.State;
+import convex.core.cvm.transactions.ATransaction;
 import convex.core.data.ACell;
-import convex.core.data.AccountStatus;
 import convex.core.data.Address;
+import convex.core.data.Blob;
 import convex.core.data.Cells;
 import convex.core.data.Hash;
 import convex.core.data.Ref;
@@ -19,7 +23,6 @@ import convex.core.data.Vectors;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.MissingDataException;
 import convex.core.store.AStore;
-import convex.core.transactions.ATransaction;
 import convex.core.util.ThreadUtils;
 import convex.net.Message;
 import convex.net.MessageType;
@@ -75,6 +78,7 @@ public class ConvexLocal extends Convex {
 	
 	@Override
 	public CompletableFuture<Result> transact(SignedData<ATransaction> signed) {
+		
 		maybeUpdateSequence(signed);
 		CompletableFuture<Result> r= makeMessageFuture(MessageType.TRANSACT,Vectors.of(makeID(),signed));
 		return r;
@@ -88,7 +92,7 @@ public class ConvexLocal extends Convex {
 
 	@Override
 	public CompletableFuture<Result> query(ACell query, Address address) {
-		return makeMessageFuture(MessageType.QUERY,Vectors.of(makeID(),query,address));
+		return makeMessageFuture(Message.createQuery(makeID(),query,address));
 	}
 	
 	private long idCounter=0;
@@ -98,9 +102,19 @@ public class ConvexLocal extends Convex {
 	}
 
 	private CompletableFuture<Result> makeMessageFuture(MessageType type, ACell payload) {
+		Message ml=Message.create(type,payload);
+		return makeMessageFuture(ml);
+	}
+	
+	private CompletableFuture<Result> makeMessageFuture(Message message) {
+		if (!isConnected()) {
+			Result r=Result.error(ErrorCodes.CONNECT, "Disconnected").withSource(SourceCodes.CLIENT);
+			return CompletableFuture.completedFuture(r);
+		}
+		
 		CompletableFuture<Result> cf=new CompletableFuture<>();
 		Predicate<Message> resultHandler=makeResultHandler(cf);
-		Message ml=Message.create(type,payload, resultHandler);
+		Message ml=message.withResultHandler(resultHandler);
 		server.getReceiveAction().accept(ml);
 		return cf;
 	}
@@ -164,6 +178,21 @@ public class ConvexLocal extends Convex {
 	@Override
 	public Long getBalance() {
 		return server.getPeer().getConsensusState().getBalance(address);
+	}
+
+	@Override
+	public CompletableFuture<Result> message(Blob rawData) {
+		try {
+			Message m=Message.create(rawData);
+			return message(m);
+		} catch (Exception e) {
+			return CompletableFuture.completedFuture(Result.fromException(e).withSource(SourceCodes.CLIENT));
+		}
+	}
+
+	@Override
+	public CompletableFuture<Result> message(Message message) {
+		return makeMessageFuture(message);
 	}
 
 }

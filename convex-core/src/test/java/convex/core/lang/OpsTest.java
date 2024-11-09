@@ -11,6 +11,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
+import convex.core.cvm.AOp;
+import convex.core.cvm.Context;
+import convex.core.cvm.Juice;
+import convex.core.cvm.Ops;
+import convex.core.cvm.ops.Cond;
+import convex.core.cvm.ops.Constant;
+import convex.core.cvm.ops.Def;
+import convex.core.cvm.ops.Do;
+import convex.core.cvm.ops.Invoke;
+import convex.core.cvm.ops.Lambda;
+import convex.core.cvm.ops.Let;
+import convex.core.cvm.ops.Local;
+import convex.core.cvm.ops.Lookup;
+import convex.core.cvm.ops.Set;
+import convex.core.cvm.ops.Special;
 import convex.core.data.ACell;
 import convex.core.data.AMap;
 import convex.core.data.AString;
@@ -19,6 +34,7 @@ import convex.core.data.Blob;
 import convex.core.data.Format;
 import convex.core.data.ObjectsTest;
 import convex.core.data.Symbol;
+import convex.core.data.Symbols;
 import convex.core.data.Syntax;
 import convex.core.data.Tag;
 import convex.core.data.Vectors;
@@ -29,17 +45,6 @@ import convex.core.init.BaseTest;
 import convex.core.init.Init;
 import convex.core.lang.impl.AClosure;
 import convex.core.lang.impl.Fn;
-import convex.core.lang.ops.Cond;
-import convex.core.lang.ops.Constant;
-import convex.core.lang.ops.Def;
-import convex.core.lang.ops.Do;
-import convex.core.lang.ops.Invoke;
-import convex.core.lang.ops.Lambda;
-import convex.core.lang.ops.Let;
-import convex.core.lang.ops.Local;
-import convex.core.lang.ops.Lookup;
-import convex.core.lang.ops.Set;
-import convex.core.lang.ops.Special;
 import convex.core.util.Utils;
 
 /**
@@ -77,7 +82,7 @@ public class OpsTest extends ACVMTest {
 			assertNull(c2.getResult());
 			doOpTest(op);
 			
-			assertEquals(Blob.wrap(new byte[] {op.getTag(),Tag.NULL}),op.getEncoding());
+			assertEquals(Blob.wrap(new byte[] {Tag.OP,Ops.CONSTANT,Tag.NULL}),op.getEncoding());
 		}
 		
 		{// nested constant
@@ -88,7 +93,7 @@ public class OpsTest extends ACVMTest {
 			assertEquals(Constant.nil(),c2.getResult());
 			doOpTest(op);
 			
-			assertEquals(Blob.wrap(new byte[] {op.getTag(),op.getTag(),Tag.NULL}),op.getEncoding());
+			assertEquals(Blob.wrap(new byte[] {Tag.OP,Ops.CONSTANT,Tag.OP,Ops.CONSTANT,Tag.NULL}),op.getEncoding());
 		}
 	}
 
@@ -184,7 +189,7 @@ public class OpsTest extends ACVMTest {
 	@Test
 	public void testSet() throws BadFormatException {
 		AOp<Address> op = Set.create(45, Constant.nil());
-		Blob expectedEncoding=Blob.fromHex("eb2de000");
+		Blob expectedEncoding=Blob.fromHex("c00b2dc00000");
 		assertEquals(expectedEncoding,op.getEncoding());
 		assertEquals(op,Format.read(expectedEncoding));
 		doOpTest(op);

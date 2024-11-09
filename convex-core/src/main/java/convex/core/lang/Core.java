@@ -9,10 +9,24 @@ import java.util.Map;
 
 import convex.core.Constants;
 import convex.core.ErrorCodes;
-import convex.core.State;
 import convex.core.crypto.Hashing;
+import convex.core.cvm.AFn;
+import convex.core.cvm.AOp;
+import convex.core.cvm.AccountStatus;
+import convex.core.cvm.Context;
+import convex.core.cvm.Juice;
+import convex.core.cvm.PeerStatus;
+import convex.core.cvm.State;
+import convex.core.cvm.exception.AExceptional;
+import convex.core.cvm.exception.ErrorValue;
+import convex.core.cvm.exception.HaltValue;
+import convex.core.cvm.exception.RecurValue;
+import convex.core.cvm.exception.ReducedValue;
+import convex.core.cvm.exception.ReturnValue;
+import convex.core.cvm.exception.RollbackValue;
+import convex.core.cvm.exception.TailcallValue;
+import convex.core.cvm.ops.Special;
 import convex.core.data.ABlob;
-import convex.core.data.ABlobLike;
 import convex.core.data.ACell;
 import convex.core.data.ACountable;
 import convex.core.data.ADataStructure;
@@ -24,7 +38,6 @@ import convex.core.data.ASet;
 import convex.core.data.AString;
 import convex.core.data.AVector;
 import convex.core.data.AccountKey;
-import convex.core.data.AccountStatus;
 import convex.core.data.Address;
 import convex.core.data.Blob;
 import convex.core.data.Cells;
@@ -39,6 +52,7 @@ import convex.core.data.Maps;
 import convex.core.data.Sets;
 import convex.core.data.Strings;
 import convex.core.data.Symbol;
+import convex.core.data.Symbols;
 import convex.core.data.Syntax;
 import convex.core.data.Vectors;
 import convex.core.data.prim.AInteger;
@@ -50,19 +64,10 @@ import convex.core.data.prim.CVMDouble;
 import convex.core.data.prim.CVMLong;
 import convex.core.data.type.Types;
 import convex.core.exceptions.BadFormatException;
-import convex.core.lang.exception.AExceptional;
-import convex.core.lang.exception.ErrorValue;
-import convex.core.lang.exception.HaltValue;
-import convex.core.lang.exception.RecurValue;
-import convex.core.lang.exception.ReducedValue;
-import convex.core.lang.exception.ReturnValue;
-import convex.core.lang.exception.RollbackValue;
-import convex.core.lang.exception.TailcallValue;
 import convex.core.lang.impl.CoreFn;
 import convex.core.lang.impl.CorePred;
 import convex.core.lang.impl.ICoreDef;
-import convex.core.lang.ops.Special;
-import convex.core.util.Errors;
+import convex.core.util.ErrorMessages;
 import convex.core.util.Utils;
 
 /**
@@ -671,9 +676,12 @@ public class Core {
 		
 		@Override
 		public Context invoke(Context context, ACell[] args) {
+			// When used as a predicate
 			if (args.length==1) {
 				Address addr = RT.callableAddress(args[0]);
-				return context.withResult(Juice.LOOKUP,CVMBool.create(addr!=null));
+				if (addr==null) return context.withResult(Juice.LOOKUP,CVMBool.FALSE);
+				AccountStatus as = context.getState().getAccount(addr);
+				return context.withResult(Juice.LOOKUP,CVMBool.create(as!=null));
 			}
 			
 			if (args.length != 2) return context.withArityError(rangeArityMessage(1,2, args.length));
@@ -950,7 +958,7 @@ public class Core {
 		}
 	});
 
-	public static final CoreFn<CVMLong> STAKE = reg(new CoreFn<>(Symbols.STAKE,64) {
+	public static final CoreFn<CVMLong> SET_STAKE = reg(new CoreFn<>(Symbols.SET_STAKE,64) {
 		
 		@Override
 		public  Context invoke(Context context, ACell[] args) {
@@ -959,13 +967,51 @@ public class Core {
 			ABlob b=RT.ensureBlob(args[0]);
 			if (b == null) return context.withCastError(0,args, Types.BLOB);
 			AccountKey accountKey = AccountKey.create(b);
-			if (accountKey==null) return context.withArgumentError("Account Key for stake must be 32 bytes");
+			if (accountKey==null) return context.withArgumentError("Peer Key for stake must be 32 bytes");
 
 			CVMLong amount = RT.ensureLong(args[1]);
 			if (amount == null) return context.withCastError(1,args, Types.LONG);
 
 			return context.setDelegatedStake(accountKey, amount.longValue()).consumeJuice(Juice.TRANSFER);
+		}
+	});
+	
+	public static final CoreFn<CVMLong> GET_STAKE = reg(new CoreFn<>(Symbols.GET_STAKE,69) {
+		
+		@Override
+		public  Context invoke(Context context, ACell[] args) {
+			if (args.length != 2) return context.withArityError(exactArityMessage(2, args.length));
 
+			ABlob b=RT.ensureBlob(args[0]);
+			if (b == null) return context.withCastError(0,args, Types.BLOB);
+			AccountKey accountKey = AccountKey.create(b);
+			if (accountKey==null) return context.withArgumentError("Peer Key must be 32 bytes");
+
+			Address acct = RT.ensureAddress(args[1]);
+			if (acct == null) return context.withCastError(1,args, Types.ADDRESS);
+
+			PeerStatus ps=context.getState().getPeer(accountKey);
+			CVMLong stake=(ps==null)?null:CVMLong.create(ps.getDelegatedStake(acct));
+			
+			return context.withResult(Juice.LOOKUP,stake);
+		}
+	});
+	
+	public static final CoreFn<CVMLong> GET_PEER_STAKE = reg(new CoreFn<>(Symbols.GET_PEER_STAKE,70) {
+		
+		@Override
+		public  Context invoke(Context context, ACell[] args) {
+			if (args.length != 1) return context.withArityError(exactArityMessage(1, args.length));
+
+			ABlob b=RT.ensureBlob(args[0]);
+			if (b == null) return context.withCastError(0,args, Types.BLOB);
+			AccountKey accountKey = AccountKey.create(b);
+			if (accountKey==null) return context.withArgumentError("Peer Key must be 32 bytes");
+
+			PeerStatus ps=context.getState().getPeer(accountKey);
+			CVMLong stake=(ps==null)?null:CVMLong.create(ps.getPeerStake());
+			
+			return context.withResult(Juice.LOOKUP,stake);
 		}
 	});
 
@@ -984,7 +1030,26 @@ public class Core {
 			return context.createPeer(accountKey, amount.longValue()).consumeJuice(Juice.PEER_UPDATE);
 		}
 	});
+	
+	public static final CoreFn<CVMLong> EVICT_PEER = reg(new CoreFn<>(Symbols.EVICT_PEER,68) {
+		
+		@Override
+		public  Context invoke(Context context, ACell[] args) {
+			if (args.length != 1) return context.withArityError(exactArityMessage(1, args.length));
 
+			
+			AccountKey accountKey = RT.ensureAccountKey(args[0]);
+			if (accountKey == null) return context.withCastError(0,args, Types.BLOB);
+			
+			// Security: Consume juice first, since eviction can potentially use arbitrary juice
+			// We still want juice to be paid in case of any error
+			context=context.consumeJuice(Juice.PEER_UPDATE);
+			if (context.isExceptional()) return context;
+
+			// SECURITY: no juice consumption here, we always let this succeed if last op
+			return context.evictPeer(accountKey);
+		}
+	});
 
 	public static final CoreFn<CVMLong> SET_PEER_DATA = reg(new CoreFn<>(Symbols.SET_PEER_DATA,66) {
 		
@@ -1760,7 +1825,10 @@ public class Core {
 
 			ACell a = args[0];
 			CVMLong result = RT.castLong(a);
-			if (result == null) return context.withCastError(0, args,Types.LONG);
+			if (result == null) {
+				if (a instanceof ANumeric) return context.withArgumentError("Out of range");
+				return context.withCastError(0, args,Types.LONG);
+			}
 
 			return context.withResult(Juice.ARITHMETIC, result);
 		}
@@ -1774,7 +1842,10 @@ public class Core {
 
 			ACell a = args[0];
 			AInteger result = RT.castInteger(a);
-			if (result == null) return context.withCastError(0, args,Types.INTEGER);
+			if (result == null) {
+				if (a instanceof ANumeric) return context.withArgumentError("Out of range");
+				return context.withCastError(0, args,Types.INTEGER);
+			}
 			// TODO: bigint construction cost?
 			return context.withResult(Juice.ARITHMETIC, result);
 		}
@@ -1804,8 +1875,8 @@ public class Core {
 			CVMChar result;
 			if (a instanceof CVMChar) {
 				result= (CVMChar) a;
-			} else if (a instanceof ABlobLike) {
-				ABlobLike b=RT.ensureBlobLike(a);
+			} else if (a instanceof ABlob) {
+				ABlob b=RT.ensureBlob(a);
 				result=CVMChar.fromUTF8(b);
 				if (result == null) 
 					return context.withArgumentError("Not a valid UTF-8 character");
@@ -1848,7 +1919,7 @@ public class Core {
 			}
 			
 			ANumeric result = RT.plus(args);
-			if (result==null) return context.withError(Errors.INVALID_NUMERIC);
+			if (result==null) return context.withError(ErrorMessages.INVALID_NUMERIC);
 			return context.withResult(Juice.ARITHMETIC, result);
 		}
 	});
@@ -1866,7 +1937,7 @@ public class Core {
 				if (context.isExceptional()) return context; // not not exceptional, might be something else
 			}
 			ANumeric result = RT.minus(args);
-			if (result==null) return context.withError(Errors.INVALID_NUMERIC);
+			if (result==null) return context.withError(ErrorMessages.INVALID_NUMERIC);
 			return context.withResult(Juice.ARITHMETIC, result);
 		}
 	});
@@ -1884,7 +1955,7 @@ public class Core {
 			}
 
 			ANumeric result = RT.multiply(args);
-			if (result == null) return context.withError(Errors.INVALID_NUMERIC);
+			if (result == null) return context.withError(ErrorMessages.INVALID_NUMERIC);
 			return context.withResult(Juice.ARITHMETIC, result);
 		}
 	});
@@ -2945,8 +3016,7 @@ public class Core {
  	 * @return Singleton cell representing the Core value
  	 * @throws BadFormatException In case of encoding error
  	 */
-	public static ACell read(Blob b, int pos) throws BadFormatException {
-		long code=Format.readVLCCount(b, pos+1);
+	public static ACell fromCode(long code) throws BadFormatException {
 		if (code <0 || code>=CODE_MAP.length) throw new BadFormatException("Core code out of range: "+code);
 		
 		ACell o = CODE_MAP[(int)code];

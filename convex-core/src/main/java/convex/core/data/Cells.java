@@ -2,10 +2,16 @@ package convex.core.data;
 
 import java.io.IOException;
 import java.lang.reflect.Array;
+import java.util.Collection;
 import java.util.function.Consumer;
 
+import convex.core.Result;
+import convex.core.data.impl.DummyCell;
+import convex.core.exceptions.InvalidDataException;
+import convex.core.exceptions.ParseException;
 import convex.core.store.AStore;
 import convex.core.store.Stores;
+import convex.core.util.Utils;
 
 /**
  * Static utility class for dealing with cells
@@ -23,6 +29,8 @@ public class Cells {
 	 */
 	public static final int MAX_BRANCH_COUNT = 68;
 
+	public static final ACell DUMMY = new DummyCell();
+
 	/**
 	 * Equality method allowing for nulls
 	 *
@@ -37,19 +45,39 @@ public class Cells {
 	}
 
 	/**
-	 * Converts any array to an ACell[] array. Elements must be Cells.
+	 * Converts any collection object to an ACell[] array. Elements must be Cells.
 	 *
 	 * @param anyArray Array to convert
 	 * @return ACell[] array
 	 */
-	public static ACell[] toCellArray(Object anyArray) {
-		int n = Array.getLength(anyArray);
-		ACell[] result = new ACell[n];
-		for (int i = 0; i < n; i++) {
-			result[i] = (ACell) Array.get(anyArray, i);
+	@SuppressWarnings("unchecked")
+	public static ACell[] toCellArray(Object any) {
+		if (any instanceof Collection) {
+			return toCellArray((Collection<ACell>)any);
+		} else if (any.getClass().isArray()) {
+			int n = Array.getLength(any);
+			ACell[] result = new ACell[n];
+			for (int i = 0; i < n; i++) {
+				result[i] = (ACell) Array.get(any, i);
+			}
+			return result;
+		} else {
+			throw new IllegalArgumentException("Can't get cell array from "+Utils.getClassName(any));
 		}
-		return result;
 	}
+	
+	/**
+	 * Converts any array to an ACell[] array. Elements must be Cells.
+	 *
+	 * @param coll Array to convert
+	 * @return ACell[] array
+	 */
+	public static ACell[] toCellArray(Collection<? extends ACell> coll) {
+		int n=coll.size();
+		if (n==0) return Cells.EMPTY_ARRAY;
+		return coll.toArray(new ACell[n]);
+	}
+	
 
 	/**
 	 * Gets the number of Refs directly contained in a Cell (will be zero if the
@@ -106,16 +134,6 @@ public class Cells {
 	public static boolean isCompletelyEncoded(ACell a) {
 		if (a==null) return true;
 		return a.isCompletelyEncoded();
-	}
-	
-	/**
-	 * Checks if a Cell is a first class value
-	 * @param a Cell to check
-	 * @return True if CVM VAlue, false otherwise
-	 */
-	public static boolean isValue(ACell a) {
-		if (a==null) return true;
-		return a.isDataValue();
 	}
 	
 	/**
@@ -177,7 +195,8 @@ public class Cells {
 	 */
 	public static Hash getHash(ACell a) {
 		if (a==null) return Hash.NULL_HASH;
-		return a.getHash();
+		// this picks up a hash in the Ref if available, otherwise populates it for future use
+		return a.getRef().getHash(); 
 	}
 
 	public static Blob getEncoding(ACell a) {
@@ -246,7 +265,7 @@ public class Cells {
 	/**
 	 * Intern a Cell permanently in memory (for JVM lifetime). 
 	 * 
-	 * SECURITY: do not do this for any generated structure from external sources. The could DoS your memory.
+	 * SECURITY: do not do this for any generated structure from external sources. Attackers could DoS your memory.
 	 * 
 	 * @param <T> Type of Cell
 	 * @param value Value to intern
@@ -258,6 +277,48 @@ public class Cells {
 		
 		ref.setFlags(Ref.mergeFlags(ref.getFlags(), Ref.INTERNAL));
 		return value;
+	}
+
+	@SuppressWarnings("unchecked")
+	public static ACell createTagged(Symbol sym, ACell value) throws ParseException {
+		switch (sym.getName().toString()) {
+			case "Index": {
+				if (!(value instanceof AHashMap)) throw new ParseException(sym+" tag must be on a map");
+				Index<ABlobLike<?>,ACell> index= Index.create((AHashMap<ABlobLike<?>,ACell>)value);
+				if (index==null) throw new ParseException("Invalid #Index keys");
+				return index;
+			}
+			case "Result": {
+				if (!(value instanceof AHashMap)) throw new ParseException(sym+" tag must be on a map");
+				Result r= Result.fromData((AHashMap<ABlobLike<?>,ACell>)value);
+				if (r==null) throw new ParseException("Invalid #Result keys");
+				return r;
+			}
+			case "Signed": {
+				if (!(value instanceof AHashMap)) throw new ParseException(sym+" tag must be on a map");
+				SignedData<?> r= SignedData.fromData((AHashMap<Keyword,ACell>)value);
+				if (r==null) throw new ParseException("Invalid #Signed keys");
+				return r;
+			}
+		}
+		return value;
+	}
+
+	public static void validate(ACell cell) throws InvalidDataException {
+		if (cell==null) return; // OK, this is the null value
+		Ref<?> ref=cell.getRef();
+		if (ref.isValidated()) return;
+		cell.validateCell();
+	}
+
+	/**
+	 * Gets the caches hash for a cell if available
+	 * @param k Any cell (can be null)
+	 * @return Hash of cell (value ID) or null if not cached
+	 */
+	public static Hash cachedHash(ACell k) {
+		if (k==null) return Hash.NULL_HASH;
+		return k.cachedHash();
 	}
 
 }

@@ -9,7 +9,6 @@ import convex.core.data.AString;
 import convex.core.data.Blob;
 import convex.core.data.Blobs;
 import convex.core.data.Format;
-import convex.core.data.Ref;
 import convex.core.data.Strings;
 import convex.core.data.Tag;
 import convex.core.data.util.BlobBuilder;
@@ -34,10 +33,10 @@ public final class CVMBigInteger extends AInteger {
 	protected static final long MAX_BYTELENGTH = Constants.MAX_BIG_INTEGER_LENGTH;
 	
 	// We store the Integer as either a blob or Java BigInteger, and convert lazily on demand
-	private ABlob blob;
+	private Blob blob;
 	private BigInteger data;
 	
-	private CVMBigInteger(ABlob blob, BigInteger value) {
+	private CVMBigInteger(Blob blob, BigInteger value) {
 		this.blob=blob;
 		this.data=value;
 	}
@@ -62,29 +61,42 @@ public final class CVMBigInteger extends AInteger {
 	 * @return CVMBigInteger instance or null if not valid
 	 */
 	public static CVMBigInteger wrap(BigInteger value) {
-		if (value.bitLength()>(MAX_BYTELENGTH*8-1)) return null; // note bitLength excludes sign bit
+		if (Utils.byteLength(value)>MAX_BYTELENGTH) return null; // note bitLength excludes sign bit
 		return new CVMBigInteger(null,value);
 	}
 	
 	/**
-	 * Create a big integer from a valid blob representation. Blob can be non-canonical.
-	 * @param data Blob data containing minimal BigInteger twos complement representation
+	 * Create a big integer from a blob representation. Blob can be non-canonical.
+	 * @param data Blob data containing twos complement representation
 	 * @return Big Integer value or null if not valid.
 	 */
 	public static CVMBigInteger create(ABlob data) {
-		long n=data.count();
-		if (n==0) return null;
-		if (n>1) {
-			byte bs=data.byteAt(0);
-			if ((bs==0)||(bs==-1)) {
-				byte bs2=data.byteAt(1);
-				if ((bs&0x80)==(bs2&0x80)) return null; // excess leading byte not allowed
-			}
-		}
-		return new CVMBigInteger(data,null);
+		if (data==null) return null;
+		data=trimLeadingBytes(data);
+		return new CVMBigInteger(data.toFlatBlob(),null);
 	}
 
 	
+	private static Blob trimLeadingBytes(ABlob data) {
+		long n=data.count();
+		if (n==0) return Blob.EMPTY;
+		if (n==1) return data.toFlatBlob();
+		int start=0;
+		while (start+1<n) {
+			byte bs=data.byteAt(0);
+			if ((bs==0)||(bs==-1)) {
+				byte bs2=data.byteAt(1);
+				if ((bs&0x80)==(bs2&0x80)) {
+					start++;
+					continue;
+				}
+			}
+			break;
+		}
+		if (n-start>MAX_BYTELENGTH) return null;
+		return data.slice(start,n).toFlatBlob();
+	}
+
 	@Override
 	public CVMLong toLong() {
 		return CVMLong.create(longValue());
@@ -108,7 +120,7 @@ public final class CVMBigInteger extends AInteger {
 		return blob;
 	}
 
-	protected ABlob buildBlob() {
+	protected Blob buildBlob() {
 		return Blob.wrap(data.toByteArray());
 	}
 
@@ -154,7 +166,9 @@ public final class CVMBigInteger extends AInteger {
 	}
 
 	@Override
-	public byte getTag() {
+	public
+	final byte getTag() {
+		// Note we might not be canonical, so this is safest
 		return getEncoding().byteAt(0);
 	}
 
@@ -168,7 +182,7 @@ public final class CVMBigInteger extends AInteger {
 	}
 
 	@Override
-	protected int encodeRaw(byte[] bs, int pos) {
+	public int encodeRaw(byte[] bs, int pos) {
 		ABlob b=blob();
 		return b.encodeRaw(bs, pos);
 	}
@@ -187,9 +201,9 @@ public final class CVMBigInteger extends AInteger {
 	}
 	
 	@Override
-	public long byteLength() {
+	public int byteLength() {
 		// TODO: check value for zero?
-		if (blob!=null) return blob.count();
+		if (blob!=null) return Utils.checkedInt(blob.count());
 		return ((data.bitLength())/8)+1;
 	}
 
@@ -225,7 +239,8 @@ public final class CVMBigInteger extends AInteger {
 
 	@Override
 	public boolean isCanonical() {
-		return (blob().count()>8);
+		int n=byteLength();
+		return (n>8)&&(n<=MAX_BYTELENGTH);
 	}
 	
 	@Override
@@ -237,16 +252,6 @@ public final class CVMBigInteger extends AInteger {
 	public boolean isEmbedded() {
 		if (memorySize==Format.FULL_EMBEDDED_MEMORY_SIZE) return true;
 		return blob().isEmbedded();
-	}
-	
-	@Override
-	public int getRefCount() {
-		return blob().getRefCount();
-	}
-	
-	@Override
-	public <R extends ACell> Ref<R> getRef(int i) {
-		return blob().getRef(i);
 	}
 	
 	@Override
@@ -267,11 +272,16 @@ public final class CVMBigInteger extends AInteger {
 		ABlob b=Blobs.read(blob, offset);
 		
 		if (b==null) throw new BadFormatException("Bad big integer format in read from blob");
-		if (b.count()<=LONG_BYTELENGTH) {
+		long bc=b.count();
+		if (bc<=LONG_BYTELENGTH) {
 			throw new BadFormatException("Non-canonical big integer length");
 		}
+		if (bc>MAX_BYTELENGTH) {
+			throw new BadFormatException("Encoding exceeds max big integer length");
+		}
 		CVMBigInteger result= create(b);
-		if (result==null) throw new BadFormatException("Null result in big integer create from blob");
+		if (result==null) throw new BadFormatException("Illegal creation of BigInteger from blob");
+		if (result.byteLength()!=bc) throw new BadFormatException("Excess leading bytes in BigInteger representation");
 		
 		// Attach the encoding, will be same length as Blob encoding
 		result.attachEncoding(blob.slice(offset,offset+b.getEncodingLength()));

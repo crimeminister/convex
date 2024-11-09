@@ -4,10 +4,8 @@ import java.io.IOException;
 
 import org.junit.jupiter.api.Test;
 
-import convex.core.Belief;
-import convex.core.Block;
-import convex.core.Order;
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.transactions.Invoke;
 import convex.core.data.AccountKey;
 import convex.core.data.Address;
 import convex.core.data.Cells;
@@ -15,7 +13,6 @@ import convex.core.data.EncodingTest;
 import convex.core.data.RecordTest;
 import convex.core.data.SignedData;
 import convex.core.exceptions.BadFormatException;
-import convex.core.transactions.Invoke;
 import convex.test.Samples;
 
 public class BeliefTest {

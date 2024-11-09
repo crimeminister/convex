@@ -12,7 +12,7 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.SwingConstants;
 
-import convex.core.State;
+import convex.core.cvm.State;
 import convex.core.data.ACell;
 import convex.core.data.AMap;
 import convex.core.data.AVector;
@@ -20,7 +20,7 @@ import convex.core.data.Address;
 import convex.core.data.Keyword;
 import convex.core.data.Symbol;
 import convex.core.data.prim.CVMLong;
-import convex.core.lang.Context;
+import convex.core.cvm.Context;
 import convex.core.lang.RT;
 import convex.gui.components.BaseListComponent;
 import convex.gui.components.CodeLabel;

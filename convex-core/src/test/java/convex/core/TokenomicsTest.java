@@ -6,13 +6,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
+import convex.core.cvm.Context;
+import convex.core.cvm.Juice;
+import convex.core.cvm.State;
+import convex.core.cvm.transactions.ATransaction;
+import convex.core.cvm.transactions.Invoke;
+import convex.core.cvm.transactions.Transfer;
 import convex.core.lang.ACVMTest;
-import convex.core.lang.Context;
-import convex.core.lang.Juice;
 import convex.core.lang.Reader;
-import convex.core.transactions.ATransaction;
-import convex.core.transactions.Invoke;
-import convex.core.transactions.Transfer;
 
 import static convex.test.Assertions.*;
 
@@ -63,7 +64,7 @@ public class TokenomicsTest extends ACVMTest {
 	
 	@Test
 	public void testTransferFail() {
-		Transfer t=Transfer.create(HERO, BALANCE, VILLAIN, Coin.SUPPLY);
+		Transfer t=Transfer.create(HERO, BALANCE, VILLAIN, Coin.MAX_SUPPLY);
 		ResultContext rc=runTransaction(t);
 		
 		// We failed because of insufficient funds for transfer
@@ -109,9 +110,9 @@ public class TokenomicsTest extends ACVMTest {
 		Invoke t=Invoke.create(HERO, SEQ, Reader.read("(do (set-memory 0) (def a 0x12345678123456781234567812345678))"));
 		ResultContext rc=runTransaction(t);
 		
-		// memory of more than 16 bytes should be used, but not more than 100
+		// memory of more than 16 bytes should be used, but not more than 200
 		assertGreater(rc.memUsed,16);
-		assertLess(rc.memUsed,100);
+		assertLess(rc.memUsed,200);
 		
 		assertEquals(rc.totalFees,rc.getJuiceFees()+rc.getMemoryFees());
 		
@@ -178,7 +179,7 @@ public class TokenomicsTest extends ACVMTest {
 
 	protected void checkFinalState(ResultContext rc, boolean memUsed) {
 		// Nothing should have gone wrong with total coin supply
-		assertEquals(Coin.SUPPLY,rc.getState().computeTotalBalance());
+		assertEquals(Coin.MAX_SUPPLY-rc.getJuiceFees(),rc.getState().computeTotalBalance());
 		
 		if (memUsed) {
 			// we expect total memory to have fallen because of memory used

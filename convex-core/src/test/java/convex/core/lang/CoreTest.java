@@ -28,22 +28,43 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.util.HashMap;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.TestInstance.Lifecycle;
 
-import convex.core.Block;
-import convex.core.BlockResult;
+import convex.core.Coin;
 import convex.core.Constants;
 import convex.core.ErrorCodes;
-import convex.core.State;
+import convex.core.cpos.Block;
+import convex.core.cpos.BlockResult;
+import convex.core.cpos.CPoSConstants;
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.AccountStatus;
+import convex.core.cvm.Context;
+import convex.core.cvm.Juice;
+import convex.core.cvm.Log;
+import convex.core.cvm.PeerStatus;
+import convex.core.cvm.State;
+import convex.core.cvm.ops.Cond;
+import convex.core.cvm.ops.Constant;
+import convex.core.cvm.ops.Def;
+import convex.core.cvm.ops.Do;
+import convex.core.cvm.ops.Invoke;
+import convex.core.cvm.ops.Lambda;
+import convex.core.cvm.ops.Let;
+import convex.core.cvm.ops.Local;
+import convex.core.cvm.ops.Lookup;
+import convex.core.cvm.ops.Query;
+import convex.core.cvm.ops.Set;
+import convex.core.cvm.ops.Special;
 import convex.core.data.ABlob;
 import convex.core.data.ACell;
 import convex.core.data.AHashMap;
 import convex.core.data.ASet;
 import convex.core.data.AVector;
 import convex.core.data.AccountKey;
-import convex.core.data.AccountStatus;
 import convex.core.data.Address;
 import convex.core.data.Blob;
 import convex.core.data.Blobs;
@@ -60,6 +81,7 @@ import convex.core.data.Sets;
 import convex.core.data.SignedData;
 import convex.core.data.Strings;
 import convex.core.data.Symbol;
+import convex.core.data.Symbols;
 import convex.core.data.Syntax;
 import convex.core.data.Vectors;
 import convex.core.data.prim.CVMBigInteger;
@@ -75,18 +97,6 @@ import convex.core.init.Init;
 import convex.core.init.InitTest;
 import convex.core.lang.impl.CorePred;
 import convex.core.lang.impl.ICoreDef;
-import convex.core.lang.ops.Cond;
-import convex.core.lang.ops.Constant;
-import convex.core.lang.ops.Def;
-import convex.core.lang.ops.Do;
-import convex.core.lang.ops.Invoke;
-import convex.core.lang.ops.Lambda;
-import convex.core.lang.ops.Let;
-import convex.core.lang.ops.Local;
-import convex.core.lang.ops.Lookup;
-import convex.core.lang.ops.Query;
-import convex.core.lang.ops.Set;
-import convex.core.lang.ops.Special;
 import convex.test.Samples;
 
 /**
@@ -99,8 +109,8 @@ import convex.test.Samples;
  * Needs completely deterministic, fully specified behaviour if we want
  * consistent results so we need to do a lot of negative testing here.
  */
+@TestInstance(Lifecycle.PER_CLASS)
 public class CoreTest extends ACVMTest {
-
 
 	protected CoreTest() throws IOException {
 		super(BaseTest.STATE);
@@ -346,7 +356,6 @@ public class CoreTest extends ACVMTest {
 	public void testGetIn() {
 		assertEquals(2L, evalL("(get-in {1 2} [1])"));
 		assertEquals(4L, evalL("(get-in {1 {2 4} 3 5} [1 2])"));
-		assertEquals(1L, evalL("(get-in #{1 2} [1])"));
 		assertEquals(2L, evalL("(get-in [1 2 3] [1])"));
 		assertEquals(2L, evalL("(get-in [1 2 3] [1] :foo)"));
 		assertEquals(3L, evalL("(get-in [1 2 3] '(2))"));
@@ -356,6 +365,9 @@ public class CoreTest extends ACVMTest {
 		// special case: don't coerce to collection if empty sequence of keys
 		// so non-collection value may be used safely
 		assertEquals(3L, evalL("(get-in 3 [])"));
+		
+		assertEquals(CVMBool.TRUE, eval("(get-in #{1 2} [1])"));
+
 
 		assertEquals(Maps.of(1L, 2L), eval("(get-in {1 2} nil)"));
 		assertEquals(Maps.of(1L, 2L), eval("(get-in {1 2} [])"));
@@ -398,9 +410,6 @@ public class CoreTest extends ACVMTest {
 		assertEquals(255L, evalL("(long 0xff00000000000000ff)")); // only taking last 8 bytes
 		assertEquals(-1L, evalL("(long 0xcafebabeffffffffffffffff)")); // interpret as big endian big integer
 
-		// Currently we allow bools to explicitly cast to longs like this. TODO: maybe reconsider?
-		assertEquals(1L, evalL("(long true)"));
-		assertEquals(0L, evalL("(long false)"));
 		
 		// Address casts to equivalent Long value. See #431
 		assertEquals(1L, evalL("(long #1)"));
@@ -413,10 +422,16 @@ public class CoreTest extends ACVMTest {
 		assertEquals(CVMLong.MAX_VALUE,eval("(long 9223372036854775807.0)")); // actual max value
 		assertEquals(CVMLong.MAX_VALUE,eval("(long 9223372036854775809.0)")); // above max value
 		
-		// Cast errors on non-finite doubles
-		assertCastError(step("(long ##NaN)"));
-		assertCastError(step("(long ##Inf)"));
-		assertCastError(step("(long ##-Inf)"));
+		// Biggest exact double conversion = 2^53. Hi JavaScript!
+		assertEquals(9007199254740991L,evalL("(long 9007199254740991.0)")); 
+		assertEquals(9007199254740992L,evalL("(long 9007199254740992.0)")); // 2^53
+		assertEquals(9007199254740992L,evalL("(long (double 9007199254740993))")); 
+		
+		// :ARGUMENT errors on non-finite or out of range doubles
+		assertArgumentError(step("(long ##NaN)"));
+		assertArgumentError(step("(long ##Inf)"));
+		assertArgumentError(step("(long ##-Inf)"));
+		assertArgumentError(step("(long 1e50)"));
 
 		assertArityError(step("(long)"));
 		assertArityError(step("(long 1 2)")); 
@@ -425,12 +440,16 @@ public class CoreTest extends ACVMTest {
 		assertCastError(step("(long [])"));
 		assertCastError(step("(long :foo)"));
 		
+		// We don't allow bools to explicitly cast to longs. It doesn't round trip nicely (e.g. both 0 and 1 are truthy!)
+		assertCastError(step("(long true)"));
+		assertCastError(step("(long false)"));
+
 		// Long limits and overflow
 		assertEquals(Long.MAX_VALUE,evalL("(long 9223372036854775807)"));
 		assertEquals(Long.MIN_VALUE,evalL("(long -9223372036854775808)"));
-		assertCastError(step("(long 18446744073709551616)"));
-		assertCastError(step("(long 9223372036854775808)"));
-		assertCastError(step("(long -9223372036854775809)"));
+		assertArgumentError(step("(long 18446744073709551616)"));
+		assertArgumentError(step("(long 9223372036854775808)"));
+		assertArgumentError(step("(long -9223372036854775809)"));
 
 	}
 	
@@ -446,10 +465,8 @@ public class CoreTest extends ACVMTest {
 		assertEquals(-1L, evalL("(int 0xff)"));
 		assertEquals(-1L, evalL("(int 0xffffffff)"));
 		assertEquals(0x0cff00000050l, evalL("(int 0x0cff00000050)")); 
-
-		// Currently we allow bools to explicitly cast to longs like this. TODO: maybe reconsider?
-		assertEquals(1L, evalL("(int true)"));
-		assertEquals(0L, evalL("(int false)"));
+		
+		assertCVMEquals(-1L, evalL("(int 0xffffffffffffffffffffffff)")); // big int 
 		
 		// Address casts to equivalent Long value. See #431
 		assertEquals(1L, evalL("(long #1)"));
@@ -462,9 +479,14 @@ public class CoreTest extends ACVMTest {
 		assertEquals(CVMLong.MAX_VALUE,eval("(int 9223372036854775807.0)")); // actual max value
 		assertEquals(CVMLong.MAX_VALUE,eval("(int 9223372036854775809.0)")); // above max value
 		
-		assertCastError(step("(int ##NaN)"));
-		assertCastError(step("(int ##Inf)"));
-		assertCastError(step("(int ##-Inf)"));
+		// These are :ARGUMENT error because of out of range. Other doubles might work.
+		assertArgumentError(step("(int ##NaN)"));
+		assertArgumentError(step("(int ##Inf)"));
+		assertArgumentError(step("(int ##-Inf)"));
+		
+		// Currently we disallow bools to explicitly cast to longs. Not round trippable
+		assertCastError(step("(int true)"));
+		assertCastError(step("(int false)"));
 
 		assertArityError(step("(int)"));
 		assertArityError(step("(int 1 2)")); 
@@ -499,10 +521,8 @@ public class CoreTest extends ACVMTest {
 		assertCVMEquals('a', eval("(char 97)"));
 		assertCVMEquals('a', eval("(nth \"bar\" 1)"));
 		
-		// Conversion from UTF-8
+		// Conversion from UTF-8 Blobs
 		assertCVMEquals(' ',eval("(char 0x20)")); 
-		assertCVMEquals('f',eval("(char :f)")); 
-		assertCVMEquals('Z',eval("(char \"Z\")")); 	
 		assertCVMEquals('\u07FF',eval("(char 0xDFBF)")); // unicode 2047
 		
 		// Out of Unicode range
@@ -513,11 +533,16 @@ public class CoreTest extends ACVMTest {
 		assertArgumentError(step("(char (long 0xff00000050))"));
 		
 		// Not single UTF-8 characters
+		assertArgumentError(step("(char 0x)")); // not valid as single byte UTF-8
 		assertArgumentError(step("(char 0xff)")); // not valid as single byte UTF-8
 		assertArgumentError(step("(char 0x2020)")); // repeated space
 		assertArgumentError(step("(char 0xdfbfdfbf)")); // repeated 2-byte UTF-8
 		assertArgumentError(step("(char 0xdf)")); // first byte of 2-byte UTF-8 only
-		assertArgumentError(step("(char :foo)")); // more characters than needed
+		
+		// Bloblikes, but not blobs
+		assertCastError(step("(char \"Z\")")); 	
+		assertCastError(step("(char :f)")); 
+		assertCastError(step("(char :foo)")); // more characters than needed
 		
 		// Bad types
 		assertCastError(step("(char false)"));
@@ -639,6 +664,7 @@ public class CoreTest extends ACVMTest {
 		assertFalse(evalB("(= 1 2)"));
 		assertFalse(evalB("(= 1 nil)"));
 		assertFalse(evalB("(= 1 1.0)"));
+		assertFalse(evalB("(= false nil)"));
 		assertFalse(evalB("(= \\a \\b)"));
 		assertFalse(evalB("(= :foo :baz)"));
 		assertFalse(evalB("(= :foo 'foo)"));
@@ -1913,6 +1939,7 @@ public class CoreTest extends ACVMTest {
 		assertEquals(Lists.of(2L, 1L, 3L, 4L), eval("(into '(3 4) '(1 2))"));
 
 		assertEquals(Sets.of(1L, 2L, 3L), eval("(into #{} [1 2 1 2 3])"));
+		assertEquals(Sets.of(1L, 2L, 3L), eval("(into #{} #{1 2 3})"));
 
 		// map as data structure
 		assertEquals(Maps.empty(), eval("(into {} [])"));
@@ -1993,6 +2020,9 @@ public class CoreTest extends ACVMTest {
 		assertEquals(255.0,evalD("(double (byte -1))")); // byte should be 0-255
 
 		assertCastError(step("(double :foo)"));
+		
+		// coercion of non-canonical NaNs to canonical instance
+		assertSame(CVMDouble.NaN,eval("(double #[1d7ff8000000ffffff])"));
 		
 		// Shouldn't try to cast an Address, see #431
 		assertCastError(step("(double #7)"));
@@ -2846,6 +2876,13 @@ public class CoreTest extends ACVMTest {
 		assertArityError(step("(balance)"));
 		assertArityError(step("(balance 1 2)"));
 	}
+	
+	@Test
+	public void testCoinSupply() {
+		Context ctx=context();
+		CVMLong supply=eval("(coin-supply)");
+		assertTrue(supply.longValue()>ctx.getBalance());
+	}
 
 	@Test
 	public void testCreateAccount() {
@@ -3193,7 +3230,7 @@ public class CoreTest extends ACVMTest {
 
 	@Test
 	public void testTransferMemory() {
-		long ALL=Constants.INITIAL_ACCOUNT_ALLOWANCE;
+		long ALL=CPoSConstants.INITIAL_ACCOUNT_ALLOWANCE;
 		assertEquals(ALL, evalL(Symbols.STAR_MEMORY.toString()));
 
 		{
@@ -3312,6 +3349,17 @@ public class CoreTest extends ACVMTest {
 		assertArityError(step("(transfer 1)"));
 		assertArityError(step("(transfer 1 2 3)"));
 	}
+	
+	@Test
+	public void testTransferBurn() {
+		Context ctx=context();
+		long supply=ctx.getState().computeSupply();
+		long AMT=1000000;
+		
+		ctx=exec(ctx,"(transfer #0 "+AMT+")");
+		
+		assertEquals(supply-AMT,ctx.getState().computeSupply());
+	}
 
 	@Test
 	public void testStake() {
@@ -3321,7 +3369,7 @@ public class CoreTest extends ACVMTest {
 
 		{
 			// simple case of staking 1000000 on first peer of the realm
-			Context rc=step(ctx,"(stake my-peer 1000000)");
+			Context rc=step(ctx,"(set-stake my-peer 1000000)");
 			assertNotError(rc);
 			assertEquals(PS+1000000,rc.getState().getPeer(MY_PEER).getTotalStake());
 			assertEquals(1000000,rc.getState().getPeer(MY_PEER).getDelegatedStake());
@@ -3329,23 +3377,113 @@ public class CoreTest extends ACVMTest {
 		}
 
 		// staking on an account key that isn't a peer
-		assertStateError(step(ctx,"(stake 0x1234567812345678123456781234567812345678123456781234567812345678 1234)"));
+		assertStateError(step(ctx,"(set-stake 0x1234567812345678123456781234567812345678123456781234567812345678 1234)"));
 
 		// staking on an address
-		assertCastError(step(ctx,"(stake *address* 1234)"));
+		assertCastError(step(ctx,"(set-stake *address* 1234)"));
 		
 		// staking on an invalid account key (wrong length)
-		assertArgumentError(step(ctx,"(stake 0x12 1234)"));
+		assertArgumentError(step(ctx,"(set-stake 0x12 1234)"));
 
 		// bad arg types
-		assertCastError(step(ctx,"(stake :foo 1234)"));
-		assertCastError(step(ctx,"(stake my-peer :foo)"));
-		assertCastError(step(ctx,"(stake my-peer nil)"));
+		assertCastError(step(ctx,"(set-stake :foo 1234)"));
+		assertCastError(step(ctx,"(set-stake my-peer :foo)"));
+		assertCastError(step(ctx,"(set-stake my-peer nil)"));
 
-		assertArityError(step(ctx,"(stake my-peer)"));
-		assertArityError(step(ctx,"(stake my-peer 1000 :foo)"));
+		assertArityError(step(ctx,"(set-stake my-peer)"));
+		assertArityError(step(ctx,"(set-stake my-peer 1000 :foo)"));
+	}
+	
+	@Test
+	public void testGetStake() {
+		Context ctx=step(context(),"(def my-peer 0x"+InitTest.FIRST_PEER_KEY.toHexString()+")");
+		
+		// zero for existing peer but no stake
+		assertCVMEquals(0L,eval(ctx,"(get-stake my-peer *address*)"));
+		
+		// null for non-existing peer
+		assertNull(eval(ctx,"(get-stake 0x1234567812345678123456781234567812345678123456781234567812345678 *address*)")); 
+		
+		assertCastError(step(ctx,"(get-stake :foo *address*)"));
+		assertCastError(step(ctx,"(get-stake my-peer :foo)"));
+
+		assertArityError(step(ctx,"(get-stake my-peer)"));
+		assertArityError(step(ctx,"(get-stake my-peer *address* :foo)"));
+	}
+	
+	@Test
+	public void testGetPeerStake() {
+		Context ctx=step(context(),"(def my-peer 0x"+InitTest.FIRST_PEER_KEY.toHexString()+")");
+		
+		// existing peer has positive stake
+		assertTrue(0L<evalL(ctx,"(get-peer-stake my-peer)"));
+		
+		// null for non-existing peer
+		assertNull(eval(ctx,"(get-peer-stake 0x1234567812345678123456781234567812345678123456781234567812345678)")); 
+
+		assertCastError(step(ctx,"(get-peer-stake :foo)"));
+		
+		assertArityError(step(ctx,"(get-peer-stake)"));
+		assertArityError(step(ctx,"(get-peer-stake my-peer *address*)"));
 	}
 
+	@Test
+	public void testSetPeerStake() {
+		// Not a real peer key, but we don't care because not actually running one....
+		AccountKey KEY=AccountKey.fromHex("1234567812345678123456781234567812345678123456781234567812345678");
+		long STK=1000000;
+		Context ctx=context();
+		
+		assertNull(ctx.getState().getPeer(KEY));
+		assertStateError(step(ctx,"(set-peer-stake "+KEY+" "+STK+")"));
+		assertNull(eval(ctx,"(get-peer-stake "+KEY+")")); // no peer exists yet
+		
+		// create peer with initial stake
+		ctx=exec(ctx,"(create-peer "+KEY+" "+STK+")");
+		
+		assertCVMEquals(STK,eval(ctx,"(get-peer-stake "+KEY+")")); // own stake just set
+		assertCVMEquals(0,eval(ctx,"(get-stake "+KEY+" *address*)")); // no delegated stake on this peer
+
+		
+		// Check stake has been established
+		PeerStatus ps=ctx.getState().getPeer(KEY);
+		assertEquals(ps, eval(ctx,"(get-in *state* [:peers "+KEY+"])"));
+		assertEquals(STK,ps.getPeerStake());
+		assertEquals(STK,ps.getTotalStake());
+		assertEquals(STK,ps.getBalance());
+		assertEquals(CPoSConstants.INITIAL_PEER_TIMESTAMP,ps.getTimestamp());
+		
+		// Effective stake should be decayed to minimum, since no blocks for this peer yet
+		HashMap<AccountKey,Double> stks=ctx.getState().computeStakes();
+		assertEquals(STK*CPoSConstants.PEER_DECAY_MINIMUM,stks.get(KEY));
+		
+		// Increase stake
+		ctx=exec(ctx,"(set-peer-stake "+KEY+" "+STK*3+")");
+		assertCVMEquals(STK*2,ctx.getResult());
+		ps=ctx.getState().getPeer(KEY);
+		assertEquals(STK*3,ps.getPeerStake());
+		assertEquals(STK*3,ps.getTotalStake());
+		assertEquals(STK*3,ps.getBalance());
+		
+		// Check we can't set nonsensical stakes
+		assertFundsError(step(ctx,"(set-peer-stake "+KEY+" 999999999999999999)"));
+		assertFundsError(step(ctx,"(set-peer-stake "+KEY+" (+ 1 "+STK*3+" *balance*))"));
+		assertArgumentError(step(ctx,"(set-peer-stake "+KEY+" -1)"));
+		
+		assertEquals(Coin.MAX_SUPPLY,ctx.getState().computeTotalBalance());
+		
+		// Finally remove all stake
+		ctx=exec(ctx,"(set-peer-stake "+KEY+" 0)");
+		ps=ctx.getState().getPeer(KEY);
+		assertEquals(0,ps.getPeerStake());
+		assertEquals(0,ps.getTotalStake());
+		assertEquals(0,ps.getBalance());
+
+		assertArityError(step(ctx,"(set-peer-stake)"));
+		assertArityError(step(ctx,"(set-peer-stake "+KEY+")"));
+		assertArityError(step(ctx,"(set-peer-stake "+KEY+" :foo :bar)"));
+	}
+	
 	@Test
 	public void testSetPeerData() {
 		String newHostname = "new_hostname:1234";
@@ -3426,7 +3564,55 @@ public class CoreTest extends ACVMTest {
 	public void testCreatePeerRegression() {
 		assertJuiceError(step("(create-peer 0x42ae93b185bd2ba64fd9b0304fec81a4d4809221a5b68de4da041b48c85bcc2e *balance*)"));
 		assertFundsError(step("(create-peer 0x42ae93b185bd2ba64fd9b0304fec81a4d4809221a5b68de4da041b48c85bcc2e (inc *balance*))"));
+	}
+	
+	@Test 
+	public void testEvictPeer() {
+		{ // create a peer then evict it
+			Context ctx=context();
+			long PEERSTAKE=2*CPoSConstants.MINIMUM_EFFECTIVE_STAKE;
+			AccountKey PK=AccountKey.fromHex("42ae93b185bd2ba64fd9b0304fec81a4d4809221a5b68de4da041b48c85bcc2e");
+			ctx=exec(ctx,"(create-peer "+PK+" "+PEERSTAKE+")");
+			assertNotNull(ctx.getState().getPeer(PK));
+			assertEquals(Coin.MAX_SUPPLY,ctx.getState().computeTotalBalance());
+			assertCVMEquals(PEERSTAKE,eval(ctx,"(get-in *state* [:peers "+PK+" :stake])"));
+			ctx=exec(ctx,"(evict-peer "+PK+")");
+			assertCVMEquals(-PEERSTAKE,ctx.getResult());
+			assertNull(ctx.getState().getPeer(PK));
+			assertEquals(Coin.MAX_SUPPLY,ctx.getState().computeTotalBalance());
+		}
 		
+		{ // create a peer with delegated stake and evict
+			Context ctx=context();
+			long PEERSTAKE=2*CPoSConstants.MINIMUM_EFFECTIVE_STAKE;
+			long USERFUND=10000000;
+			long USERSTAKE=7000000;
+			AccountKey PK=AccountKey.fromHex("42ae93b185bd2ba64fd9b0304fec81a4d4809221a5b68de4da041b48c85bcc2e");
+			ctx=exec(ctx,"(create-peer "+PK+" "+PEERSTAKE+")");
+			ctx=exec(ctx,"(def USER (deploy '(set-controller *caller*) '(defn ^:callable receive-coin [& args] (accept *offer*))))");
+			Address USER=ctx.getResult();
+			ctx=exec(ctx,"(transfer USER "+USERFUND+")");
+			ctx=exec(ctx,"(eval-as USER '(set-stake "+PK+" "+USERSTAKE+"))");
+			assertCVMEquals(USERSTAKE,ctx.getResult());
+			assertEquals(Coin.MAX_SUPPLY,ctx.getState().computeTotalBalance());
+			assertEquals(PEERSTAKE+USERSTAKE,ctx.getState().getPeer(PK).getTotalStake());
+			assertEquals(USERFUND-USERSTAKE,ctx.getBalance(USER));
+			
+			// USER should't be able to evict
+			assertStateError(step(ctx,"(eval-as USER '(evict-peer "+PK+"))"));
+			
+			// We can evict, user refund should happen
+			ctx=exec(ctx,"(evict-peer "+PK+")");
+			assertCVMEquals(-PEERSTAKE,ctx.getResult());
+			assertEquals(USERFUND,ctx.getBalance(USER));
+			assertEquals(Coin.MAX_SUPPLY,ctx.getState().computeTotalBalance());
+		}
+		
+		assertCastError(step("(evict-peer nil)"));
+		assertCastError(step("(evict-peer 0x)"));
+		assertCastError(step("(evict-peer [])"));
+		assertArityError(step("(evict-peer :foo :bar)"));
+		assertArityError(step("(evict-peer)"));
 	}
 
 	@Test
@@ -3889,13 +4075,23 @@ public class CoreTest extends ACVMTest {
 		assertFalse(evalB("(map? '(3 4 5))"));
 		assertTrue(evalB("(map? {1 2 3 4})"));
 		assertFalse(evalB("(map? #{1 2})"));
+		
+		// This is technically a map since it is a record
+		assertTrue(evalB("(map? (account #0))")); // this is a record
+		
+		// This is technically a map since it is Index
+		assertTrue(evalB("(map? (index))")); // this is a record
+
 	}
 
 	@Test
 	public void testCollPred() {
+		// Like Clojure coll?, returns true for any data structure
 		assertFalse(evalB("(coll? nil)"));
 		assertFalse(evalB("(coll? 1)"));
 		assertFalse(evalB("(coll? :foo)"));
+		
+		
 		assertTrue(evalB("(coll? {})"));
 		assertTrue(evalB("(coll? [])"));
 		assertTrue(evalB("(coll? ())"));
@@ -3906,6 +4102,7 @@ public class CoreTest extends ACVMTest {
 		assertTrue(evalB("(coll? {1 2 3 4})"));
 		assertTrue(evalB("(coll? #{1 2})"));
 		assertTrue(evalB("(coll? (index))"));
+		assertTrue(evalB("(coll? (account #0))")); // this is a record
 		assertTrue(evalB("(coll? (index 0x 0x))"));
 	}
 
@@ -3927,6 +4124,7 @@ public class CoreTest extends ACVMTest {
 		assertFalse(evalB("(empty? #{[]})"));
 		
 		assertFalse(evalB("(empty? 0)"));
+		assertFalse(evalB("(empty? false)"));
 		assertFalse(evalB("(empty? :foo)"));
 		assertFalse(evalB("(empty? 'bar)"));
 	}
@@ -3934,6 +4132,7 @@ public class CoreTest extends ACVMTest {
 	@Test
 	public void testSymbolPred() {
 		assertTrue(evalB("(symbol? 'foo)"));
+		assertTrue(evalB("(symbol? (quote .))"));
 		assertTrue(evalB("(symbol? (symbol :bar))"));
 
 		assertFalse(evalB("(symbol? (str 1))"));
@@ -3948,6 +4147,7 @@ public class CoreTest extends ACVMTest {
 		assertTrue(evalB("(keyword? (keyword 'bar))"));
 		
 		assertFalse(evalB("(keyword? nil)"));
+		assertFalse(evalB("(keyword? 'zzz)"));
 		assertFalse(evalB("(keyword? 1)"));
 		assertFalse(evalB("(keyword? [:foo])"));
 	}
@@ -3960,6 +4160,7 @@ public class CoreTest extends ACVMTest {
 		
 		assertFalse(evalB("(address? nil)"));
 		assertFalse(evalB("(address? 1)"));
+		assertFalse(evalB("(address? [#1 #2])"));
 		assertFalse(evalB("(address? \"0a1b2c3d\")"));
 		assertFalse(evalB("(address? (blob *origin*))"));
 	}
@@ -3987,7 +4188,7 @@ public class CoreTest extends ACVMTest {
 		assertFalse(evalB("(long? nil)"));
 		assertFalse(evalB("(long? 0xFF)"));
 		assertFalse(evalB("(long? [1 2])"));
-		assertFalse(evalB("(long? 7.0)"));
+		assertFalse(evalB("(long? 7.0)")); // not a long, even though numerically equivalent to one
 		
 		// big integer boundaries
 		assertTrue(evalB("(long? 9223372036854775807)"));
@@ -4003,8 +4204,10 @@ public class CoreTest extends ACVMTest {
 		assertTrue(evalB("(str? (str :foo))"));
 		assertTrue(evalB("(str? (str nil))"));
 		assertTrue(evalB("(str? \"\")"));
+		assertTrue(evalB("(str? \"Hello World\")"));
 		
 		// These are not strings
+		assertFalse(evalB("(str? \\Q)")); // character is not itself a string
 		assertFalse(evalB("(str? 1)"));
 		assertFalse(evalB("(str? :foo)"));
 		assertFalse(evalB("(str? nil)"));
@@ -4015,7 +4218,10 @@ public class CoreTest extends ACVMTest {
 		assertTrue(evalB("(number? 0)"));
 		assertTrue(evalB("(number? (byte 0))"));
 		assertTrue(evalB("(number? 0.5)"));
-		assertTrue(evalB("(number? ##NaN)")); // Sane? Is numeric double type....
+		
+		// special care with NaNs
+		assertTrue(evalB("(number? ##NaN)")); 
+		assertTrue(evalB("(number? #[1d7ff8000000fffffe])")); 
 		
 		assertFalse(evalB("(number? nil)"));
 		assertFalse(evalB("(number? :foo)"));
@@ -4709,7 +4915,7 @@ public class CoreTest extends ACVMTest {
 		assertEquals(Strings.create("foo"), eval("(expand (name :foo) (fn [x e] x))"));
 		assertEquals(CVMLong.create(3), eval("(expand '[1 2 3] (fn [x e] (nth x 2)))"));
 
-		assertNull(Syntax.unwrap(eval("(expand nil)")));
+		assertNull(eval("(expand nil)"));
 
 		assertCastError(step("(expand 1 :foo)"));
 		assertCastError(step("(expand { 888 227 723 560} [75 561 258 833])"));
@@ -4732,7 +4938,7 @@ public class CoreTest extends ACVMTest {
 
 	@Test
 	public void testExpandEdgeCases() {
-		// BAd functions
+		// Bad functions
 		assertCastError(step("(expand 123 #0 :foo)"));
 		assertCastError(step("(expand 123 #0)"));
 
@@ -4763,6 +4969,7 @@ public class CoreTest extends ACVMTest {
 	public void testMacro() {
 		Context c=step("(defmacro foo [] :foo)");
 		assertEquals(Keywords.FOO,eval(c,"(foo)"));
+		assertEquals(Keywords.FOO,eval(c,"(expand '(foo))"));
 	}
 
 	@Test
@@ -4775,6 +4982,9 @@ public class CoreTest extends ACVMTest {
 
 		// interior macros shouldn't get expanded
 		assertEquals(Vectors.of(1,Lists.of(Symbols.IF,4,7),3),eval("(quote [1 (if 4 7) 3])"));
+		
+		assertArityError(step ("(quote foo bar)"));
+		assertArityError(step ("(quote)"));
 	}
 
 	@Test
@@ -4863,7 +5073,10 @@ public class CoreTest extends ACVMTest {
 		assertFalse(evalB(ctx, "(callable? nil)"));
 		assertFalse(evalB(ctx, "(callable? :foo)"));
 		assertFalse(evalB(ctx, "(callable? [])"));
-
+		
+		// Missing accounts definitely not callable
+		assertFalse(evalB(ctx, "(callable? #6666666)"));
+		assertFalse(evalB(ctx, "(callable? #6666666 'something)"));
 		
 		assertCastError(step(ctx, "(callable? caddr :public)")); // not a Symbol
 		assertCastError(step(ctx, "(callable? caddr :random-name)"));
@@ -4963,46 +5176,7 @@ public class CoreTest extends ACVMTest {
 		assertCastError(step("(sqrt false)"));
 	}
 
-	@Test
-	public void testSpecialKey() {
-		assertEquals(InitTest.HERO_KEYPAIR.getAccountKey(), eval("*key*"));
-	}
-	
 
-
-	@Test
-	public void testSpecialJuice() {
-		// TODO: semantics of returning juice before lookup complete is OK?
-		// seems sensible, represents "juice left at this position".
-		assertCVMEquals(0, eval(Special.forSymbol(Symbols.STAR_JUICE)));
-
-		// juice gets consumed before returning a value
-		assertCVMEquals(Juice.DO + Juice.CONSTANT, eval(comp("(do 1 *juice*)")));
-	}
-	
-	@Test
-	public void testSpecialJuiceLimit() {
-		Special<CVMLong> spec=Special.forSymbol(Symbols.STAR_JUICE_LIMIT);
-		
-		// Juice limit at start of transaction
-		assertCVMEquals(Constants.MAX_TRANSACTION_JUICE, eval(spec));
-
-		// Consuming a small amount of juice shouldn't change limit
-		Context ctx=step("1");
-		assertCVMEquals(Constants.MAX_TRANSACTION_JUICE, eval(ctx,"*juice-limit*"));
-	}
-	
-	
-	@Test
-	public void testSpecialJuicePrice() {
-		Special<?> jp=Special.forSymbol(Symbols.STAR_JUICE_PRICE);
-		assertNotNull(jp);
-		assertCVMEquals(Constants.INITIAL_JUICE_PRICE, eval(jp));
-		
-		assertCVMEquals(Constants.INITIAL_JUICE_PRICE, eval("*juice-price*"));
-		
-		assertSame(context().getState().getJuicePrice(),eval("*juice-price*"));
-	}
 
 
 

@@ -39,7 +39,6 @@ import javax.swing.LookAndFeel;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 import javax.swing.border.Border;
-import javax.swing.border.CompoundBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.text.DefaultEditorKit;
@@ -58,7 +57,7 @@ public class Toolkit {
 	
 	private static Logger log = LoggerFactory.getLogger(Toolkit.class.getName());
 
-	public static final double BASE_SCALE=1.3;
+	public static final double BASE_SCALE=1.25;
 	public static final float SCALE=getUIScale();
 	
 	public static final int ICON_SIZE = (int) (32*SCALE);
@@ -67,7 +66,7 @@ public class Toolkit {
 	public static final int SMALL_ICON_SIZE = (int) (16*SCALE);
 	public static final int MAIN_ICON_SIZE = (int) (72*SCALE);
 
-	public static final float DEFAULT_FONT_SIZE=13*SCALE;
+	public static final float DEFAULT_FONT_SIZE=12*SCALE;
 	
 	public static Font DEFAULT_FONT = new Font(Font.SANS_SERIF,Font.PLAIN,(int)DEFAULT_FONT_SIZE);
 	public static Font BIG_FONT = new Font(Font.SANS_SERIF, Font.BOLD, (int)(DEFAULT_FONT_SIZE*1.8));
@@ -341,22 +340,20 @@ public class Toolkit {
 		help.setToolTipText(helpText);
 		return help;
 	}
-
+	
 	public static JComponent makeNote(String title, String note) {
 		// JLabel ta = new JLabel("<html>"+note+"</html>"); // Alternative, but doesn't scale component height?
 		JTextArea ta = new JTextArea(note);
-		CompoundBorder b=BorderFactory.createCompoundBorder(BorderFactory.createTitledBorder(title), createEmptyBorder(10));
 		
 		// This allows the text area to shrink, for some odd reason....
 		ta.setMinimumSize(new Dimension(50,50));
 		
-		ta.setBorder(b);
 		ta.setEditable(false); // Can't edit notes
 		ta.setFocusable(false); // informational only, shouldn't focus
 		// ta.setFont(Toolkit.DEFAULT_FONT);
 		ta.setLineWrap(true); // for wrapping
 		ta.setWrapStyleWord(true); // for nice text when it wraps
-		return ta;
+		return withTitledBorder(title,ta);
 	}
 	
 	public static JComponent makeNote(String note) {

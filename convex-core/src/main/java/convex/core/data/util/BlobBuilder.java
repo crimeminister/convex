@@ -5,6 +5,7 @@ import java.nio.ByteBuffer;
 import convex.core.data.ABlob;
 import convex.core.data.AString;
 import convex.core.data.Blob;
+import convex.core.data.Format;
 import convex.core.data.Strings;
 import convex.core.data.prim.CVMChar;
 import convex.core.util.Utils;
@@ -169,6 +170,37 @@ public class BlobBuilder {
 		append(Strings.create(string));
 	}
 	
+	/**
+	 * Appends a long value as a UTF-8 string. This is common enough that we want an optimised implementation
+	 * to avoid extra String allocations
+	 * 
+	 * @param value
+	 */
+	public void appendLongString(long value) {
+		if (value==Long.MIN_VALUE) {
+			append(Strings.LONG_MIN_VALUE);
+			return;
+		}
+		if (value<0) {
+			append('-');
+			value=-value;
+		};
+		int n=Utils.longStringSize(value);
+		
+		// fast path for 1-digit longs
+		if (n==1) {
+			append((byte)('0'+value));
+			return;
+		}
+		
+		byte[] bs=new byte[n];
+		for (int i=0; i<n; i++) {
+			bs[n-i-1]=(byte)('0'+(value%10));
+			value/=10;
+		}
+		append(bs);
+	}
+	
 	public BlobBuilder append(byte b) {
 		int spare=spare();
 		if (spare<1) throw new Panic("BlobBuilder should always have spare bytes but was: "+spare);
@@ -216,6 +248,29 @@ public class BlobBuilder {
 	public void appendHexByte(byte b) {
 		append(Utils.toHexChar((b & 0xF0) >>> 4));
 		append(Utils.toHexChar((b & 0xF)));
+	}
+	
+	public void appendCAD3Hex(Blob encoding) {
+		byte[] arr=encoding.getInternalArray();
+		int pos=encoding.getInternalOffset();
+		int n=encoding.size();
+		for (int i=0; i<n; i++) {
+			byte b=arr[pos+i];
+			append(Utils.toHexChar((b & 0xF0) >>> 4));
+			append(Utils.toHexChar((b & 0xF)));			
+		}
+	}
+	
+	public void appendVLQCountHex(long value) {
+		if (value<0) throw new IllegalArgumentException("Negative VLQ Count?");
+		int n=Format.getVLQCountLength(value);
+		for (int i=0; i<n; i++) {
+			byte b=(byte) ((value>>((n-i-1)*7))&0x7f); // 128 bits from each position
+			if (i<(n-1)) {
+				b|=(byte) 0x80; // continuation bit except at end
+			}
+			appendHexByte(b);
+		}
 	}
 
 	/**
@@ -281,4 +336,6 @@ public class BlobBuilder {
 		tail=null;
 		count=0;
 	}
+
+
 }

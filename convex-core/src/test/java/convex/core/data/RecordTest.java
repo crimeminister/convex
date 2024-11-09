@@ -5,18 +5,17 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.junit.jupiter.api.Test;
 
-import convex.core.Belief;
-import convex.core.Block;
 import convex.core.Constants;
-import convex.core.Order;
 import convex.core.Result;
-import convex.core.State;
+import convex.core.cpos.Belief;
+import convex.core.cpos.Block;
+import convex.core.cpos.Order;
+import convex.core.cvm.State;
+import convex.core.cvm.transactions.ATransaction;
+import convex.core.cvm.transactions.Transfer;
 import convex.core.data.prim.CVMLong;
 import convex.core.init.InitTest;
-import convex.core.lang.RecordFormat;
 import convex.core.lang.TestState;
-import convex.core.transactions.ATransaction;
-import convex.core.transactions.Transfer;
 
 public class RecordTest {
 	
@@ -101,14 +100,13 @@ public class RecordTest {
 	
 	@Test
 	public void testResult() {
-		String s="{:id 4,:result #44,:error nil,:log nil,:info nil}";
+		String s="{:id 4,:result #44}";
 		AHashMap<Keyword,ACell> m=TestState.eval(s);
-		assertEquals(5,m.count);
+		assertEquals(2,m.count);
 	
 		Result r=Result.create(CVMLong.create(4), Address.create(44), null, null);
-		assertEquals(s,r.toString());
-		
-		assertEquals(m,r.toHashMap());
+		assertEquals("#Result "+s,r.toString());
+		assertEquals(5,r.count());
 		
 		doRecordTests(r);
 	}

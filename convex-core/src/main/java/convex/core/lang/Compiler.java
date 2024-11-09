@@ -4,6 +4,23 @@ import java.util.Map;
 
 import convex.core.Constants;
 import convex.core.ErrorCodes;
+import convex.core.cvm.AFn;
+import convex.core.cvm.AOp;
+import convex.core.cvm.Context;
+import convex.core.cvm.Juice;
+import convex.core.cvm.Context.CompilerState;
+import convex.core.cvm.ops.Cond;
+import convex.core.cvm.ops.Constant;
+import convex.core.cvm.ops.Def;
+import convex.core.cvm.ops.Do;
+import convex.core.cvm.ops.Invoke;
+import convex.core.cvm.ops.Lambda;
+import convex.core.cvm.ops.Let;
+import convex.core.cvm.ops.Local;
+import convex.core.cvm.ops.Lookup;
+import convex.core.cvm.ops.Query;
+import convex.core.cvm.ops.Special;
+import convex.core.cvm.ops.Try;
 import convex.core.data.ABlobLike;
 import convex.core.data.ACell;
 import convex.core.data.ADataStructure;
@@ -22,27 +39,15 @@ import convex.core.data.MapEntry;
 import convex.core.data.Maps;
 import convex.core.data.Sets;
 import convex.core.data.Symbol;
+import convex.core.data.Symbols;
 import convex.core.data.Syntax;
 import convex.core.data.Vectors;
 import convex.core.data.prim.CVMBool;
 import convex.core.data.prim.CVMLong;
 import convex.core.data.type.Types;
-import convex.core.lang.Context.CompilerState;
 import convex.core.lang.impl.AClosure;
 import convex.core.lang.impl.CoreFn;
 import convex.core.lang.impl.MultiFn;
-import convex.core.lang.ops.Cond;
-import convex.core.lang.ops.Constant;
-import convex.core.lang.ops.Def;
-import convex.core.lang.ops.Do;
-import convex.core.lang.ops.Invoke;
-import convex.core.lang.ops.Lambda;
-import convex.core.lang.ops.Let;
-import convex.core.lang.ops.Local;
-import convex.core.lang.ops.Lookup;
-import convex.core.lang.ops.Query;
-import convex.core.lang.ops.Special;
-import convex.core.lang.ops.Try;
 
 /**
  * Compiler class responsible for transforming forms (code as data) into an
@@ -75,7 +80,7 @@ public class Compiler {
 	 * @param context Compilation context
 	 * @return Context with compiled op as result
 	 */
-	static Context expandCompile(ACell form, Context context) {
+	public static Context expandCompile(ACell form, Context context) {
 		// expand phase starts with initial expander
 		AFn<ACell> ex = INITIAL_EXPANDER;
 		
@@ -100,6 +105,7 @@ public class Compiler {
 	 * @return Context with compiled Op as result
 	 */
 	@SuppressWarnings("unchecked")
+	public
 	static Context compile(ACell form, Context context) {
 		if (form==null) return compileConstant(context,null);
 
@@ -110,8 +116,13 @@ public class Compiler {
 		if (form instanceof ADataStructure) {
 	 		if (form instanceof AList) return compileList((AList<ACell>) form, context);
 			if (form instanceof AVector) return compileVector((AVector<ACell>) form, context);
-			if (form instanceof AMap) return compileMap((AMap<ACell, ACell>) form, context);
+			if (form instanceof AHashMap) return compileMap((AHashMap<ACell, ACell>) form, context);
 			if (form instanceof ASet) return compileSet((ASet<ACell>) form, context);
+			if (form instanceof AMap) return compileConstant( context,form);
+			if (!form.isCVMValue()) {
+				// This is probably a non-CVM CAD3 structures
+				return compileConstant(context, form);
+			}
 			return context.withCompileError("Unexpected data structure: "+form.getClass());
 		}
 		
@@ -146,7 +157,7 @@ public class Compiler {
 	 * @param context
 	 * @return Context with Vector of compiled ops as result
 	 */
-	static Context compileAll(ASequence<ACell> forms, Context context) {
+	public static Context compileAll(ASequence<ACell> forms, Context context) {
 		if (forms == null) return context.withResult(Vectors.empty()); // consider null as empty list
 		int n = forms.size();
 		AVector<AOp<?>> obs = Vectors.empty();
@@ -257,7 +268,7 @@ public class Compiler {
 			}
 		} else {
 			// Otherwise must be a Local binding, so use a Set op
-			AOp<?> op=convex.core.lang.ops.Set.create(position.longValue(), exp);
+			AOp<?> op=convex.core.cvm.ops.Set.create(position.longValue(), exp);
 			return context.withResult(Juice.COMPILE_NODE,op);
 		}
 	}
@@ -309,7 +320,7 @@ public class Compiler {
 	 * @param context
 	 * @return Op producing the given map
 	 */
-	private static Context compileMap(AMap<ACell, ACell> form, Context context) {
+	private static Context compileMap(AHashMap<ACell, ACell> form, Context context) {
 		int n = form.size();
 		if (n==0) return context.withResult(Juice.COMPILE_CONSTANT, Constant.EMPTY_MAP);
 		
@@ -801,7 +812,7 @@ public class Compiler {
 					return ctx.withResult(Juice.EXPAND_SEQUENCE, updated);
 				}
 	
-				if (form instanceof AMap) {
+				if (form instanceof AHashMap) {
 					Context ctx =  context;
 					AMap<ACell, ACell> updated = Maps.empty();
 					for (Map.Entry<ACell, ACell> me : ((AMap<ACell, ACell>) form).entrySet()) {

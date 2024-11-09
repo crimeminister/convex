@@ -6,7 +6,7 @@ import java.util.Random;
 
 import convex.core.data.type.Types;
 import convex.core.exceptions.BadFormatException;
-import convex.core.util.Errors;
+import convex.core.util.ErrorMessages;
 import convex.core.util.Utils;
 
 /**
@@ -24,6 +24,7 @@ public class Blob extends AArrayBlob {
 	public static final Blob EMPTY = Cells.intern(wrap(Utils.EMPTY_BYTES));
 	public static final Blob SINGLE_ZERO = Cells.intern(wrap(new byte[] {0}));
 	public static final Blob SINGLE_ONE = Cells.intern(wrap(new byte[] {1}));
+	public static final Blob SINGLE_A =wrap(new byte[] {0x41});
 
 	public static final Blob NULL_ENCODING = Blob.wrap(new byte[] {Tag.NULL});
 	
@@ -48,7 +49,7 @@ public class Blob extends AArrayBlob {
 	public static Blob create(byte[] data, int offset, int length) {
 		if (length <= 0) {
 			if (length == 0) return EMPTY;
-			throw new IllegalArgumentException(Errors.negativeLength(length));
+			throw new IllegalArgumentException(ErrorMessages.negativeLength(length));
 		}
 		byte[] store = Arrays.copyOfRange(data, offset, offset + length);
 		return wrap(store);
@@ -99,11 +100,17 @@ public class Blob extends AArrayBlob {
 	 * @return Blob wrapping the given byte array segment
 	 */
 	public static Blob wrap(byte[] data, int offset, int length) {
-		if (length < 0) throw new IllegalArgumentException(Errors.negativeLength(length));
+		if (length < 0) throw new IllegalArgumentException(ErrorMessages.negativeLength(length));
 		if ((offset < 0) || (offset + length > data.length))
-			throw new IndexOutOfBoundsException(Errors.badRange(offset, offset+length));
+			throw new IndexOutOfBoundsException(ErrorMessages.badRange(offset, offset+length));
 		if (length==0) return Blob.EMPTY;
-		return new Blob(data, offset, length);
+		Blob b= new Blob(data, offset, length);
+		
+		// optimisation to re-use Blob encoding if present
+		if ((offset>=2)&&(length<128)&&(data[offset-1]==(byte)length)&&(data[offset-2]==Tag.BLOB)) {
+			b.attachEncoding(Blob.wrap(data,offset-2,length+2));
+		}
+		return b;
 	}
 
 	@Override
@@ -117,7 +124,7 @@ public class Blob extends AArrayBlob {
 		if (end > this.count) return null;
 		long length=end-start;
 		int size=(int)length;
-		if (size!=length) return null;
+		if (size!=length) return null; // int overflow, too big for valid Blob slice!
 		if (length < 0) return null;
 		if (length == 0) return EMPTY;
 		if (length==this.count) return this;
@@ -132,41 +139,20 @@ public class Blob extends AArrayBlob {
 	@Override
 	public boolean equals(ABlob a) {
 		if (a==this) return true;
-		if (a instanceof Blob) return equals((Blob) a);
+		if (a instanceof AArrayBlob) return equals((AArrayBlob) a);
 		long n=count();
 		if (a.count()!=n) return false;
 		if (!(a.getType()==Types.BLOB)) return false;
 		if (n<=CHUNK_LENGTH) {
 			return a.equalsBytes(this.store, this.offset);
 		} else {
+			// this must be a non-canonical Blob
+			// we coerce encoding, since might have hash, and probably needed anyway
 			return getEncoding().equals(a.getEncoding());
 		}
 	}
 
-	public boolean equals(Blob b) {
-		if (this==b) return true;
-		if (count!=b.count) return false;
-		return Utils.arrayEquals(store, offset, b.store, b.offset, size());
-	}
 
-	/**
-	 * Equality for array Blob objects
-	 * 
-	 * Implemented by testing equality of byte data
-	 * 
-	 * @param other Blob to compare with
-	 * @return true if blobs are equal, false otherwise.
-	 */
-	public boolean equals(AArrayBlob other) {
-		if (other == this) return true;
-		if (this.count != other.count) return false;
-
-		// avoid false positives with other Blob types, especially Hash and Address
-		if (this.getType() != other.getType()) return false;
-
-		if ((contentHash != null) && (other.contentHash != null) && contentHash.equals(other.contentHash)) return true;
-		return Utils.arrayEquals(other.store, other.offset, this.store, this.offset, size());
-	}
 
 	/**
 	 * Constructs a Blob object from a hex string
@@ -201,7 +187,8 @@ public class Blob extends AArrayBlob {
 
 
 	/**
-	 * Fast read of a Blob from its encoding inside another Blob object,
+	 * Fast read of a Blob from its encoding inside another Blob object.
+	 * Assumes count is correct at start of encoding (pos+1)
 	 * 
 	 * @param source Source Blob object.
 	 * @param pos Position in source to start reading from (location of tag byte)
@@ -214,7 +201,7 @@ public class Blob extends AArrayBlob {
 		if (count>CHUNK_LENGTH) throw new BadFormatException("Trying to read flat blob with count = " +count);
 		
 		// compute data length, excluding tag and encoded length
-		int headerLength = (1 + Format.getVLCCountLength(count));
+		int headerLength = (1 + Format.getVLQCountLength(count));
 		long start = pos+ headerLength;
 		if (start+count>source.count()) {
 			throw new BadFormatException("Insufficient bytes to read Blob required count =" + count);
@@ -243,13 +230,14 @@ public class Blob extends AArrayBlob {
 	@Override
 	public int estimatedEncodingSize() {
 		// space for tag, generous VLC length, plus raw data
-		return 1 + Format.MAX_VLC_LONG_LENGTH + size();
+		return 1 + Format.MAX_VLQ_LONG_LENGTH + size();
 	}
 	
 	/**
 	 * Maximum encoding size for a regular Blob
 	 */
-	public static final int MAX_ENCODING_LENGTH=1+Format.getVLCCountLength(CHUNK_LENGTH)+CHUNK_LENGTH;
+	public static final int MAX_ENCODING_LENGTH=1+Format.getVLQCountLength(CHUNK_LENGTH)+CHUNK_LENGTH;
+
 
 	@Override
 	public boolean isCanonical() {

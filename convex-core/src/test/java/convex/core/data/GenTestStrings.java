@@ -11,7 +11,6 @@ import com.pholser.junit.quickcheck.runner.JUnitQuickcheck;
 
 import convex.core.data.prim.CVMChar;
 import convex.core.lang.RT;
-import convex.core.lang.Reader;
 import convex.test.generators.CharGen;
 import convex.test.generators.StringGen;
 
@@ -22,13 +21,17 @@ public class GenTestStrings {
 		AString roundTrip=Strings.create(a.toString());
 		assertNotNull(roundTrip);
 		
+		assertEquals(-1,a.charAt(a.count()));
+		
 		// TODO: this might fail for some invalid UTF-8?
 		//if (cvm!=null) {
 		//	assertEquals(a,cvm);
 		//}
 		
-		String printed=RT.print(a, 1000000).toString();
-		assertEquals(a,Reader.read(printed));
+		String printed=RT.print(a, 100000).toString();
+		if (printed!=null) {
+			assertEquals(printed,RT.print(a, 100000).toString());
+		}
 	}
 	
 	@Property

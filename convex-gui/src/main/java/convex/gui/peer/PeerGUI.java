@@ -21,10 +21,10 @@ import org.slf4j.LoggerFactory;
 
 import convex.api.Convex;
 import convex.api.ConvexLocal;
-import convex.core.Order;
-import convex.core.Peer;
+import convex.core.cpos.Order;
+import convex.core.cvm.Peer;
 import convex.core.Result;
-import convex.core.State;
+import convex.core.cvm.State;
 import convex.core.crypto.AKeyPair;
 import convex.core.crypto.wallet.HotWalletEntry;
 import convex.core.data.AccountKey;
@@ -373,8 +373,9 @@ public class PeerGUI extends AbstractGUI {
 			HashMap<Keyword, Object> config=new HashMap<>();
 			config.put(Keywords.KEYPAIR, kp);
 			config.put(Keywords.CONTROLLER, a);
-			config.put(Keywords.STATE, genesisState);
+			config.put(Keywords.SOURCE, convex);
 			Server server=API.launchPeer(config);
+			server.getCVMExecutor().setPeer(server.syncPeer(kp,convex)); 
 			server.getConnectionManager().connectToPeer(base.getHostAddress());
 			server.setHostname("localhost:"+server.getPort());
 			base.getConnectionManager().connectToPeer(server.getHostAddress());

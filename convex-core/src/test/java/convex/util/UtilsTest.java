@@ -15,9 +15,11 @@ import java.util.function.Function;
 
 import org.junit.Test;
 
-import convex.core.Block;
-import convex.core.Peer;
-import convex.core.State;
+import convex.core.cpos.Block;
+import convex.core.cvm.Peer;
+import convex.core.cvm.State;
+import convex.core.cvm.transactions.ATransaction;
+import convex.core.cvm.transactions.Invoke;
 import convex.core.data.AVector;
 import convex.core.data.SignedData;
 import convex.core.data.Vectors;
@@ -25,20 +27,11 @@ import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadSignatureException;
 import convex.core.init.InitTest;
 import convex.core.lang.TestState;
-import convex.core.transactions.ATransaction;
-import convex.core.transactions.Invoke;
 import convex.core.util.Bits;
 import convex.core.util.LatestUpdateQueue;
 import convex.core.util.Utils;
 
 public class UtilsTest {
-
-	@Test
-	public void testToBigInteger() {
-		assertEquals(BigInteger.valueOf(255), Utils.toBigInteger(new byte[] { -1 }));
-		assertEquals(BigInteger.valueOf(256), Utils.toBigInteger(new byte[] { 1, 0 }));
-		assertEquals(BigInteger.valueOf(65536), Utils.toBigInteger(new byte[] { 1, 0, 0 }));
-	}
 
 	@Test
 	public void testHexChar() {
@@ -66,6 +59,8 @@ public class UtilsTest {
 		assertEquals("7f", Utils.toHexString(new byte[] { 127 }));
 		assertEquals("7c", Utils.toHexString(new byte[] { 124 }));
 		assertEquals("0012457c", Utils.toHexString(0x0012457c));
+		assertEquals("ffffffff", Utils.toHexString(-1));
+		assertEquals("ffffffffffffffff", Utils.toHexString(-1L));
 	}
 
 	@Test
@@ -175,20 +170,31 @@ public class UtilsTest {
 		assertEquals(0, b.remaining());
 		assertEquals("0000000000000000000000000000000000000000000000000000000000000007", Utils.toHexString(bs));
 	}
+	
+	@Test 
+	public void testMulDiv() {
+		assertEquals(500,Utils.mulDiv(50, 10000, 1000));
+		assertEquals(10,Utils.mulDiv(11, 11, 12));
+		assertEquals(0,Utils.mulDiv(0, Long.MAX_VALUE, 6577657));
+		assertEquals(Long.MAX_VALUE,Utils.mulDiv(Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE));
+		assertEquals(Long.MAX_VALUE-2,Utils.mulDiv(Long.MAX_VALUE-1, Long.MAX_VALUE-1, Long.MAX_VALUE));
+		
+		// overflow cases
 
-	@Test
-	public void testWriteBigUInt() {
-		byte[] ds = new byte[4];
-		assertEquals("00000000", Utils.toHexString(ds));
-		Utils.writeUInt(BigInteger.valueOf(7), ds, 0, 4);
-		assertEquals("00000007", Utils.toHexString(ds));
-		assertEquals((short) 7, Utils.readShort(ds, 2)); // check short encoding
-		Utils.writeUInt(BigInteger.valueOf(0xffffffffl), ds, 0, 4);
-		assertEquals("ffffffff", Utils.toHexString(ds));
+		
+		assertEquals(40,Utils.mulDiv(20,20,10)); 
+		
+		// overflow cases
+		assertEquals(-1,Utils.mulDiv(0x100000000L,0x100000000L,1)); 
+		assertEquals(-1,Utils.mulDiv(Long.MAX_VALUE, Long.MAX_VALUE, 1));
+		assertEquals(-1,Utils.mulDiv(Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE-1));
 
-		assertThrows(IllegalArgumentException.class,
-				() -> Utils.writeUInt(BigInteger.valueOf(0x100000000L), ds, 0, 32));
-		assertThrows(IllegalArgumentException.class, () -> Utils.writeUInt(BigInteger.valueOf(-1), ds, 0, 32));
+		assertEquals(9858L,Utils.mulDiv(3384L, 8318787781460893717L, 2855572529029243059L));
+
+		assertThrows(IllegalArgumentException.class,()->Utils.mulDiv(-10,10,100)); // negative a
+		assertThrows(IllegalArgumentException.class,()->Utils.mulDiv(10,-10,100)); // negative b
+		assertThrows(IllegalArgumentException.class,()->Utils.mulDiv(10,10,-100)); // negative c
+		assertThrows(IllegalArgumentException.class,()->Utils.mulDiv(10,10,0)); // divide by zero
 	}
 
 	@Test

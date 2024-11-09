@@ -8,25 +8,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.util.HashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.function.Consumer;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import convex.api.Convex;
 import convex.api.ConvexRemote;
-import convex.core.Belief;
 import convex.core.ErrorCodes;
 import convex.core.Result;
-import convex.core.State;
+import convex.core.cpos.Belief;
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.State;
+import convex.core.cvm.transactions.ATransaction;
+import convex.core.cvm.transactions.Invoke;
 import convex.core.data.ACell;
 import convex.core.data.AVector;
 import convex.core.data.Address;
@@ -36,33 +34,21 @@ import convex.core.data.Maps;
 import convex.core.data.Ref;
 import convex.core.data.Refs;
 import convex.core.data.SignedData;
-import convex.core.data.Vectors;
+import convex.core.data.Symbols;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadSignatureException;
 import convex.core.exceptions.ResultException;
 import convex.core.init.Init;
 import convex.core.lang.RT;
 import convex.core.lang.Reader;
-import convex.core.lang.Symbols;
 import convex.core.store.AStore;
 import convex.core.store.Stores;
-import convex.core.transactions.ATransaction;
-import convex.core.transactions.Call;
-import convex.core.transactions.Invoke;
-import convex.core.transactions.Transfer;
-import convex.core.util.Utils;
 import convex.net.Connection;
-import convex.net.Message;
-import convex.net.ResultConsumer;
 
 /**
  * Tests for a fresh standalone server cluster instance
  */
 public class ServerTest {
-
-	private static final Logger log = LoggerFactory.getLogger(ServerTest.class.getName());
-
-	private HashMap<Long, Object> results = new HashMap<>();
 
 	private static TestNetwork network;
 	
@@ -70,25 +56,6 @@ public class ServerTest {
 	public static void init() {
 		network = TestNetwork.getInstance();
 	}
-
-	private Consumer<Message> handler = new ResultConsumer() {
-		@Override
-		protected synchronized void handleNormalResult(long id, ACell value) {
-			String msg=id+ " : "+Utils.toString(value);
-			//System.err.println(msg);
-			log.debug(msg);
-			results.put(id, value);
-		}
-
-		@Override
-		protected synchronized void handleError(long id, ACell code, ACell message) {
-			String msg=id+ " ERR: "+Utils.toString(code)+ " : "+message;
-			//System.err.println(msg);
-			log.debug(msg);
-
-			results.put(id, code);
-		}
-	};
 	
 	/**
 	 * Smoke test for ConvexLocal connection 
@@ -116,18 +83,6 @@ public class ServerTest {
 		r=convex.transactSync("(do (transfer "+user+" 100000) *balance*)");
 		assertEquals("10000000",r.getValue().toString());
 
-	}
-
-	@Test
-	public void testServerConnect() throws IOException, InterruptedException, TimeoutException {
-		InetSocketAddress hostAddress=network.SERVER.getHostAddress();
-
-		// Connect to Peer Server using the current store for the client
-		Connection pc = Connection.connect(hostAddress, handler, Stores.current());
-		AVector<CVMLong> v = Vectors.of(1l, 2l, 3l);
-		long id1 = pc.sendQuery(v,network.HERO);
-		Utils.timeout(5000, () -> results.get(id1) != null);
-		assertEquals(v, results.get(id1));
 	}
 
 	@Test
@@ -283,48 +238,6 @@ public class ServerTest {
 		long x=pc.sendTransaction(st);
 		assertTrue(x>=0);
 		return x;
-	}
-
-	@Test
-	public void testConnectionTransactions() throws IOException, InterruptedException, TimeoutException {
-		synchronized(network.SERVER) {
-			InetSocketAddress hostAddress=network.SERVER.getHostAddress();
-
-			// Connect to Peer Server using the current store for the client
-			Connection pc = Connection.connect(hostAddress, handler, Stores.current());
-			AKeyPair kp=AKeyPair.generate();
-			Address addr=network.getClient(kp).getAddress();
-			long heroSeq=network.CONVEX.getSequence();
-
-			long s=0; // Base sequence number for new client
-			long id1 = checkSent(pc,kp.signData(Invoke.create(addr, s+1, Reader.read("[1 2 3]"))));
-			long id2 = checkSent(pc,kp.signData(Invoke.create(addr, s+2, Reader.read("(return 2)"))));
-			long id2a = checkSent(pc,kp.signData(Invoke.create(addr, s+2, Reader.read("22"))));
-			long id3 = checkSent(pc,kp.signData(Invoke.create(addr, s+3, Reader.read("(do (def foo :bar) (rollback 3))"))));
-			long id4 = checkSent(pc,kp.signData(Transfer.create(addr, s+4, addr, 1000)));
-			long id5 = checkSent(pc,kp.signData(Call.create(addr, s+5, Init.REGISTRY_ADDRESS, Symbols.FOO, Vectors.of(Maps.empty()))));
-			long id6bad = checkSent(pc,kp.signData(Invoke.create(network.HERO, heroSeq+1, Reader.read("(def a 1)"))));
-			long id6 = checkSent(pc,kp.signData(Invoke.create(addr, s+6, Reader.read("foo"))));
-
-			long last=id6;
-
-			assertTrue(last>=0);
-			assertTrue(!pc.isClosed());
-
-			// wait for results to come back
-			assertFalse(Utils.timeout(10000, () -> results.containsKey(last)));
-			Thread.sleep(100); // bit more time in case something out of order?
-
-			AVector<CVMLong> v = Vectors.of(1l, 2l, 3l);
-			assertEquals(v, results.get(id1));
-			assertEquals(RT.cvm(2L), results.get(id2));
-			assertEquals(ErrorCodes.SEQUENCE, results.get(id2a));
-			assertEquals(RT.cvm(3L), results.get(id3));
-			assertEquals(RT.cvm(1000L), results.get(id4));
-			assertTrue( results.containsKey(id5));
-			assertEquals(ErrorCodes.SIGNATURE, results.get(id6bad));
-			assertEquals(ErrorCodes.UNDECLARED, results.get(id6));
-		}
 	}
 
 }

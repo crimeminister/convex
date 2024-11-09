@@ -1,9 +1,9 @@
 package convex.core.lang.impl;
 
+import convex.core.cvm.Context;
 import convex.core.data.ACell;
 import convex.core.data.AMap;
 import convex.core.data.util.BlobBuilder;
-import convex.core.lang.Context;
 
 public class MapFn<K extends ACell, T  extends ACell> extends ADataFn<T> {
 
@@ -37,6 +37,11 @@ public class MapFn<K extends ACell, T  extends ACell> extends ADataFn<T> {
 	@Override
 	public boolean print(BlobBuilder sb,long limit) {
 		return map.print(sb,limit);
+	}
+
+	@Override
+	public ACell toCanonical() {
+		return map.getCanonical();
 	}
 
 }

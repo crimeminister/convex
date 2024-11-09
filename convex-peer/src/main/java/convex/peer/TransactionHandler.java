@@ -12,34 +12,36 @@ import java.io.IOException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import convex.core.Block;
-import convex.core.BlockResult;
 import convex.core.Constants;
 import convex.core.ErrorCodes;
-import convex.core.Peer;
 import convex.core.Result;
 import convex.core.SourceCodes;
-import convex.core.State;
+import convex.core.cpos.Block;
+import convex.core.cpos.BlockResult;
+import convex.core.cpos.CPoSConstants;
+import convex.core.cvm.AccountStatus;
+import convex.core.cvm.Peer;
+import convex.core.cvm.PeerStatus;
+import convex.core.cvm.State;
+import convex.core.cvm.transactions.ATransaction;
+import convex.core.cvm.transactions.Invoke;
 import convex.core.data.ACell;
 import convex.core.data.AString;
 import convex.core.data.AVector;
 import convex.core.data.AccountKey;
-import convex.core.data.AccountStatus;
 import convex.core.data.Address;
 import convex.core.data.Cells;
 import convex.core.data.Hash;
 import convex.core.data.Keyword;
 import convex.core.data.Keywords;
-import convex.core.data.PeerStatus;
 import convex.core.data.SignedData;
 import convex.core.data.Strings;
 import convex.core.data.Vectors;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
+import convex.core.exceptions.MissingDataException;
 import convex.core.lang.RT;
 import convex.core.lang.Reader;
-import convex.core.transactions.ATransaction;
-import convex.core.transactions.Invoke;
 import convex.core.util.LoadMonitor;
 import convex.core.util.Utils;
 import convex.net.Message;
@@ -108,6 +110,34 @@ public class TransactionHandler extends AThreadedComponent {
 		interests.put(signedTransactionHash, m);
 	}
 	
+	private void processMessages() throws InterruptedException {
+		Result problem=checkPeerState();
+		for (Message msg: messages) {
+			if (problem==null) {
+				processMessage(msg);
+			} else {
+				msg.returnResult(problem);
+			}
+		}
+	}
+	
+	private Result checkPeerState() {
+		try {
+			if (!server.isLive()) {
+				return Result.error(ErrorCodes.STATE, Strings.create("Server is not live")).withSource(SourceCodes.PEER);
+			}
+			Peer p=server.getPeer();
+			State s=server.getPeer().getConsensusState();
+			PeerStatus ps=s.getPeers().get(p.getPeerKey());
+			if (ps==null) {
+				return Result.error(ErrorCodes.STATE, Strings.create("Peer not registered in global state")).withSource(SourceCodes.PEER);
+			}
+			return null;
+		} catch (Exception e) {
+			return Result.error(ErrorCodes.STATE, Strings.create("Peer problem: "+e.getMessage())).withSource(SourceCodes.PEER);
+		}
+	}
+
 	protected void processMessage(Message m) throws InterruptedException {
 		try {
 			this.receivedTransactionCount++;
@@ -125,7 +155,6 @@ public class TransactionHandler extends AThreadedComponent {
 			}
 
 			// Persist the signed transaction. Might throw MissingDataException?
-			// If we already have the transaction persisted, will obtain signature status
 			sd=Cells.persist(sd);
 	
 			// Put on Server's transaction queue. We are OK to block here
@@ -139,6 +168,9 @@ public class TransactionHandler extends AThreadedComponent {
 		} catch (BadFormatException | IOException e) {
 			log.warn("Unhandled exception in transaction handler",e);
 			m.closeConnection();
+		} catch (MissingDataException e) {
+			m.returnResult(Result.fromException(e).withSource(SourceCodes.PEER));
+			return;
 		}
 	}
 	
@@ -353,18 +385,21 @@ public class TransactionHandler extends AThreadedComponent {
 		if (!Utils.bool(server.getConfig().get(Keywords.AUTO_MANAGE))) return;
 
 		State s=p.getConsensusState();
-		String desiredHostname=server.getHostname(); // Intended hostname
 		AccountKey peerKey=p.getPeerKey();
 		PeerStatus ps=s.getPeer(peerKey);
 		if (ps==null) return; // No peer record in consensus state?
 		
+		// No point setting this if low staked
+		if (ps.getPeerStake()<CPoSConstants.MINIMUM_EFFECTIVE_STAKE) return;
+		
 		AString chn=ps.getHostname();
 		String currentHostname=(chn==null)?null:chn.toString();
+		String desiredHostname=server.getHostname(); // Intended hostname
 		
 		// Try to set hostname if not correctly set
 		trySetHostname:
 		if (!Utils.equals(desiredHostname, currentHostname)) {
-			log.debug("Trying to update own hostname from: {} to {}",currentHostname,desiredHostname);
+			log.info("Trying to update own hostname from: {} to {}",currentHostname,desiredHostname);
 			Address address=ps.getController();
 			if (address==null) break trySetHostname;
 			AccountStatus as=s.getAccount(address);
@@ -420,13 +455,12 @@ public class TransactionHandler extends AThreadedComponent {
 			// Process transaction messages
 			// This might block if we aren't generating blocks fast enough
 			// Which is OK, since we transfer backpressure to clients
-			for (Message msg: messages) {
-				processMessage(msg);
-			}
+			processMessages();
 		} finally {
 			messages.clear();
 		}
 	}
+
 
 	@Override
 	protected String getThreadName() {

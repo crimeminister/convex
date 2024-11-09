@@ -14,12 +14,12 @@ import convex.cli.output.RecordOutput;
 import convex.core.Result;
 import convex.core.crypto.AKeyPair;
 import convex.core.crypto.PFXTools;
+import convex.core.cvm.transactions.ATransaction;
+import convex.core.cvm.transactions.Invoke;
 import convex.core.data.ACell;
 import convex.core.data.Address;
 import convex.core.exceptions.ResultException;
 import convex.core.lang.Reader;
-import convex.core.transactions.ATransaction;
-import convex.core.transactions.Invoke;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Mixin;
 import picocli.CommandLine.Model.CommandSpec;
@@ -47,7 +47,7 @@ public class PeerCreate extends APeerCommand {
 	@Override
 	public void execute() throws InterruptedException {
 
-		long peerStake = convex.core.Constants.MINIMUM_EFFECTIVE_STAKE;
+		long peerStake = convex.core.cpos.CPoSConstants.MINIMUM_EFFECTIVE_STAKE;
 
 		AKeyPair keyPair = null;
 		KeyStore keyStore;

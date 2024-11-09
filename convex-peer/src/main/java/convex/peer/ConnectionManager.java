@@ -15,18 +15,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import convex.api.Convex;
-import convex.core.Belief;
-import convex.core.Constants;
-import convex.core.Peer;
 import convex.core.Result;
-import convex.core.State;
+import convex.core.cpos.Belief;
+import convex.core.cpos.CPoSConstants;
+import convex.core.cvm.Peer;
+import convex.core.cvm.PeerStatus;
+import convex.core.cvm.State;
 import convex.core.data.ACell;
 import convex.core.data.AString;
 import convex.core.data.AVector;
 import convex.core.data.AccountKey;
 import convex.core.data.Hash;
 import convex.core.data.Keywords;
-import convex.core.data.PeerStatus;
 import convex.core.data.SignedData;
 import convex.core.data.Vectors;
 import convex.core.exceptions.BadFormatException;
@@ -157,7 +157,7 @@ public class ConnectionManager extends AThreadedComponent {
 			 *  withdrawn, have trivial stake or are slashed from current consideration.
 			 */
 			PeerStatus ps=s.getPeer(p);
-			if ((ps==null)||(ps.getTotalStake()<=Constants.MINIMUM_EFFECTIVE_STAKE)) {
+			if ((ps==null)||(ps.getTotalStake()<=CPoSConstants.MINIMUM_EFFECTIVE_STAKE)) {
 				closeConnection(p);
 				currentPeerCount--;
 				continue;
@@ -218,7 +218,7 @@ public class ConnectionManager extends AThreadedComponent {
 			InetSocketAddress maybeAddress=IPUtils.toInetSocketAddress(hostName.toString());
 			if (maybeAddress==null) continue;
 			long peerStake=ps.getPeerStake();
-			if (peerStake>Constants.MINIMUM_EFFECTIVE_STAKE) {
+			if (peerStake>CPoSConstants.MINIMUM_EFFECTIVE_STAKE) {
 				double t=random.nextDouble()*(accStake+peerStake);
 				if (t>=accStake) {
 					target=maybeAddress;
@@ -600,8 +600,6 @@ public class ConnectionManager extends AThreadedComponent {
 			// close the temp connection to Convex API
 			convex.close();
 			
-		
-
 			AccountKey peerKey =RT.ensureAccountKey(status.get(3));
 			if (peerKey==null) return null;
 

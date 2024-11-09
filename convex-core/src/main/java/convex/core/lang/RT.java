@@ -8,6 +8,8 @@ import java.util.Map;
 import java.util.function.BiFunction;
 
 import convex.core.Constants;
+import convex.core.cvm.AFn;
+import convex.core.cvm.transactions.ATransaction;
 import convex.core.data.ABlob;
 import convex.core.data.ABlobLike;
 import convex.core.data.ACell;
@@ -52,7 +54,6 @@ import convex.core.lang.impl.KeywordFn;
 import convex.core.lang.impl.MapFn;
 import convex.core.lang.impl.SeqFn;
 import convex.core.lang.impl.SetFn;
-import convex.core.transactions.ATransaction;
 import convex.core.util.Utils;
 
 /**
@@ -548,9 +549,11 @@ public class RT {
 	 * @return Double value, or null if not convertible
 	 */
 	public static CVMDouble castDouble(ACell a) {
-		if (a instanceof CVMDouble)
-			return (CVMDouble) a;
-
+		if (a instanceof CVMDouble) {
+			// Note coercion on non-CVM IEEE754 NaNs
+			return ((CVMDouble) a).toDouble();
+		}
+		
 		AInteger l = ensureInteger(a);
 		if (l == null)
 			return null;
@@ -587,6 +590,7 @@ public class RT {
 		}
 
 		if (a instanceof APrimitive) {
+			if (a instanceof CVMBool) return null; // disallow boolean -> long cast
 			return CVMLong.create(((APrimitive) a).longValue());
 		}
 		
@@ -634,16 +638,11 @@ public class RT {
 			return n.toInteger();
 		}
 
-		if (a instanceof APrimitive) {
-			return CVMLong.create(((APrimitive) a).longValue());
-		}
-
 		if (a instanceof ABlob) {
-			long lv = ((ABlob) a).longValue();
-			return CVMLong.create(lv);
+			return AInteger.create((ABlob) a);
 		}
 
-		return null;
+		return castLong(a);
 	}
 
 	/**
@@ -1377,7 +1376,7 @@ public class RT {
 			AVector<?> v = (AVector<?>) x;
 			if (v.count() != 2)
 				return null;
-			me = MapEntry.createRef(v.getRef(0), v.getRef(1));
+			me = MapEntry.fromRefs(v.getRef(0), v.getRef(1));
 		} else {
 			return null;
 		}
@@ -1874,6 +1873,14 @@ public class RT {
 	public static ATransaction ensureTransaction(ACell maybeTx) {
 		if (maybeTx instanceof ATransaction) return (ATransaction)maybeTx;
 		return null;
+	}
+
+	public static boolean printCAD3(BlobBuilder sb, long limit, ACell cell) {
+		sb.append((byte)'#');
+		sb.append((byte)'[');
+		sb.appendCAD3Hex(Cells.getEncoding(cell));
+		sb.append((byte)']');
+		return sb.check(limit);
 	}
 
 

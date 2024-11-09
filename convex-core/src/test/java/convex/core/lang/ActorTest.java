@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import org.junit.jupiter.api.Test;
 
 import convex.core.Coin;
+import convex.core.cvm.Context;
 import convex.core.data.Address;
 import convex.core.data.Maps;
 import convex.core.data.prim.CVMLong;
@@ -79,7 +80,7 @@ public class ActorTest extends ACVMTest {
 			// Accepting less than full offer
 			Context c2=step(c,"(call a1 10 (do '(accept 7)))");
 			assertEquals(bal-7,c2.getBalance());
-			assertEquals(Coin.SUPPLY,c2.getState().computeTotalBalance());
+			assertEquals(Coin.MAX_SUPPLY,c2.getState().computeTotalBalance());
 		}
 		
 		{
@@ -87,7 +88,7 @@ public class ActorTest extends ACVMTest {
 			Context c2=step(c,"(call a1 10 (do '(accept 17)))");
 			assertStateError(c2);
 			assertEquals(bal,c2.getBalance());
-			assertEquals(Coin.SUPPLY,c2.getState().computeTotalBalance());
+			assertEquals(Coin.MAX_SUPPLY,c2.getState().computeTotalBalance());
 		}
 		
 		{
@@ -95,7 +96,7 @@ public class ActorTest extends ACVMTest {
 			Context c2=step(c,"(call a1 10 (do '(do (accept 8) (rollback :done))))");
 			assertNotError(c2);
 			assertEquals(bal,c2.getBalance());
-			assertEquals(Coin.SUPPLY,c2.getState().computeTotalBalance());
+			assertEquals(Coin.MAX_SUPPLY,c2.getState().computeTotalBalance());
 		}
 
 	}

@@ -8,18 +8,17 @@ import javax.swing.JButton;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
-import javax.swing.JTextArea;
 
 import convex.api.Convex;
 import convex.api.ConvexLocal;
 import convex.api.ConvexRemote;
-import convex.core.Peer;
-import convex.core.State;
+import convex.core.cvm.Peer;
+import convex.core.cvm.State;
 import convex.core.crypto.AKeyPair;
 import convex.core.data.ACell;
 import convex.core.data.AccountKey;
 import convex.core.data.Address;
-import convex.core.data.PeerStatus;
+import convex.core.cvm.PeerStatus;
 import convex.core.text.Text;
 import convex.etch.EtchStore;
 import convex.gui.client.ConvexClient;
@@ -42,7 +41,7 @@ import net.miginfocom.swing.MigLayout;
 public class PeerComponent extends BaseListComponent {
 
 	public ConvexLocal convex;
-	JTextArea description;
+	CodeLabel description;
 
 	public void launchPeerWindow(ConvexLocal peer) {
 		PeerWindow pw = new PeerWindow(peer);
@@ -81,7 +80,7 @@ public class PeerComponent extends BaseListComponent {
 		// Central area
 
 		JPanel centralPanel = new JPanel();
-		centralPanel.setLayout(new MigLayout("fill, wrap 2","[][grow]")); 
+		centralPanel.setLayout(new MigLayout("wrap 2","[][]")); 
 		
 		Server server=convex.getLocalServer();
 		AccountKey peerKey=server.getPeerKey();
@@ -90,6 +89,7 @@ public class PeerComponent extends BaseListComponent {
 			Identicon identicon=new Identicon(peerKey,Toolkit.IDENTICON_SIZE_LARGE);
 			centralPanel.add(identicon);
 			CodeLabel peerKeyLabel=(new CodeLabel("0x"+peerKey.toChecksumHex()));
+			peerKeyLabel.setMaxColumns(2+64);
 			peerKeyLabel.setToolTipText("Public key of the peer.");
 			centralPanel.add(peerKeyLabel,"span");
 		}
@@ -98,6 +98,7 @@ public class PeerComponent extends BaseListComponent {
 			description = new CodeLabel(getPeerDescription());
 			description.setFont(Toolkit.MONO_FONT);
 			description.setEditable(false);
+			description.setMaxColumns(80);
 			description.setBorder(null);
 			description.setBackground(null);
 			centralPanel.add(description, "span 2");
@@ -203,7 +204,7 @@ public class PeerComponent extends BaseListComponent {
 			AccountKey paddr=server.getPeerKey();
 			// sb.append("0x"+paddr.toChecksumHex()+"\n");
 			if (server.isLive()) {
-				sb.append("Local peer on port: " + server.getPort() + "\n");
+				sb.append("Local server on port: " + server.getPort() + "\n");
 				// before:  + " with store "+server.getStore().shortName()+"\n"
 			} else {
 				sb.append("Inactive Peer\n");
@@ -212,9 +213,9 @@ public class PeerComponent extends BaseListComponent {
 			if (ps!=null) {
 				sb.append("Controller: "+ps.getController());
 				sb.append("   ");
-				sb.append("Stake: "+Text.toFriendlyBalance(ps.getPeerStake()));
+				sb.append("Stake: "+Text.toFriendlyBalance(ps.getPeerStake(),2));
 				sb.append("   ");
-				sb.append("Delegated Stake: "+Text.toFriendlyBalance(ps.getDelegatedStake()));
+				sb.append("Delegated Stake: "+Text.toFriendlyBalance(ps.getDelegatedStake(),2));
 				sb.append("   ");
 			} else {
 				sb.append("Not currently a registered peer    ");

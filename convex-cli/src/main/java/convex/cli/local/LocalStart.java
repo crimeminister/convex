@@ -12,7 +12,7 @@ import convex.cli.CLIError;
 import convex.cli.Constants;
 import convex.cli.ExitCodes;
 import convex.cli.Helpers;
-import convex.core.State;
+import convex.core.cvm.State;
 import convex.core.crypto.AKeyPair;
 import convex.core.data.AccountKey;
 import convex.core.init.Init;
@@ -79,7 +79,7 @@ public class LocalStart extends ALocalCommand {
 				String keyPrefix = values.get(index);
 				if (keyPrefix.isBlank()) continue;
 
-				AKeyPair keyPair = storeMixin.loadKeyFromStore(keyPrefix, keyMixin.getKeyPassword());
+				AKeyPair keyPair = storeMixin.loadKeyFromStore(keyPrefix, ()->keyMixin.getKeyPassword());
 				if (keyPair == null) {
 					log.warn("Unable to find public key in store: "+keyPrefix);
 				} else {

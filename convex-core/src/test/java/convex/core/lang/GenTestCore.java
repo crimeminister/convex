@@ -18,6 +18,7 @@ import com.pholser.junit.quickcheck.Property;
 import com.pholser.junit.quickcheck.generator.java.lang.LongGenerator;
 import com.pholser.junit.quickcheck.runner.JUnitQuickcheck;
 
+import convex.core.cvm.Context;
 import convex.core.data.ACell;
 import convex.core.data.ADataStructure;
 import convex.core.data.AList;
@@ -108,10 +109,7 @@ public class GenTestCore {
 	public void testVectorFunctions(@From(VectorGen.class) AVector a) {
 		doSequenceTests(a);
 		
-		if (a.isCanonical()) {
-			// only true for regular vectors
-			assertSame(a,RT.vec(a)); 
-		}
+		assertEquals(a,RT.vec(a)); 
 		assertSame(Vectors.empty(),a.empty());
 	
 		AString foos=Strings.create("foo");

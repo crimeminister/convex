@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.function.Consumer;
 
 import org.eclipse.jetty.server.ServerConnector;
 import org.slf4j.Logger;
@@ -31,10 +32,12 @@ import io.javalin.config.JavalinConfig;
 import io.javalin.http.staticfiles.Location;
 import io.javalin.openapi.JsonSchemaLoader;
 import io.javalin.openapi.JsonSchemaResource;
+import io.javalin.openapi.OpenApiInfo;
+import io.javalin.openapi.plugin.DefinitionConfiguration;
 import io.javalin.openapi.plugin.OpenApiPlugin;
 import io.javalin.openapi.plugin.redoc.ReDocPlugin;
 import io.javalin.openapi.plugin.swagger.SwaggerPlugin;
-import io.javalin.util.JavalinBindException;
+import io.javalin.util.JavalinException;
 
 public class RESTServer implements Closeable {
 	protected static final Logger log = LoggerFactory.getLogger(RESTServer.class.getName());
@@ -48,7 +51,7 @@ public class RESTServer implements Closeable {
 		this.convex = ConvexLocal.create(server, server.getPeerController(), server.getKeyPair());
 	}
 	
-	private Javalin buildApp() {
+	private Javalin buildApp(boolean useSSL) {
 		SslPlugin sslPlugin = getSSLPlugin(server.getConfig());
 		Javalin app = Javalin.create(config -> {
 			config.staticFiles.enableWebjars();
@@ -59,7 +62,7 @@ public class RESTServer implements Closeable {
 				});
 			});
 			
-			if (sslPlugin!=null) {
+			if (useSSL&&(sslPlugin!=null)) {
 				config.registerPlugin(sslPlugin);
 			}
 			
@@ -124,14 +127,15 @@ public class RESTServer implements Closeable {
 		String docsPath="openapi-plugin/openapi-default.json";
 		
 		config.registerPlugin(new OpenApiPlugin(pluginConfig -> {
-			
             pluginConfig
             .withDocumentationPath(docsPath)
             .withDefinitionConfiguration((version, definition) -> {
-                definition.withInfo(info -> {
-					info.setTitle("Convex REST API");
-					info.setVersion("0.7.0");
-                });
+            	DefinitionConfiguration def=definition;
+                def=def.withInfo((Consumer <OpenApiInfo>)
+                		info -> {
+							info.setTitle("Convex REST API");
+							info.setVersion("0.7.0");
+		                });
             });
 		}));
 
@@ -214,15 +218,15 @@ public class RESTServer implements Closeable {
 	public synchronized void start(Integer port) {
 		close();
 		try {
-			javalin=buildApp();
+			javalin=buildApp(true);
 			start(javalin,port);
-		} catch (JavalinBindException e) {
+		} catch (JavalinException e) {
 			if (port!=null) throw e; // only try again if port unspecified
 			log.warn("Specified port "+port+"already in use, chosing another at random");
 			close();
 			
 			port=0; // use random port
-			javalin=buildApp();
+			javalin=buildApp(false);
 			start(javalin,port);
 		}
 	}

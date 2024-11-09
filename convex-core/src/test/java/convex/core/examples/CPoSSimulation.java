@@ -3,13 +3,13 @@ package convex.core.examples;
 import java.util.List;
 import java.util.Random;
 
-import convex.core.Belief;
-import convex.core.Block;
-import convex.core.Constants;
-import convex.core.Order;
-import convex.core.Peer;
-import convex.core.State;
+import convex.core.cpos.Belief;
+import convex.core.cpos.Block;
+import convex.core.cpos.CPoSConstants;
+import convex.core.cpos.Order;
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.Peer;
+import convex.core.cvm.State;
 import convex.core.data.AccountKey;
 import convex.core.exceptions.InvalidDataException;
 import convex.core.init.Init;
@@ -109,7 +109,7 @@ public class CPoSSimulation {
 				Order ao=a.getPeerOrder();
 				Order bo=b.getPeerOrder();
 				long match=ao.getBlocks().commonPrefixLength(bo.getBlocks());
-				long minFinality=Math.min(ao.getConsensusPoint(Constants.CONSENSUS_LEVEL_FINALITY), bo.getConsensusPoint(Constants.CONSENSUS_LEVEL_FINALITY));
+				long minFinality=Math.min(ao.getConsensusPoint(CPoSConstants.CONSENSUS_LEVEL_FINALITY), bo.getConsensusPoint(CPoSConstants.CONSENSUS_LEVEL_FINALITY));
 				if (match<minFinality) {
 					System.err.println("Peer "+i+ " inconsistent with Peer "+j);
 					System.err.println("Match length = "+match);

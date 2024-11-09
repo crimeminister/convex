@@ -8,12 +8,12 @@ import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 import org.openjdk.jmh.runner.options.TimeValue;
 
-import convex.core.State;
+import convex.core.cvm.State;
 import convex.core.crypto.AKeyPair;
 import convex.core.data.AccountKey;
 import convex.core.data.Address;
 import convex.core.init.Init;
-import convex.core.lang.Context;
+import convex.core.cvm.Context;
 
 public class Benchmarks {
 	

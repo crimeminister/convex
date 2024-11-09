@@ -4,7 +4,7 @@ import convex.core.exceptions.BadFormatException;
 import convex.core.store.AStore;
 
 /**
- * Encoder for stores
+ * Encoder for CAD3 data / stores
  */
 public class Encoder {
 
@@ -16,7 +16,7 @@ public class Encoder {
 		return Format.encodedBlob(a);
 	}
 	
-	public ACell decode (Blob encoding) throws BadFormatException {
+	public ACell decode(Blob encoding) throws BadFormatException {
 		return Format.read(encoding);
 	}
 }

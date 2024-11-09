@@ -3,15 +3,15 @@ package convex.gui.models;
 import java.text.DecimalFormat;
 import java.text.NumberFormat;
 
-import convex.core.State;
+import convex.core.cvm.State;
 import convex.core.data.ACell;
 import convex.core.data.AMap;
-import convex.core.data.AccountStatus;
+import convex.core.cvm.AccountStatus;
 import convex.core.data.Address;
 import convex.core.data.MapEntry;
 import convex.core.data.Symbol;
 import convex.core.data.prim.CVMDouble;
-import convex.core.lang.Context;
+import convex.core.cvm.Context;
 import convex.core.lang.Reader;
 
 @SuppressWarnings("serial")

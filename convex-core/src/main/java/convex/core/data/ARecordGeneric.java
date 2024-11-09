@@ -1,7 +1,6 @@
 package convex.core.data;
 
 import convex.core.exceptions.InvalidDataException;
-import convex.core.lang.RecordFormat;
 
 /**
  * Abstract base class for generic records.
@@ -32,9 +31,6 @@ public abstract class ARecordGeneric extends ARecord {
 		if (ix==null) return null;
 		return values.get((long)ix);
 	}
-	
-	@Override
-	public abstract byte getTag();
 	
 	@Override
 	public int getRefCount() {

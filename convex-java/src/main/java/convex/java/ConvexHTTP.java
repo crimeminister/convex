@@ -14,6 +14,7 @@ import convex.core.ErrorCodes;
 import convex.core.Result;
 import convex.core.SourceCodes;
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.transactions.ATransaction;
 import convex.core.data.ACell;
 import convex.core.data.AMap;
 import convex.core.data.Address;
@@ -26,11 +27,12 @@ import convex.core.data.Maps;
 import convex.core.data.SignedData;
 import convex.core.exceptions.MissingDataException;
 import convex.core.exceptions.ParseException;
+import convex.core.exceptions.TODOException;
 import convex.core.lang.RT;
 import convex.core.lang.Reader;
 import convex.core.store.AStore;
-import convex.core.transactions.ATransaction;
 import convex.core.util.Utils;
+import convex.net.Message;
 
 public class ConvexHTTP extends convex.api.Convex {
 	
@@ -145,6 +147,16 @@ public class ConvexHTTP extends convex.api.Convex {
 			}
 		});
 		return result;
+	}
+	
+	@Override
+	public CompletableFuture<Result> message(Blob message) {
+		throw new TODOException();
+	}
+	
+	@Override
+	public CompletableFuture<Result> message(Message message) {
+		throw new TODOException();
 	}
 
 	@Override

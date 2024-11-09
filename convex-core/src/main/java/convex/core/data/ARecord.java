@@ -1,16 +1,18 @@
 package convex.core.data;
 
+import java.util.Collection;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 
-import convex.core.Block;
+import convex.core.cpos.Block;
 import convex.core.data.type.AType;
 import convex.core.data.type.Types;
-import convex.core.lang.RecordFormat;
+import convex.core.data.util.BlobBuilder;
+import convex.core.lang.RT;
 
 /**
- * Base class for Record data types. 
+ * Base class for CVM Record data types. 
  * 
  * Records are Map-like data structures with fixed sets of Keyword keys, and optional custom behaviour.
  * 
@@ -47,12 +49,10 @@ public abstract class ARecord extends AMap<Keyword,ACell> {
 		return this;
 	}
 
-	@Override public boolean isCVMValue() {
+	@Override final public boolean isCVMValue() {
 		return true;
 	}
 	
-
-
 	/**
 	 * Gets a vector of keys for this record
 	 * 
@@ -96,15 +96,6 @@ public abstract class ARecord extends AMap<Keyword,ACell> {
 	 * @return Field value for the given key
 	 */
 	public abstract ACell get(Keyword key);
-
-	/**
-	 * Gets the tag byte for this record type. The Tag is the byte used to identify the
-	 * record in the binary encoding.
-	 * 
-	 * @return Record tag byte
-	 */
-	@Override
-	public abstract byte getTag();
 	
 	/**
 	 * Gets an array containing all values in this record, in format-defined key order.
@@ -158,12 +149,11 @@ public abstract class ARecord extends AMap<Keyword,ACell> {
 
 	@Override
 	public MapEntry<Keyword, ACell> getKeyRefEntry(Ref<ACell> keyRef) {
-		// TODO: could maybe be more efficient?
 		return getEntry(keyRef.getValue());
 	}
 
 	@Override
-	protected void accumulateEntrySet(Set<Entry<Keyword, ACell>> h) {
+	protected void accumulateEntries(Collection<Entry<Keyword, ACell>> h) {
 		for (long i=0; i<count; i++) {
 			h.add(entryAt(i));
 		}
@@ -198,11 +188,43 @@ public abstract class ARecord extends AMap<Keyword,ACell> {
 		Keyword k=getFormat().getKeys().get(i);
 		return getEntry(k);
 	}
+	
+	@Override
+	public boolean print(BlobBuilder sb, long limit) {
+		AString tag=getType().getTag();
+		if (tag!=null) {
+			sb.append(tag);
+			sb.append(' ');
+		}
+		
+		sb.append('{');
+		long n=count();
+		RecordFormat format=getFormat();
+		ACell[] vs=getValuesArray();
+		for (long i=0; i<n; i++) {
+			Keyword k=format.getKey(i);
+			if (!RT.print(sb,k,limit)) return false;
+			sb.append(' ');
+			ACell v=vs[(int)i];
+			if (!RT.print(sb,v,limit)) return false;
+			if (i<(n-1)) sb.append(',');
+		}
+		sb.append('}');
+		return sb.check(limit);
+	}
 
 	@Override
 	public MapEntry<Keyword, ACell> getEntry(ACell k) {
-		if (!containsKey(k)) return null;
-		return MapEntry.create((Keyword)k,get(k));
+		ACell v=get(k);
+		if ((v==null)&&!containsKey(k)) return null; //if null, need to check if key exists
+		return MapEntry.create((Keyword)k,v);
+	}
+	
+	@Override
+	public ACell get(ACell key, ACell notFound) {
+		ACell v=get(key);
+		if ((v==null)&&!containsKey(key)) return notFound; //if null, need to check if key exists
+		return v;
 	}
 
 	@Override

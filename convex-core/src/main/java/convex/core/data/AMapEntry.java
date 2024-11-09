@@ -6,7 +6,7 @@ import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
-import convex.core.util.Errors;
+import convex.core.util.ErrorMessages;
 import convex.core.util.Utils;
 
 public abstract class AMapEntry<K extends ACell, V extends ACell> extends ASpecialVector<ACell> implements Map.Entry<K, V> {
@@ -47,7 +47,7 @@ public abstract class AMapEntry<K extends ACell, V extends ACell> extends ASpeci
 
 	@Override
 	public final V setValue(V value) {
-		throw new UnsupportedOperationException(Errors.immutable(this));
+		throw new UnsupportedOperationException(ErrorMessages.immutable(this));
 	}
 
 	@Override
@@ -74,14 +74,14 @@ public abstract class AMapEntry<K extends ACell, V extends ACell> extends ASpeci
 	}
 
 	@Override
-	public long longIndexOf(Object o) {
+	public long longIndexOf(ACell o) {
 		if (Utils.equals(o,get(0))) return 0;
 		if (Utils.equals(o,get(1))) return 1;
 		return -1;
 	}
 
 	@Override
-	public long longLastIndexOf(Object o) {
+	public long longLastIndexOf(ACell o) {
 		if (Utils.equals(o,get(1))) return 1;
 		if (Utils.equals(o,get(0))) return 0;
 		return -1;

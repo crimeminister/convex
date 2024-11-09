@@ -7,8 +7,6 @@ import convex.core.data.util.BlobBuilder;
 import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.InvalidDataException;
 import convex.core.lang.RT;
-import convex.core.util.Bits;
-import convex.core.util.Errors;
 import convex.core.util.Utils;
 
 /**
@@ -18,7 +16,7 @@ import convex.core.util.Utils;
  * serves as an index into the vector of accounts for the current state.
  * 
  */
-public final class Address extends ABlobLike<CVMLong> {
+public final class Address extends AExtensionValue {
 
 	public static final int LENGTH=8;
 	
@@ -40,11 +38,6 @@ public final class Address extends ABlobLike<CVMLong> {
 	 */
 	public static final Address MAX_VALUE = Address.create(Long.MAX_VALUE);
 	
-	/**
-	 * Length of an Address in bytes (when considered as a Blob)
-	 */
-	static final int BYTE_LENGTH = 8;
-
 	/**
 	 * 64-bit address value
 	 */
@@ -92,12 +85,7 @@ public final class Address extends ABlobLike<CVMLong> {
 	public AType getType() {
 		return Types.ADDRESS;
 	}
-	
-	@Override
-	public int hashCode() {
-		return Bits.hash32(value);
-	}
-	
+
 	@Override
 	public boolean equals(Object a) {
 		if (a==this) return true; // Fast path, avoids cast
@@ -184,10 +172,10 @@ public final class Address extends ABlobLike<CVMLong> {
 	}
 	
 	public static Address read(Blob b, int pos) throws BadFormatException {
-		long value=Format.readVLCCount(b,pos+1); // skip tag, we assume correct
+		long value=Format.readVLQCount(b,pos+1); // skip tag, we assume correct
 		Address a= Address.create(value);
 		if (a==null) throw new BadFormatException("Invalid Address: "+value);
-		int epos=pos+1+Format.getVLCCountLength(value);
+		int epos=pos+1+Format.getVLQCountLength(value);
 		a.attachEncoding(b.slice(pos, epos));
 		return a;
 	}
@@ -200,13 +188,13 @@ public final class Address extends ABlobLike<CVMLong> {
 	
 	@Override
 	public int encodeRaw(byte[] bs, int pos) {
-		return Format.writeVLCCount(bs, pos, value);
+		return Format.writeVLQCount(bs, pos, value);
 	}
 	
 	@Override
 	public boolean print(BlobBuilder sb, long limit) {
 		sb.append("#");
-		sb.append(Long.toString(value));
+		sb.appendLongString(value);
 		return sb.check(limit);
 	}
 	
@@ -222,19 +210,8 @@ public final class Address extends ABlobLike<CVMLong> {
 	}
 
 	@Override
-	public int estimatedEncodingSize() {
-		// tag VLC bytes
-		return 1 + Format.MAX_VLC_COUNT_LENGTH;
-	}
-
-	@Override
 	public void validateCell() throws InvalidDataException {
 		if (value<0) throw new InvalidDataException("Address must be positive",this);
-	}
-
-	@Override
-	public Blob slice(long start, long end) {
-		return toFlatBlob().slice(start,end);
 	}
 
 	@Override
@@ -244,7 +221,7 @@ public final class Address extends ABlobLike<CVMLong> {
 		return Blob.wrap(bs);
 	}
 	
-	public static final int MAX_ENCODING_LENGTH = 1+Format.MAX_VLC_COUNT_LENGTH;
+	public static final int MAX_ENCODING_LENGTH = 1+Format.MAX_VLQ_COUNT_LENGTH;
 
 	@Override
 	public byte getTag() {
@@ -276,25 +253,6 @@ public final class Address extends ABlobLike<CVMLong> {
 		return (byte) Utils.longByteAt(value,i);
 	}
 	
-	private static void checkIndex(long i) {
-		if ((i < 0) || (i >= LENGTH)) throw new IndexOutOfBoundsException(Errors.badIndex(i));
-	}
-	
-	@Override
-	public long hexMatch(ABlobLike<?> b, long start, long length) {
-		for (int i=0; i<length; i++) {
-			int c=b.getHexDigit(start+i);
-			if (c!=getHexDigit(start+i)) return i;
-		}	
-		return length;
-	}
-
-	@Override
-	public Address empty() {
-		// There is no empty Address
-		return null;
-	}
-
 	@Override
 	public final int getBytes(byte[] bs, int pos) {
 		pos=Utils.writeLong(bs, pos, value);
@@ -303,13 +261,7 @@ public final class Address extends ABlobLike<CVMLong> {
 
 	@Override
 	public long longValue() {
-		// TODO Auto-generated method stub
 		return value;
-	}
-
-	@Override
-	public ABlob toBlob() {
-		return LongBlob.create(value);
 	}
 
 	@Override
@@ -319,22 +271,13 @@ public final class Address extends ABlobLike<CVMLong> {
 	}
 
 	@Override
-	public int compareTo(ABlobLike<?> b) {
-		if (b.count()==LENGTH) {
-			return compareTo(b.longValue());
-		} else {
-			// safe because must be a different type
-			return -b.compareTo(this);
-		}
-	}
-	
 	protected int compareTo(long bvalue) {
 		return Long.compareUnsigned(value, bvalue);
 	}
 
 	@Override
-	public long count() {
-		return LENGTH;
+	public boolean isCVMValue() {
+		return true;
 	}
 
 	@Override
@@ -345,33 +288,7 @@ public final class Address extends ABlobLike<CVMLong> {
 
 	@Override
 	public boolean isCanonical() {
+		// Always canonical, we assume valid by construction
 		return true;
-	}
-	
-	@Override
-	protected long calcMemorySize() {	
-		// always embedded and no child Refs, so memory size == 0
-		return 0;
-	}
-
-	@Override
-	public boolean isCVMValue() {
-		return true;
-	}
-
-	@Override
-	public <R extends ACell> Ref<R> getRef(int i) {
-		throw new IndexOutOfBoundsException(i);
-	}
-
-	@Override
-	public ACell updateRefs(IRefFunction func) {
-		return this;
-	}
-	
-	@Override
-	public int getRefCount() {
-		// No Refs
-		return 0;
 	}
 }

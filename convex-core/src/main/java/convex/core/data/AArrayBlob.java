@@ -27,7 +27,6 @@ public abstract class AArrayBlob extends ABlob {
 	 * Cached hash of the Blob data. Might be null.
 	 */
 	protected Hash contentHash = null;
-
 	
 	@Override
 	public final Hash getContentHash() {
@@ -132,7 +131,7 @@ public abstract class AArrayBlob extends ABlob {
 	 */
 	@Override
 	public int encodeRaw(byte[] bs, int pos) {
-		pos=Format.writeVLCCount(bs, pos, count);
+		pos=Format.writeVLQCount(bs, pos, count);
 		return getBytes(bs,pos);
 	}
 
@@ -216,7 +215,7 @@ public abstract class AArrayBlob extends ABlob {
 	 * Gets the internal array backing this Blob. Use with caution!
 	 * @return Byte array backing this blob
 	 */
-	public byte[] getInternalArray() {
+	public final byte[] getInternalArray() {
 		return store;
 	}
 	
@@ -224,7 +223,7 @@ public abstract class AArrayBlob extends ABlob {
 	 * Gets this offset into the internal array backing this Blob.
 	 * @return Offset into backing array
 	 */
-	public int getInternalOffset() {
+	public final int getInternalOffset() {
 		return offset;
 	}
 
@@ -245,6 +244,21 @@ public abstract class AArrayBlob extends ABlob {
 		if (o==null) return false;
 		if (o.count()!=count) return false;
 		return o.equalsBytes(this.store, this.offset);
+	}
+	
+	/**
+	 * Equality for array Blob objects
+	 * 
+	 * Implemented by testing equality of byte data
+	 * 
+	 * @param other Blob to compare with
+	 * @return true if blobs are equal, false otherwise.
+	 */
+	public boolean equals(AArrayBlob other) {
+		if (other == this) return true;
+		if (this.count != other.count) return false;
+		if ((contentHash != null) && (other.contentHash != null) && contentHash.equals(other.contentHash)) return true;
+		return Utils.arrayEquals(other.store, other.offset, this.store, this.offset, size());
 	}
 	
 	@Override
@@ -312,6 +326,9 @@ public abstract class AArrayBlob extends ABlob {
 	@Override
 	public long hexMatch(ABlobLike<?> b) {
 		if (b == this) return count() * 2;
+		if (b instanceof AArrayBlob) {
+			return commonHexPrefixLength((AArrayBlob)b,(int)count*2);
+		}
 
 		long max = Math.min(count(), b.count());
 		for (long i = 0; i < max; i++) {
@@ -320,6 +337,21 @@ public abstract class AArrayBlob extends ABlob {
 			if (ai != bi) return (i * 2) + (Utils.firstDigitMatch(ai, bi) ? 1 : 0);
 		}
 		return max * 2;
+	}
+	
+	/**
+	 * Computes the common hex prefix length with another AArrayBlob, up to max
+	 */
+	public int commonHexPrefixLength(AArrayBlob b, int max) {
+		max=Math.min(max, (int)count*2);
+		max=Math.min(max, (int)(b.count)*2);
+		int blen=(max+1)/2; // number of bytes to check
+		int ix=Arrays.mismatch(store, offset, offset+blen,b.store,b.offset,b.offset+blen);
+		if (ix<0) return max; // no difference up to max
+		byte ai = byteAtUnchecked(ix);
+		byte bi = b.byteAtUnchecked(ix);
+		if (Utils.firstDigitMatch(ai, bi)) return ix*2+1;
+		return ix*2;
 	}
 
 	@Override
@@ -366,7 +398,7 @@ public abstract class AArrayBlob extends ABlob {
 	}
 	
 	@Override
-	public int read(long offset, long count, ByteBuffer dest) {
+	public int toByteBuffer(long offset, long count, ByteBuffer dest) {
 		if (count<0) throw new IllegalArgumentException("Negative count");
 		if ((offset<0)||(offset+count>this.count)) throw new IllegalArgumentException();
 		int n=(int)count;

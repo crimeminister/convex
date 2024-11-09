@@ -14,10 +14,13 @@ import convex.core.Constants;
 import convex.core.crypto.AKeyPair;
 import convex.core.crypto.ASignature;
 import convex.core.crypto.Ed25519Signature;
+import convex.core.cvm.ops.Do;
+import convex.core.cvm.transactions.Invoke;
 import convex.core.data.ABlob;
 import convex.core.data.ABlobLike;
 import convex.core.data.ACell;
 import convex.core.data.ADataStructure;
+import convex.core.data.AHashMap;
 import convex.core.data.AMap;
 import convex.core.data.ASequence;
 import convex.core.data.ASet;
@@ -26,28 +29,27 @@ import convex.core.data.AVector;
 import convex.core.data.AccountKey;
 import convex.core.data.Address;
 import convex.core.data.Blob;
-import convex.core.data.Index;
 import convex.core.data.BlobTree;
 import convex.core.data.Blobs;
 import convex.core.data.Format;
 import convex.core.data.Hash;
+import convex.core.data.Index;
 import convex.core.data.Keyword;
 import convex.core.data.Keywords;
 import convex.core.data.List;
 import convex.core.data.Lists;
-import convex.core.data.LongBlob;
-import convex.core.data.MapLeaf;
-import convex.core.data.MapTree;
 import convex.core.data.Maps;
 import convex.core.data.SetLeaf;
 import convex.core.data.SetTree;
 import convex.core.data.Sets;
 import convex.core.data.StringShort;
 import convex.core.data.Strings;
+import convex.core.data.Symbols;
 import convex.core.data.Syntax;
 import convex.core.data.VectorLeaf;
 import convex.core.data.VectorTree;
 import convex.core.data.Vectors;
+import convex.core.data.impl.LongBlob;
 import convex.core.data.prim.CVMBigInteger;
 import convex.core.data.prim.CVMBool;
 import convex.core.data.prim.CVMChar;
@@ -57,9 +59,6 @@ import convex.core.exceptions.InvalidDataException;
 import convex.core.exceptions.ValidationException;
 import convex.core.init.Init;
 import convex.core.lang.RT;
-import convex.core.lang.Symbols;
-import convex.core.lang.ops.Do;
-import convex.core.transactions.Invoke;
 
 /**
  * Miscellaneous value objects for testing purposes
@@ -98,9 +97,9 @@ public class Samples {
 	public static final SetTree<CVMLong> INT_SET_300 = (SetTree<CVMLong>) Sets.create(INT_VECTOR_300);
 
 	
-	public static final MapLeaf<CVMLong, CVMLong> LONG_MAP_5 = createTestLongMap(5);
-	public static final MapTree<CVMLong, CVMLong> LONG_MAP_10 = createTestLongMap(10);
-	public static final MapTree<CVMLong, CVMLong> LONG_MAP_100 = createTestLongMap(100);
+	public static final AHashMap<CVMLong, CVMLong> LONG_MAP_5 = createTestLongMap(5);
+	public static final AHashMap<CVMLong, CVMLong> LONG_MAP_10 = createTestLongMap(10);
+	public static final AHashMap<CVMLong, CVMLong> LONG_MAP_100 = createTestLongMap(100);
 
 	public static final Index<ABlobLike<?>, CVMLong> INT_INDEX_7 = Index.of(Strings.EMPTY, 0, Blob.fromHex("0001"), 1,
 			Blob.fromHex("01"), 2, Blob.fromHex("010000"), 3, Blob.fromHex("010001"), 4, Blob.fromHex("ff0000"), 5,
@@ -138,7 +137,7 @@ public class Samples {
 	
 	public static final ASignature FAKE_SIGNATURE = Ed25519Signature.wrap(new byte[Ed25519Signature.SIGNATURE_LENGTH]);
 
-	public static final Blob MAX_EMBEDDED_BLOB = createTestBlob(Format.MAX_EMBEDDED_LENGTH-Format.getVLCCountLength(Format.MAX_EMBEDDED_LENGTH)-1);
+	public static final Blob MAX_EMBEDDED_BLOB = createTestBlob(Format.MAX_EMBEDDED_LENGTH-Format.getVLQCountLength(Format.MAX_EMBEDDED_LENGTH)-1);
 	public static final Blob NON_EMBEDDED_BLOB = createTestBlob(MAX_EMBEDDED_BLOB.count()+1);
 
 	public static final StringShort MAX_EMBEDDED_STRING= (StringShort) Strings.create("This is a string containing exactly 137 characters. This is just right for a maximum embedded string in Convex. How lucky is that, eh????");

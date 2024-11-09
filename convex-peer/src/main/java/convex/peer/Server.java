@@ -15,15 +15,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import convex.api.Convex;
-import convex.core.Belief;
 import convex.core.Constants;
 import convex.core.ErrorCodes;
-import convex.core.Order;
-import convex.core.Peer;
 import convex.core.Result;
 import convex.core.SourceCodes;
-import convex.core.State;
+import convex.core.cpos.Belief;
+import convex.core.cpos.Order;
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.Peer;
+import convex.core.cvm.State;
 import convex.core.data.ACell;
 import convex.core.data.AMap;
 import convex.core.data.AVector;
@@ -48,7 +48,6 @@ import convex.core.store.Stores;
 import convex.core.util.Counters;
 import convex.core.util.Shutdown;
 import convex.core.util.Utils;
-import convex.net.IPUtils;
 import convex.net.Message;
 import convex.net.MessageType;
 import convex.net.NIOServer;
@@ -176,13 +175,13 @@ public class Server implements Closeable {
 		try {
 			Object source=getConfig().get(Keywords.SOURCE);
 			if (Utils.bool(source)) {
-				InetSocketAddress sourceAddr=IPUtils.toInetSocketAddress(source);
-				if (sourceAddr==null) throw new ConfigException("Bad SOURCE for peer sync, should be an internet socket address: "+source);
 				try {
-					return syncPeer(keyPair,Convex.connect(sourceAddr));
+					return syncPeer(keyPair,Convex.connect(source));
 				} catch (TimeoutException e) {
-					throw new LaunchException("Timout trying to connect to remote peer");
-				}	
+					throw new LaunchException("Timeout trying to connect to remote peer");
+				} catch (IllegalArgumentException e) {
+					throw new LaunchException("Bad :SOURCE for peer launch",e);
+				}
 			} else if (Utils.bool(getConfig().get(Keywords.RESTORE))) {
 				ACell rk=RT.cvm(config.get(Keywords.ROOT_KEY));
 				if (rk==null) rk=keyPair.getAccountKey();
@@ -207,7 +206,7 @@ public class Server implements Closeable {
 		}
 	}
 
-	private Peer syncPeer(AKeyPair keyPair, Convex convex) throws LaunchException, InterruptedException {
+	public Peer syncPeer(AKeyPair keyPair, Convex convex) throws LaunchException, InterruptedException {
 		// Peer sync case
 		try {
 			log.info("Attempting Peer Sync with: "+convex);
@@ -247,8 +246,10 @@ public class Server implements Closeable {
 				SignedData<Order> newOrder=keyPair.signData(peerOrder.getValue());
 				belF=belF.withOrders(belF.getOrders().assoc(keyPair.getAccountKey(),newOrder));
 			} else {
-				log.warn("Remote peer Belief missing it's own Order?");
+				throw new LaunchException("Remote peer Belief missing it's own Order? Who to trust?");
 			}
+			// System.out.println(Lists.of(peerOrder.getValue().getConsensusPoints()));
+
 			Peer peer=Peer.create(keyPair, genF, belF);
 			return peer;
 		} catch (ExecutionException | InvalidDataException e) {
@@ -350,21 +351,7 @@ public class Server implements Closeable {
 			transactionHandler.start();
 			executor.start();
 
-			// Connect to source peer if specified
-			if (getConfig().containsKey(Keywords.SOURCE)) {
-				Object s=getConfig().get(Keywords.SOURCE);
-				InetSocketAddress sa=IPUtils.toInetSocketAddress(s);
-				if (sa!=null) {
-					if (manager.connectToPeer(sa)!=null) {
-						log.debug("Automatically connected to :source peer at: {}",sa);
-					} else {
-						log.warn("Failed to connect to :source peer at: {}",sa);
-					}
-				} else {
-					log.warn("Failed to parse :source peer address {}",s);
-				}
-			}
-
+	
 			goLive();
 			log.info( "Peer server started on port "+nio.getPort()+" with peer key: {}",getPeerKey());
 		} catch (ConfigException e) {

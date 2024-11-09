@@ -6,13 +6,14 @@ import java.util.function.Predicate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import convex.core.Belief;
 import convex.core.ErrorCodes;
 import convex.core.Result;
 import convex.core.SourceCodes;
+import convex.core.cpos.Belief;
 import convex.core.data.ACell;
 import convex.core.data.AString;
 import convex.core.data.AVector;
+import convex.core.data.Address;
 import convex.core.data.Blob;
 import convex.core.data.Format;
 import convex.core.data.Hash;
@@ -25,17 +26,19 @@ import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.MissingDataException;
 import convex.core.lang.RT;
+import convex.core.lang.Reader;
 import convex.core.store.AStore;
+import convex.core.util.Utils;
 
 /**
- * <p>Class representing a message to / from a specific connection</p>
+ * <p>Class representing a message to / from a network participant</p>
  * 
  * <p>Encapsulates both message content and a means of return communication</p>.
  *
  * <p>This class is an immutable data structure, but NOT a representable on-chain
  * data structure, as it is part of the peer protocol layer.</p>
  *
- * <p>Messages may contain a Payload, which can be any Data Value.</p>
+ * <p>Messages contain a payload, which can be any data value.</p>
  */
 public class Message {
 	
@@ -64,6 +67,11 @@ public class Message {
 		return new Message(type, null,data,handler);
 	}
 	
+	public static Message create(Blob data) throws BadFormatException {
+		if (data.count()==0) throw new BadFormatException("Empty Message");
+		return new Message(null, null,data,null);
+	}
+	
 	public static Message create(MessageType type,ACell payload) {
 		return new Message(type, payload,null,null);
 	}
@@ -72,7 +80,7 @@ public class Message {
 		return new Message(type, payload,data,null);
 	}
 
-	public static Message createDataResponse(CVMLong id, ACell... cells) {
+	public static Message createDataResponse(ACell id, ACell... cells) {
 		int n=cells.length;
 		ACell[] cs=new ACell[n+1];
 		cs[0]=id;
@@ -82,7 +90,7 @@ public class Message {
 		return create(MessageType.DATA,Vectors.create(cs));
 	}
 	
-	public static Message createDataRequest(CVMLong id, Hash... hashes) {
+	public static Message createDataRequest(ACell id, Hash... hashes) {
 		int n=hashes.length;
 		ACell[] cs=new ACell[n+1];
 		cs[0]=id;
@@ -166,21 +174,37 @@ public class Message {
 		return messageData;
 	}
 
+	/**
+	 * Get the type of this message. May be UNKOWN if the message cannot be understood / processed
+	 * @return
+	 */
 	public MessageType getType() {
+		if (type==null) type=inferType();
 		return type;
+	}
+
+	private MessageType inferType() {
+		try {
+			ACell payload=getPayload();
+			if (payload instanceof Result) return MessageType.RESULT;
+		} catch (Exception e) {
+			// default fall-through to UNKNOWN. We don't know what it is supposed to be!
+		}
+		
+		return MessageType.UNKNOWN;
 	}
 
 	@Override
 	public String toString() {
 		try {
 			ACell payload=getPayload();
-			AString ps=RT.print(getPayload(),10000);
-			if (ps==null) ps=Strings.create("<"+RT.count(messageData)+" bytes as "+RT.getType(payload)+">");
-			return "#message {:type " + getType() + " :payload " + ps + "}";
+			AString ps=RT.print(payload,10000);
+			if (ps==null) return ("<BIG MESSAGE "+RT.count(getMessageData())+" TYPE ["+getType()+"]>");
+			return ps.toString();
 		} catch (MissingDataException e) {
-			return "#message {:type " + getType() + " :payload <partial, some still missing>}";
+			return "<PARTIAL MESSAGE [" + getType() + "] MISSING "+e.getMissingHash()+">";
 		} catch (BadFormatException e) {
-			return "#message <CORRUPED "+getType()+": "+e.getMessage();
+			return "<CORRUPTED MESSAGE ["+getType()+"]>: "+e.getMessage();
 		}
 	}
 	
@@ -188,6 +212,8 @@ public class Message {
 	public boolean equals(Object o) {
 		if (!(o instanceof Message)) return false;
 		Message other=(Message) o;
+		if ((payload!=null)&&Utils.equals(payload, other.payload)) return true;
+
 		if (getType()!=other.getType()) return false;
 		return this.getMessageData().equals(other.getMessageData());
 	}
@@ -197,18 +223,18 @@ public class Message {
 	 *
 	 * @return Message ID, or null if the message does not have a message ID
 	 */
-	public CVMLong getID()  {
+	public ACell getID()  {
 		try {
 			switch (type) {
 				// Query and transact use a vector [ID ...]
 				case QUERY:
-				case TRANSACT: return (CVMLong) ((AVector<?>)getPayload()).get(0);
+				case TRANSACT: return ((AVector<?>)getPayload()).get(0);
 	
 				// Result is a special record type
-				case RESULT: return (CVMLong)((Result)getPayload()).getID();
+				case RESULT: return ((Result)getPayload()).getID();
 	
 				// Status ID is the single value
-				case STATUS: return (CVMLong)(getPayload());
+				case STATUS: return (getPayload());
 				
 				case DATA: {
 					ACell o=getPayload();
@@ -222,7 +248,8 @@ public class Message {
 	
 				default: return null;
 			}
-		} catch (BadFormatException e) {
+		} catch (Exception e) {
+			// defensive coding
 			return null;
 		}
 	}
@@ -230,10 +257,10 @@ public class Message {
 	/**
 	 * Sets the message ID, if supported
 	 * @param id ID to set for message
-	 * @return Message with updated ID, or null if message does not support IDs
+	 * @return Message with updated ID, or null if Message type does not support IDs
 	 */
 	@SuppressWarnings("unchecked")
-	public Message withID(CVMLong id) {
+	public Message withID(ACell id) {
 		try {
 			switch (type) {
 				// Query and transact use a vector [ID ...]
@@ -370,5 +397,24 @@ public class Message {
 	public static Message create(MessageType type, ACell payload, Predicate<Message> handler) {
 		return new Message(type,payload,null,handler);
 	}
+	
+	/**
+	 * Updates this message with a new result handler
+	 * @param resultHandler New result handler to set (may be null to remove handler)
+	 * @return Updated Message. May be the same Message if no change to result handler
+	 */
+	public Message withResultHandler(Predicate<Message> resultHandler) {
+		if (this.returnHandler==resultHandler) return this;
+		return new Message(type,payload,messageData,resultHandler);
+	}
+
+	public static Message createQuery(long id, String code, Address address) {
+		return createQuery(id,Reader.read(code),address);
+	}
+	
+	public static Message createQuery(long id, ACell code, Address address) {
+		return create(MessageType.QUERY,Vectors.of(id,code,address));
+	}
+
 
 }

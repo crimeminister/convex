@@ -29,8 +29,8 @@ import convex.test.Samples;
  */
 public class ObjectsTest {
 	/**
-	 * Generic tests for any valid CVM Value (including null). Should pass for
-	 * *any* ACell where RT.isCVM(..) returns true and validate(...) succeeds.
+	 * Generic tests for any valid Value (including null). Should pass for
+	 * *any* non-partial cell where validate(...) succeeds.
 	 * 
 	 * @param a Value to test
 	 */
@@ -406,7 +406,9 @@ public class ObjectsTest {
 	private static void doRefContainerTests(ACell a) {
 		if (!a.isCanonical()) return;
 		int rc=a.getRefCount();
+	
 		assertTrue(rc>=0);
+		assertTrue(rc<=Format.MAX_REF_COUNT);
 		assertEquals(rc,Cells.refCount(a));
 		if (rc>0) {
 			long tcount = Refs.totalRefCount(a);

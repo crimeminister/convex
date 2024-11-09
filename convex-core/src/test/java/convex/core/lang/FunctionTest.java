@@ -4,13 +4,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import org.junit.Test;
 
-import convex.core.State;
+import convex.core.cvm.Context;
+import convex.core.cvm.State;
+import convex.core.cvm.ops.Constant;
+import convex.core.cvm.ops.Local;
 import convex.core.data.ACell;
+import convex.core.data.Symbols;
 import convex.core.data.Vectors;
 import convex.core.data.prim.CVMLong;
 import convex.core.lang.impl.Fn;
-import convex.core.lang.ops.Constant;
-import convex.core.lang.ops.Local;
 
 public class FunctionTest {
 

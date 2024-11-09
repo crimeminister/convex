@@ -1,9 +1,9 @@
 package convex.gui.models;
 
-import convex.core.State;
+import convex.core.cvm.State;
 import convex.core.data.ACell;
 import convex.core.data.AMap;
-import convex.core.data.AccountStatus;
+import convex.core.cvm.AccountStatus;
 import convex.core.data.Address;
 import convex.core.data.Keyword;
 import convex.core.init.Init;
@@ -52,7 +52,7 @@ public class AccountsTableModel extends BaseTableModel {
 		case 0:
 			return address.toString();
 		case 1:
-			return as.isActor()?"Actor":"User";
+			return as.isActor();
 		case 2: {
 			long seq=as.getSequence();
 			return (seq>=0)?seq:"";

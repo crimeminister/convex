@@ -2,6 +2,7 @@ package convex.api;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import java.io.IOException;
@@ -17,6 +18,10 @@ import convex.core.ErrorCodes;
 import convex.core.Result;
 import convex.core.crypto.AKeyPair;
 import convex.core.crypto.Ed25519Signature;
+import convex.core.cvm.ops.Constant;
+import convex.core.cvm.transactions.ATransaction;
+import convex.core.cvm.transactions.Invoke;
+import convex.core.data.ABlob;
 import convex.core.data.ACell;
 import convex.core.data.Address;
 import convex.core.data.Ref;
@@ -24,9 +29,7 @@ import convex.core.data.SignedData;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.ResultException;
 import convex.core.lang.Reader;
-import convex.core.lang.ops.Constant;
-import convex.core.transactions.ATransaction;
-import convex.core.transactions.Invoke;
+import convex.net.Message;
 import convex.peer.TestNetwork;
 
 /**
@@ -61,6 +64,19 @@ public class ConvexLocalTest {
 			assertEquals(ADDRESS, r.getValue());
 			
 			assertEquals(s+1,convex.getSequence());
+		}
+	}
+	
+	@Test
+	public void testQueryMessage() throws TimeoutException, InterruptedException, ExecutionException {
+		synchronized (network.SERVER) {
+			ConvexLocal convex = Convex.connect(network.SERVER, ADDRESS, KEYPAIR);
+			
+			Message m=Message.createQuery(675678567,"*balance*",ADDRESS);
+			// ABlob data=Blob.wrap(new byte[] {MessageType.QUERY.getMessageCode()}).append(m.getMessageData());
+			ABlob data=m.getMessageData();
+			Result r = convex.message(data.toFlatBlob()).get(5000,TimeUnit.MILLISECONDS);
+			assertNotNull(r);
 		}
 	}
 

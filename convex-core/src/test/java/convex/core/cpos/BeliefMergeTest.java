@@ -12,22 +12,21 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 
-import convex.core.Belief;
-import convex.core.Block;
 import convex.core.Constants;
-import convex.core.Order;
-import convex.core.Peer;
-import convex.core.State;
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.AccountStatus;
+import convex.core.cvm.Peer;
+import convex.core.cvm.PeerStatus;
+import convex.core.cvm.State;
+import convex.core.cvm.transactions.ATransaction;
+import convex.core.cvm.transactions.Transfer;
 import convex.core.data.ACell;
 import convex.core.data.AVector;
 import convex.core.data.AccountKey;
-import convex.core.data.AccountStatus;
 import convex.core.data.Address;
 import convex.core.data.Cells;
 import convex.core.data.EncodingTest;
 import convex.core.data.Index;
-import convex.core.data.PeerStatus;
 import convex.core.data.RecordTest;
 import convex.core.data.SignedData;
 import convex.core.data.Vectors;
@@ -36,8 +35,6 @@ import convex.core.exceptions.BadSignatureException;
 import convex.core.exceptions.InvalidDataException;
 import convex.core.lang.RT;
 import convex.core.text.Text;
-import convex.core.transactions.ATransaction;
-import convex.core.transactions.Transfer;
 
 @Execution(value = ExecutionMode.CONCURRENT)
 public class BeliefMergeTest {
@@ -68,7 +65,7 @@ public class BeliefMergeTest {
 			KEYS[i] = key; 
 			ADDRESSES[i] = address;
 			AccountStatus accStatus = AccountStatus.create((i + 1) * 1000000,key);
-			long stake=(i + 1) * 10*Constants.MINIMUM_EFFECTIVE_STAKE;
+			long stake=(i + 1) * 10*CPoSConstants.MINIMUM_EFFECTIVE_STAKE;
 			PeerStatus peerStatus = PeerStatus.create(address,stake);
 			accounts = accounts.conj(accStatus);
 			peers = peers.assoc(key, peerStatus);

@@ -17,21 +17,6 @@ import convex.core.data.prim.CVMBool;
 public class Constants {
 
 	/**
-	 * Limit of scheduled transactions run in a single Block
-	 */
-	public static final long MAX_SCHEDULED_TRANSACTIONS_PER_BLOCK = 100;
-
-	/**
-	 * Threshold of stake required to propose consensus
-	 */
-	public static final double PROPOSAL_THRESHOLD = 0.67;
-
-	/**
-	 * Threshold of stake required to confirm consensus
-	 */
-	public static final double CONSENSUS_THRESHOLD = 0.67;
-
-	/**
 	 * Initial timestamp for new States
 	 */
 	public static final long INITIAL_TIMESTAMP = Instant.parse("2020-02-02T00:20:20.0202Z").toEpochMilli();
@@ -39,7 +24,7 @@ public class Constants {
 	/**
 	 * Juice price in the initial Genesis State
 	 */
-	public static final long INITIAL_JUICE_PRICE = 2L;
+	public static final long INITIAL_JUICE_PRICE = 10L;
 
 	/**
 	 * Initial memory Pool of 1mb
@@ -96,14 +81,9 @@ public class Constants {
 	public static final long MEMORY_OVERHEAD = 64;
 
 	/**
-	 * Allowance for initial user / peer accounts
-	 */
-	public static final long INITIAL_ACCOUNT_ALLOWANCE = 10000000;
-
-	/**
 	 * Maximum supply of Convex Coins set at protocol level
 	 */
-	public static final long MAX_SUPPLY = Coin.SUPPLY;
+	public static final long MAX_SUPPLY = Coin.MAX_SUPPLY;
 
 	/**
 	 * Maximum CVM execution depth
@@ -148,11 +128,6 @@ public class Constants {
 	public static final int HASH_LENGTH = 32;
 
 	/**
-	 * Minimum stake for a Peer to be considered by other Peers in consensus
-	 */
-	public static final long MINIMUM_EFFECTIVE_STAKE = Coin.GOLD * 1000;
-
-	/**
 	 * Option for static compilation support. Set to true for static inlines on core
 	 */
 	// TODO: Should ultimately be true for production usage
@@ -179,24 +154,6 @@ public class Constants {
 	 */
 	public static final int DEFAULT_PEER_PORT = 18888;
 
-	/**
-	 * Minimum milliseconds to retain a proposal before switching
-	 */
-	public static final long KEEP_PROPOSAL_TIME = 100;
-
-	/**
-	 * Number of consensus levels (blocks, proposed, consensus, finality)
-	 */
-	public static final int CONSENSUS_LEVELS = 4;
-
-	public static final int CONSENSUS_LEVEL_PROPOSAL = CONSENSUS_LEVELS - 3;
-	public static final int CONSENSUS_LEVEL_CONSENSUS = CONSENSUS_LEVELS - 2;
-	public static final int CONSENSUS_LEVEL_FINALITY = CONSENSUS_LEVELS - 1;
-
-	public static final boolean ENABLE_FORK_RECOVERY = false;
-
-	public static final long INITIAL_PEER_TIMESTAMP = -1L;
-
 	public static final int MAX_BIG_INTEGER_LENGTH = 4096;
 
 	/**
@@ -204,21 +161,6 @@ public class Constants {
 	 * performance against DoS attacks
 	 */
 	public static final boolean OMIT_VALIDATION_STACKTRACES = true;
-
-	/**
-	 * Milliseconds before peer stake influence starts to decay (3 mins default)
-	 */
-	public static final double PEER_DECAY_DELAY = 3*60*1000;
-
-	/**
-	 * Time for peer stake to decay by factor 1/e (5 mins default)
-	 */
-	public static final double PEER_DECAY_TIME = 5*60*1000;
-
-	/**
-	 * Maximum time a block can be resurrected from the past (1 min)
-	 */
-	public static final long MAX_BLOCK_BACKDATE = 60*1000;
 
 	public static final int PBE_ITERATIONS = 100000;
 	

@@ -8,16 +8,14 @@ import convex.core.data.type.AType;
 import convex.core.data.type.Types;
 import convex.core.exceptions.InvalidDataException;
 import convex.core.lang.RT;
-import convex.core.util.Errors;
-import convex.core.util.Utils;
+import convex.core.util.ErrorMessages;
 
 /**
  * Map.Entry implementation for persistent maps. This is primarily intended as an efficient 
  * implementation class for handling entries in Convex maps, and also to support the Java Map.Entry
  * interface for compatibility and developer convenience.
  * 
- * From a CVM perspective, a MapEntry is just a regular 2 element Vector. As such, MapEntry is *not* canonical
- * and getting the canonical form of a MapEntry requires converting to a Vector
+ * From a CVM perspective, a MapEntry is just a regular 2 element Vector.
  * 
  * Contains exactly 2 elements, one for key and one for value
  * 
@@ -43,7 +41,7 @@ public class MapEntry<K extends ACell, V extends ACell> extends AMapEntry<K, V> 
 	}
 
 	@SuppressWarnings("unchecked")
-	public static <K extends ACell, V extends ACell> MapEntry<K, V> createRef(Ref<? extends K> keyRef, Ref<? extends V> valueRef) {
+	public static <K extends ACell, V extends ACell> MapEntry<K, V> fromRefs(Ref<? extends K> keyRef, Ref<? extends V> valueRef) {
 		// ensure we have a hash at least
 		return new MapEntry<K, V>((Ref<K>) keyRef, (Ref<V>) valueRef);
 	}
@@ -57,7 +55,7 @@ public class MapEntry<K extends ACell, V extends ACell> extends AMapEntry<K, V> 
 	 * @return New MapEntry instance
 	 */
 	public static <K extends ACell, V extends ACell> MapEntry<K, V> create(K key, V value) {
-		return createRef(Ref.get(key), Ref.get(value));
+		return fromRefs(Ref.get(key), Ref.get(value));
 	}
 	
 	/**
@@ -75,7 +73,7 @@ public class MapEntry<K extends ACell, V extends ACell> extends AMapEntry<K, V> 
 	@SuppressWarnings({ "rawtypes", "unchecked" })
 	public static MapEntry convertOrNull(AVector v) {
 		if (v.count()!=2) return null;
-		return createRef(v.getElementRef(0),v.getElementRef(1));
+		return fromRefs(v.getElementRef(0),v.getElementRef(1));
 	}
 
 	@Override
@@ -201,22 +199,11 @@ public class MapEntry<K extends ACell, V extends ACell> extends AMapEntry<K, V> 
 		return keyRef.equals(b.keyRef);
 	}
 
-	@SuppressWarnings("unchecked")
-	@Override
-	public AVector<ACell> toVector() {
-		return new VectorLeaf<ACell>(new Ref[] { keyRef, valueRef });
-	}
-
-	@Override
-	public boolean contains(Object o) {
-		return (Utils.equals(o, getKey()) || Utils.equals(o, getValue()));
-	}
-
 	@Override
 	public ACell get(long i) {
 		if (i == 0) return getKey();
 		if (i == 1) return getValue();
-		throw new IndexOutOfBoundsException(Errors.badIndex(i));
+		throw new IndexOutOfBoundsException(ErrorMessages.badIndex(i));
 	}
 
 	@SuppressWarnings("unchecked")
@@ -224,7 +211,7 @@ public class MapEntry<K extends ACell, V extends ACell> extends AMapEntry<K, V> 
 	public Ref<ACell> getElementRef(long i) {
 		if (i == 0) return (Ref<ACell>) keyRef;
 		if (i == 1) return (Ref<ACell>) valueRef;
-		throw new IndexOutOfBoundsException(Errors.badIndex(i));
+		throw new IndexOutOfBoundsException(ErrorMessages.badIndex(i));
 	}
 	
 	@SuppressWarnings("unchecked")
@@ -249,32 +236,13 @@ public class MapEntry<K extends ACell, V extends ACell> extends AMapEntry<K, V> 
 	 */
 	@Override
 	public int encodeRaw(byte[] bs, int pos) {
-		pos = Format.writeVLCCount(bs,pos, 2); // Size of 2, to match VectorLeaf encoding
+		pos = Format.writeVLQCount(bs,pos, 2); // Size of 2, to match VectorLeaf encoding
 		return encodeRefs(bs,pos);
 	}
 	
 	int encodeRefs(byte[] bs, int pos) {
 		pos = keyRef.encode(bs,pos);
 		pos = valueRef.encode(bs,pos);
-		return pos;
-	}
-	
-	/**
-	 * Writes a MapEntry or null content in compressed format (no count). Useful for
-	 * embedding an optional MapEntry inside a larger Encoding
-	 * 
-	 * @param me MapEntry to encode
-	 * @param bs Byte array to write to
-	 * @param pos Starting position for encoding in byte array
-	 * @return Updated position after writing
-	 */
-	public static int encodeCompressed(MapEntry<?,?> me,byte[] bs, int pos) {
-		if (me==null) {
-			bs[pos++]=Tag.NULL;
-		} else {
-			bs[pos++]=Tag.VECTOR;
-			pos = me.encodeRefs(bs,pos);
-		}
 		return pos;
 	}
 
@@ -297,34 +265,23 @@ public class MapEntry<K extends ACell, V extends ACell> extends AMapEntry<K, V> 
 	}
 
 	@Override
-	public void validate() throws InvalidDataException {
-		super.validate();
-		keyRef.validate();
-		valueRef.validate();
-		if (!Cells.isCVM(getKey())) throw new InvalidDataException("MapEntry key not a CVM value: " +getKey(),this);
-		if (!Cells.isCVM(getValue())) throw new InvalidDataException("MapEntry value not a CVM value: " +getValue(),this);
-	}
-
-
-	@Override
 	public void validateCell() throws InvalidDataException {
-		// TODO: is there really Nothing to do?
-	}
-
-	@Override
-	public byte getTag() {
-		return Tag.VECTOR;
+		// Nothing to do, a map entry is always valid in itself
 	}
 
 	@Override
 	public boolean isCanonical() {
-		// TODO: probably should be canonical?
-		return false;
+		return true;
 	}
 
+	@Override
+	public AVector<ACell> toCanonical() {
+		return this;
+	}
+	
 	@SuppressWarnings("unchecked")
 	@Override
-	public VectorLeaf<ACell> toCanonical() {
+	public AVector<ACell> toVector() {
 		return new VectorLeaf<ACell>(new Ref[] { keyRef, valueRef });
 	}
 

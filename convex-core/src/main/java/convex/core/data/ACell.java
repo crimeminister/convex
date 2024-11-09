@@ -8,9 +8,9 @@ import convex.core.exceptions.InvalidDataException;
 import convex.core.util.Utils;
 
 /**
- * Abstract base class for Cells.
+ * Abstract base class for Cells in CAD3 data format.
  * 
- * Cells may contain Refs to other Cells, which can be tested with getRefCount()
+ * Cells may contain Refs to 0-63 child Cells, which can be tested with getRefCount()
  * 
  * All data objects intended for on-chain usage / serialisation should extend this. 
  * 
@@ -25,13 +25,13 @@ public abstract class ACell extends AObject implements IWriteable, IValidated {
 	protected long memorySize=-1;
 	
 	/**
-	 * Cached Ref. This is useful to manage persistence. Also cached Ref MUST refer to canonical value
+	 * Cached Ref. This is useful to manage persistence. Cached Ref MUST refer to a canonical value
 	 */
 	protected Ref<ACell> cachedRef=null;
 
 	@Override
 	public void validate() throws InvalidDataException {
-		validateCell();
+		Cells.validate(this);
 	}
 	
 	/**
@@ -57,8 +57,8 @@ public abstract class ACell extends AObject implements IWriteable, IValidated {
 	}
 	
 	/**
-	 * Gets the tag byte for this cell. The tag byte is always equal to the 
-	 * first byte of the Cell's canonical Encoding, and is sufficient to distinguish 
+	 * Gets the CAD3 tag byte for this cell. The tag byte is always equal to the 
+	 * first byte of the cell's canonical Encoding, and is sufficient to distinguish 
 	 * how to read the rest of the encoding.
 	 * 
 	 * @return Tag byte for this Cell
@@ -165,7 +165,7 @@ public abstract class ACell extends AObject implements IWriteable, IValidated {
 	}
 	
 	/**
-	 * Writes this Cell's encoding to a byte array, including a tag byte which will be written first.
+	 * Writes this Cell's CAD3 encoding to a byte array, including the tag byte which will be written first.
 	 * 
 	 * Cell must be canonical, or else an error may occur.
 	 *
@@ -177,13 +177,13 @@ public abstract class ACell extends AObject implements IWriteable, IValidated {
 	public abstract int encode(byte[] bs, int pos);
 	
 	/**
-	 * Writes this Cell's encoding to a byte array, excluding the tag byte.
+	 * Writes this Cell's CAD3 encoding to a byte array, excluding the tag byte.
 	 *
 	 * @param bs A byte array to which to write the encoding
 	 * @param pos The offset into the byte array
 	 * @return New position after writing
 	 */
-	protected abstract int encodeRaw(byte[] bs, int pos);
+	public abstract int encodeRaw(byte[] bs, int pos);
 	
 	/**
 	 * Creates the encoding for this cell. Cell must be canonical, or else an error may occur.
@@ -245,7 +245,7 @@ public abstract class ACell extends AObject implements IWriteable, IValidated {
 	 * 
 	 * @return The cached blob for this cell, or null if not yet available. 
 	 */
-	public Blob cachedEncoding() {
+	public final Blob cachedEncoding() {
 		return encoding;
 	}
 
@@ -338,7 +338,7 @@ public abstract class ACell extends AObject implements IWriteable, IValidated {
 	}
 	
 	/**
-	 * Returns true if this Cell is in a canonical representation.
+	 * Returns true if this Cell is in a canonical CAD3 representation.
 	 * 
 	 * Non-canonical objects may be used on a temporary internal basis, they should
 	 * be converted to canonical representations for general purpose use.
@@ -348,40 +348,28 @@ public abstract class ACell extends AObject implements IWriteable, IValidated {
 	public abstract boolean isCanonical();
 	
 	/**
-	 * Converts this Cell to a canonical version. Must return this Cell if already canonical, may be O(n) in size of value otherwise.
+	 * Converts this Cell to a canonical version, if not already canonical.
 	 * 
-	 * Callers should usually use getCanonical(), which caches canonical instances once created 
+	 * Must return this Cell if already canonical, may be O(n) in size of value otherwise.
+	 * 
+	 * Users should usually use getCanonical(), which caches canonical instances once created 
 	 * 
 	 * @return Canonical version of Cell
 	 */
 	protected abstract ACell toCanonical();
 	
 	/**
-	 * Returns true if this cell is a first class CVM Value allowable in the CVM state
+	 * Returns true if this cell is a first class CVM Value.
 	 * 
-	 * Sub-structural cells that are not themselves first class values
-	 * should return false
+	 * CAD3 Records and types that are not recognised by the CVM must return false.
 	 * 
-	 * Records and types that are not permissible on the CVM should return false.
+	 * Everything the CVM can recognise must return true.
 	 * 
-	 * Pretty much everything else should return true.
-	 * 
-	 * Note: CVM values might not be in a canonical format, e.g. temporary data structures
+	 * Note: CVM values might still not be in a canonical format, e.g. temporary data structures
 	 * 
 	 * @return true if the object is a CVM Value, false otherwise
 	 */
 	public abstract boolean isCVMValue();
-	
-	/**
-	 * Returns true if this cell instance is a first class value, i.e. not a component of a larger data structure
-	 * 
-	 * Sub-structural cells that are not themselves first class values should return false
-	 * 
-	 * Everything else should return true.
-	 * 
-	 * @return true if the object is a Value, false otherwise
-	 */
-	public abstract boolean isDataValue();
 
 	/**
 	 * Gets the Ref for this Cell, creating a new direct reference if necessary
@@ -411,11 +399,11 @@ public abstract class ACell extends AObject implements IWriteable, IValidated {
 	
 	/**
 	 * Gets the number of Refs contained within this Cell. This number is
-	 * final / immutable for any given instance and is defined by the Cell encoding rules.
+	 * final / immutable for any given instance and is defined by the Cell,s CAD3 encoding rules.
 	 * 
 	 * Contained Refs may be either external or embedded.
 	 * 
-	 * @return The number of Refs in this Cell
+	 * @return The number of Refs in this Cell (0-63)
 	 */
 	public int getRefCount() {
 		ACell canonical=getCanonical();

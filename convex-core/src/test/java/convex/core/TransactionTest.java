@@ -1,10 +1,13 @@
 package convex.core;
 
+import static convex.test.Assertions.assertCVMEquals;
+import static convex.test.Assertions.assertNotError;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.HashMap;
@@ -12,31 +15,31 @@ import java.util.HashMap;
 import org.junit.jupiter.api.Test;
 
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.AccountStatus;
+import convex.core.cvm.Context;
+import convex.core.cvm.Juice;
+import convex.core.cvm.State;
+import convex.core.cvm.impl.InvalidBlockException;
+import convex.core.cvm.transactions.ATransaction;
+import convex.core.cvm.transactions.Call;
+import convex.core.cvm.transactions.Invoke;
+import convex.core.cvm.transactions.Multi;
+import convex.core.cvm.transactions.Transactions;
+import convex.core.cvm.transactions.Transfer;
 import convex.core.data.AVector;
-import convex.core.data.AccountStatus;
 import convex.core.data.Address;
 import convex.core.data.Cells;
 import convex.core.data.Keywords;
 import convex.core.data.RecordTest;
 import convex.core.data.SignedData;
+import convex.core.data.Symbols;
 import convex.core.data.Vectors;
 import convex.core.data.prim.CVMLong;
 import convex.core.data.type.Transaction;
 import convex.core.exceptions.BadSignatureException;
 import convex.core.init.InitTest;
 import convex.core.lang.ACVMTest;
-import convex.core.lang.Context;
-import convex.core.lang.Juice;
-import convex.core.lang.Symbols;
-import convex.core.transactions.ATransaction;
-import convex.core.transactions.Call;
-import convex.core.transactions.Invoke;
-import convex.core.transactions.Multi;
-import convex.core.transactions.Transactions;
-import convex.core.transactions.Transfer;
 import convex.test.Samples;
-
-import static convex.test.Assertions.*;
 
 /**
  * Tests for Transactions, especially when applied in isolation to a State
@@ -69,9 +72,10 @@ public class TransactionTest extends ACVMTest {
 		
 		long memSize=Cells.storageSize(t1);
 		
-		State s=apply(t1);
+		ResultContext rc=state().applyTransaction(t1);
+		State s=rc.context.getState();
 		long expectedFees=(Juice.TRANSACTION+Juice.TRANSFER+Juice.TRANSACTION_PER_BYTE*memSize)*JP;
-		assertEquals(expectedFees,s.getGlobalFees().longValue());
+		assertEquals(expectedFees,rc.getJuiceFees());
 		
 		long NBAL=s.getAccount(HERO).getBalance();
 		long balanceDrop=IBAL-NBAL;
@@ -232,7 +236,7 @@ public class TransactionTest extends ACVMTest {
 	}
 	
 	@Test 
-	public void testBadSequence() throws BadSignatureException {
+	public void testBadSequence() throws BadSignatureException, InvalidBlockException {
 		Invoke t1=Invoke.create(HERO, 2, "(+ 2 5)");
 		SignedData<Invoke> st = Samples.KEY_PAIR.signData(t1);
 		ResultContext rc=state().applyTransaction(st);
@@ -251,8 +255,10 @@ public class TransactionTest extends ACVMTest {
 	
 	/**
 	 * TEsts for transactions that don't get as far as code execution
+	 * @throws InvalidBlockException 
 	 */
-	@Test public void testBadSignedTransactions() {
+	@SuppressWarnings("unchecked")
+	@Test public void testBadSignedTransactions() throws InvalidBlockException {
 		State s=state();
 		AccountStatus as=s.getAccount(HERO);
 		long SEQ=as.getSequence()+1;
@@ -280,6 +286,13 @@ public class TransactionTest extends ACVMTest {
 			assertEquals(ErrorCodes.STATE,rc.getErrorCode());
 			checkNoTransactionEffects(s,rc);
 		}
+		
+		{
+			// signed something other than a transaction
+			@SuppressWarnings("rawtypes")
+			SignedData<ATransaction> st = (SignedData)HERO_KP.signData(Keywords.FOO);
+			assertThrows(InvalidBlockException.class, ()->s.applyTransaction(st));
+		}
 	}
 	
 	private void checkNoTransactionEffects(State s, ResultContext rc) {
@@ -299,7 +312,7 @@ public class TransactionTest extends ACVMTest {
 	}
 	
 	@Test 
-	public void testJuiceFail() {
+	public void testJuiceFail() throws InvalidBlockException {
 		State s=state();
 		AccountStatus as=s.getAccount(HERO);
 		long SEQ=as.getSequence()+1;
@@ -321,7 +334,7 @@ public class TransactionTest extends ACVMTest {
 		
 		// 99 chosen to be outside 1-byte VLC Long range
 		doTransactionTests(Transfer.create(HERO, 99, VILLAIN,1000));
-		doTransactionTests(Transfer.create(HERO, 199, VILLAIN,Coin.SUPPLY));
+		doTransactionTests(Transfer.create(HERO, 199, VILLAIN,Coin.MAX_SUPPLY));
 		
 		doTransactionTests(Call.create(HERO, 99, VILLAIN, 178,Symbols.FOO,Vectors.empty()));
 	}

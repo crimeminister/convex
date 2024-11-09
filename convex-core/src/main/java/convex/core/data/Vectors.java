@@ -60,7 +60,7 @@ public class Vectors {
 	 * @param elements Elements to include
 	 * @return New vector with the specified elements
 	 */
-	public static <T extends ACell> AVector<T> create(ACell[] elements) {
+	public static <T extends ACell> AVector<T> create(ACell... elements) {
 		return create(elements, 0, elements.length);
 	}
 	
@@ -86,10 +86,10 @@ public class Vectors {
 	 * @return New vector with the specified collection of elements
 	 */
 	@SuppressWarnings("unchecked")
-	public static <R extends ACell, T extends ACell> AVector<R> create(Collection<?> elements) {
+	public static <R extends ACell, T extends ACell> AVector<R> create(Collection<? extends ACell> elements) {
 		if (elements instanceof ASequence) return ((ASequence<R>) elements).toVector();
-		if (elements.size() == 0) return empty();
-		ACell[] cells=Cells.toCellArray(elements.toArray());
+		if (elements.isEmpty()) return empty();
+		ACell[] cells=Cells.toCellArray(elements);
 		return wrap(cells);
 	}
 	
@@ -148,7 +148,7 @@ public class Vectors {
 	 * @throws BadFormatException In the event of any encoding error
 	 */
 	public static <T extends ACell> AVector<T> read(Blob b, int pos) throws BadFormatException {
-		long count = Format.readVLCCount(b,pos+1);
+		long count = Format.readVLQCount(b,pos+1);
 		if (count < 0) throw new BadFormatException("Negative length");
 		if (VectorLeaf.isValidCount(count)) {
 			return VectorLeaf.read(count,b,pos);

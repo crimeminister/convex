@@ -1,6 +1,8 @@
 package convex.core.lang;
 
-import convex.core.State;
+import convex.core.cvm.AOp;
+import convex.core.cvm.Context;
+import convex.core.cvm.State;
 import convex.core.data.ACell;
 import convex.core.data.Address;
 import convex.core.data.prim.CVMBool;
@@ -178,7 +180,7 @@ public abstract class ACVMTest {
 
 	public static long evalL(Context ctx, String source) {
 		ACell result = eval(ctx, source);
-		CVMLong d = RT.castLong(result);
+		CVMLong d = RT.ensureLong(result);
 		if (d == null)
 			throw new ClassCastException("Expected Long, but got: " + RT.getType(result));
 		return d.longValue();

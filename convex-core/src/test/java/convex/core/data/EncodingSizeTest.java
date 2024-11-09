@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import org.junit.jupiter.api.Test;
 
+import convex.core.data.impl.LongBlob;
 import convex.core.data.prim.CVMBool;
 import convex.core.data.prim.CVMDouble;
 import convex.core.data.prim.CVMLong;
@@ -52,7 +53,7 @@ public class EncodingSizeTest {
 	
 	@Test public void testBlobTree() {
 		long n =0x0f00000000000000l+(Format.MAX_EMBEDDED_LENGTH-3);
-		assertEquals(Format.MAX_VLC_COUNT_LENGTH,Format.getVLCCountLength(n)); // can't be max count? since we need 16 children
+		assertEquals(Format.MAX_VLQ_COUNT_LENGTH,Format.getVLQCountLength(n)); // can't be max count? since we need 16 children
 		BlobTree a=(BlobTree) Blobs.createFilled(3, n);
 		assertEquals(BlobTree.MAX_ENCODING_SIZE,size(a));
 	}
