@@ -1,5 +1,14 @@
-package convex.core.data;
+package convex.core.cvm;
 
+import convex.core.data.ABlob;
+import convex.core.data.ABlobLike;
+import convex.core.data.ACell;
+import convex.core.data.AExtensionValue;
+import convex.core.data.AString;
+import convex.core.data.Blob;
+import convex.core.data.Cells;
+import convex.core.data.Format;
+import convex.core.data.Strings;
 import convex.core.data.prim.CVMLong;
 import convex.core.data.type.AType;
 import convex.core.data.type.Types;
@@ -87,17 +96,13 @@ public final class Address extends AExtensionValue {
 	}
 
 	@Override
-	public boolean equals(Object a) {
-		if (a==this) return true; // Fast path, avoids cast
-		if (!(a instanceof Address)) return false; // Handles null
-		return equals((Address)a);
-	}
-
-	@Override
 	public boolean equals(ACell o) {
 		if (o==this) return true;
-		if (!(o instanceof Address)) return false;
-		return value==((Address) o).value;
+		if (o instanceof Address) {
+			return value==((Address) o).value;
+		} else {
+			return Cells.equalsGeneric(this, o);
+		}
 	}
 
 	public final boolean equals(Address o) {
@@ -182,7 +187,7 @@ public final class Address extends AExtensionValue {
 
 	@Override
 	public int encode(byte[] bs, int pos) {
-		bs[pos++]=Tag.ADDRESS;
+		bs[pos++]=CVMTag.ADDRESS;
 		return encodeRaw(bs,pos);
 	}
 	
@@ -225,7 +230,7 @@ public final class Address extends AExtensionValue {
 
 	@Override
 	public byte getTag() {
-		return Tag.ADDRESS;
+		return CVMTag.ADDRESS;
 	}
 
 	@Override

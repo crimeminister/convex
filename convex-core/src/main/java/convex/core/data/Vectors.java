@@ -4,7 +4,9 @@ import java.util.Collection;
 
 import org.bouncycastle.util.Arrays;
 
+import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
+import convex.core.exceptions.TODOException;
 import convex.core.lang.RT;
 import convex.core.util.Utils;
 
@@ -137,7 +139,9 @@ public class Vectors {
 	}
 
 	/**
-	 * Reads a Vector for the specified Blob. Assumes Tag byte already checked.
+	 * Reads a Vector for the specified Blob. 
+	 * 
+	 * Assumes Tag byte already checked, attaches encoding iff tag is Tag.VECTOR.
 	 * 
 	 * Distinguishes between child types according to count.
 	 * 
@@ -150,11 +154,32 @@ public class Vectors {
 	public static <T extends ACell> AVector<T> read(Blob b, int pos) throws BadFormatException {
 		long count = Format.readVLQCount(b,pos+1);
 		if (count < 0) throw new BadFormatException("Negative length");
+		
+		AVector<T> result;
 		if (VectorLeaf.isValidCount(count)) {
-			return VectorLeaf.read(count,b,pos);
+			result= VectorLeaf.read(count,b,pos);
 		} else {
-			return VectorTree.read(count,b,pos);
+			result= VectorTree.read(count,b,pos);
 		}
+		return result;
+	}
+
+	/**
+	 * Create a Vector which represents a range of integers from start to end
+	 * @param count
+	 * @return
+	 */
+	public static AVector<CVMLong> range(long start, long end) {
+		throw new TODOException();
+	}
+
+	public static AVector<CVMLong> createLongs(long... values) {
+		int n=values.length;
+		ACell[] longs=new ACell[n];
+		for (int i=0; i<n; i++) {
+			longs[i]=CVMLong.create(values[i]);
+		}
+		return Vectors.create(longs);
 	}
 
 }

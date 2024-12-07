@@ -13,7 +13,10 @@ import java.util.HashMap;
 
 import org.junit.jupiter.api.Test;
 
+import convex.core.cvm.Address;
+import convex.core.cvm.Keywords;
 import convex.core.cvm.PeerStatus;
+import convex.core.cvm.Symbols;
 import convex.core.data.impl.LongBlob;
 import convex.core.data.prim.CVMDouble;
 import convex.core.data.prim.CVMLong;

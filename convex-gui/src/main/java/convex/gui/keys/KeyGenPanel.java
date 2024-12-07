@@ -14,6 +14,7 @@ import javax.swing.JSpinner;
 import javax.swing.JTextArea;
 import javax.swing.SpinnerNumberModel;
 
+import convex.core.Constants;
 import convex.core.crypto.AKeyPair;
 import convex.core.crypto.BIP39;
 import convex.core.crypto.Passwords;
@@ -86,18 +87,60 @@ public class KeyGenPanel extends JPanel {
 	private void generateBIP39Seed() {
 		String s = mnemonicArea.getText();
 		String p = new String(passArea.getPassword());
+
+		String warn=checkWarnings(s,p);
+
+		if (warn.isBlank()) {
+			warningArea.setForeground(Color.GREEN);
+			warningArea.setText("OK: Reasonable mnemonic and passphrase");
+		} else {
+			warningArea.setForeground(Color.ORANGE);
+			warningArea.setText("WARNING: "+warn);
+		}
+		
+		try {
+			Blob bipSeed=BIP39.getSeed(s, p);
+			seedArea.setText(bipSeed.toHexString());
+			deriveSeed();
+		} catch (Exception ex) {
+			String pks = "<mnemonic not valid>";
+			if (s.isBlank()) pks = "<enter valid private key or mnemonic>";
+			masterKeyArea.setText(pks);
+			warningArea.setText("");
+			derivedKeyArea.setText(pks);
+			privateKeyArea.setText(pks);
+		}		
+	}
+	
+	private String checkWarnings(String s, String p) {
+		String warn ="";
+
+		// Check for demo phrases
+		if (s.equals(BIP39.DEMO_PHRASE)) warn+= "Demo mnemonic (for testing only). ";
+		if (p.equals(BIP39.DEMO_PASS)) warn+= "Demo passphrase (for testing only). ";
+
 		List<String> words=BIP39.getWords(s);
 		String badWord=BIP39.checkWords(words);
 		
-		String warn="";
-		if (words.size()<12) {
-			warn+="Only "+words.size()+" words. ";
+		int numWords=words.size();
+		if (numWords<12) {
+			warn+="Only "+numWords+" words. ";
+		} else if ((numWords!=((numWords/3)*3)) || numWords>24) {
+			warn+="Unusual number of words ("+numWords+"). ";
+		} else if (badWord!=null) {
+			if (BIP39.extendWord(badWord)!=null) {
+				warn += "Should normalise abbreviated word: "+badWord+". ";
+			} else {
+				warn +="Not in standard word list: "+badWord+". ";
+			}
+		} else if (!s.equals(BIP39.normaliseFormat(s))) {
+			warn+="Not normalised! ";
+		} else if (!BIP39.checkSum(s)) {
+			warn+="Invalid checksum! ";		
 		}
-		if (badWord!=null) {
-			warn +="Not in standard word list: "+badWord+". ";
-		}
+		
 		if (p.isBlank()) {
-			warn+="Passphrase is blank!";
+			warn+="Passphrase is blank! ";
 		} else {
 			int entropy=Passwords.estimateEntropy(p);
 			if (entropy<10) {
@@ -109,26 +152,20 @@ public class KeyGenPanel extends JPanel {
 			}
 		}
 
-		if (warn.isBlank()) {
-			warningArea.setForeground(Color.GREEN);
-			warningArea.setText("OK: Reasonable mnemonic and passphrase");
-		} else {
-			warningArea.setForeground(Color.ORANGE);
-			warningArea.setText("WARNING: "+warn);
-		}
-		
+		return warn;
+	}
+
+	private void updatePath() {
 		try {
-			Blob bipSeed=BIP39.getSeed(words,p);
-			seedArea.setText(bipSeed.toHexString());
+			String path=derivationArea.getText();
+			this.derivationPath=BIP39.parsePath(path);
 			deriveSeed();
 		} catch (Exception ex) {
-			String pks = "<mnemonic not valid>";
-			if (s.isBlank()) pks = "<enter valid private key or mnemonic>";
-			masterKeyArea.setText(pks);
-			warningArea.setText("");
-			derivedKeyArea.setText(pks);
-			privateKeyArea.setText(pks);
-		}		
+			privateKeyArea.setText(ex.getMessage());
+			publicKeyArea.setText(ex.getMessage());
+			derivationPath=null;
+			return;
+		}
 	}
 	
 	private void updateSeed() {
@@ -144,6 +181,7 @@ public class KeyGenPanel extends JPanel {
 			Blob mb=SLIP10.getMaster(b);
 			masterKeyArea.setText(mb.toHexString());
 			Blob db;
+			this.derivationPath=BIP39.parsePath(derivationArea.getText());
 			if (derivationPath==null) {
 				db=mb;
 			} else {
@@ -163,31 +201,7 @@ public class KeyGenPanel extends JPanel {
 	int[] derivationPath=null;
 	private Identicon identicon;
 	
-	private void updatePath() {
-		try {
-			String path=derivationArea.getText();
-			String[] es=path.split("/");
-			if (!"m".equals(es[0])) throw new Exception("<Bad derivation path, must start with 'm'>");
-			
-			int n=es.length-1;
-			int[] proposedPath=new int[n];
-			for (int i=0; i<n; i++) {
-				try {
-					Integer ix= Integer.parseInt(es[i+1]);
-					proposedPath[i]=ix;
-				} catch (NumberFormatException e) {
-					throw new Exception("<Bad derivation path, should be integer indexes 'm/44/888/1/0/123' >");
-				}
-			}
-			this.derivationPath=proposedPath;
-			updateSeed();
-		} catch (Exception ex) {
-			privateKeyArea.setText(ex.getMessage());
-			publicKeyArea.setText(ex.getMessage());
-			derivationPath=null;
-			return;
-		}
-	}
+
 
 	private void updatePrivateKey() {
 		try {
@@ -238,7 +252,7 @@ public class KeyGenPanel extends JPanel {
 		add(formPanel, BorderLayout.CENTER);
 
 		{ // Mnemonic entry box
-			addLabel("Mnemonic Phrase","BIP39 Mnemonic phrase. These should be random words from the BIP39 standard word list.");	
+			addLabel("Mnemonic Phrase","BIP39 Mnemonic phrase. These should be 12, 15, 18, 21 or 24 random words from the BIP39 standard word list.");	
 			mnemonicArea = makeTextArea();
 			mnemonicArea.setWrapStyleWord(true);
 			mnemonicArea.setLineWrap(true);
@@ -293,7 +307,7 @@ public class KeyGenPanel extends JPanel {
 	    }
 	
 		
-		addNote("Once the BIP39 seed is generated, we use SLIP-10 to create a derivation path to an Ed25519 private key. Instead of a BIP39 seed, you can also use another good secret source of random entropy, e.g. SLIP-0039.");
+		addNote("Once the BIP39 seed is generated, we use SLIP-10 to create a derivation path to an Ed25519 private key. \n\nInstead of a BIP39 seed, you can also use another good secret source of random entropy, e.g. SLIP-0039.");
 		
 		{
 			addLabel("SLIP-10 Master Key","SLIP-10 creates a Master Key from the BIP39 seed, which acts as the root of key generation for a heirarchical deterministic wallet.");
@@ -307,7 +321,8 @@ public class KeyGenPanel extends JPanel {
 		}
 		
 		{
-			addLabel("BIP32 Path","This is the hierarchical path for key generation as defined in BIP32. 'm' just specifies the master key.");
+			int CC = Constants.CHAIN_CODE;
+			addLabel("BIP32 Path","This is the hierarchical path for key generation as defined in BIP32. \n - 'm' specifies the master key. \n - 44 is the purpose defined as BIP-44. \n - "+CC+" is the Convex SLIP-0044 chain code. \n - The other numbers (account, change, index) may be set at the user's discretion, but are zero by default. \n\nIf you want multiple keys for the same mnemomic, is is recommended to increment the account number. \n\nWARNING: if you change these values, you will need to retain them in order to recover the specified key.");
 			derivationArea = makeTextArea();
 
 			derivationArea.setLineWrap(true);
@@ -315,7 +330,7 @@ public class KeyGenPanel extends JPanel {
 			derivationArea.setBackground(Color.BLACK);
 
 			formPanel.add(derivationArea,TEXTAREA_CONSTRAINT);
-			derivationArea.setText("m");
+			derivationArea.setText("m/44/"+CC+"/0/0/0");
 			derivationArea.getDocument().addDocumentListener(Toolkit.createDocumentListener(() -> {
 				if (!derivationArea.isFocusOwner()) return;
 				updatePath();
@@ -323,7 +338,7 @@ public class KeyGenPanel extends JPanel {
 		}
 		
 		{
-			addLabel("SLIP-10 Ext. Priv. Key","This is the extended private key produced by SLIP-10 after applying the BIP32 derivation path. The first 32 bytes of the SLIP-10 extended private key are used as the Ed25519 seed.");
+			addLabel("SLIP-10 Ext. Priv. Key","This is the extended private key produced by SLIP-10 after applying the BIP32 derivation path. \nThe first 32 bytes of the SLIP-10 extended private key are used as the Ed25519 seed.");
 			derivedKeyArea = makeTextArea();
 			derivedKeyArea.setLineWrap(true);
 			derivedKeyArea.setWrapStyleWord(false);
@@ -333,7 +348,7 @@ public class KeyGenPanel extends JPanel {
 		}
 
 		{
-			addLabel("Private Ed25519 seed","This is the Ed25519 private seed you need to sign transactions in Convex. Any 32-byte hex value will work: you can enter this directly if you obtained a good secret random seed from another source.");
+			addLabel("Private Ed25519 seed","This is the Ed25519 private seed you need to sign transactions in Convex. \nAny 32-byte hex value will work: you can enter this directly if you obtained a good secret random seed from another source.");
 			privateKeyArea = makeTextArea();
 			privateKeyArea.setBackground(Color.BLACK);
 
@@ -375,7 +390,9 @@ public class KeyGenPanel extends JPanel {
 		actionPanel.add(btnRecreate);
 		
 		numSpinner = new JSpinner();
-		numSpinner.setModel(new SpinnerNumberModel(12, 3, 30, 1));
+		numSpinner.setModel(new SpinnerNumberModel(12, 12, 24, 3));
+		numSpinner.setEditor(new JSpinner.DefaultEditor(numSpinner));
+		numSpinner.setFocusable(false);
 		actionPanel.add(numSpinner);
 
 		JButton btnNewButton = new ActionButton("Export...",0xebbe,e->{
@@ -386,10 +403,11 @@ public class KeyGenPanel extends JPanel {
 		{ // Button to Normalise Mnemonic string
 			JButton btnNormalise = new ActionButton("Normalise Mnemonic",0xf0ff,e -> { 
 				String s=mnemonicArea.getText();
-				mnemonicArea.setText(BIP39.normalise(s));
+				String s2=BIP39.normaliseAll(s);
+				mnemonicArea.setText(s2);
 				updateMnemonic();
 			});
-			btnNormalise.setToolTipText("Press to normalise mnemonic text according to BIP39. Removes irregular whitespace.");
+			btnNormalise.setToolTipText("Press to normalise mnemonic text according to BIP39. Removes irregular whitespace, sets characters to lowercase.");
 			actionPanel.add(btnNormalise);
 		}
 

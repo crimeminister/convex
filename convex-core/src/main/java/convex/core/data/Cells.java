@@ -43,6 +43,29 @@ public class Cells {
 		if (a == null) return false; // b can't be null because of above line
 		return a.equals(b); // fall back to ACell equality
 	}
+	
+	/**
+	 * Generic Cell equality, used if better implementation not available.
+	 * @param a First cell to compare
+	 * @param b Second cell to compare
+	 * @return True if cells are equal, false otherwise
+	 */
+	public static boolean equalsGeneric(ACell a, ACell b) {
+		if (a==b) return true; // important optimisation for e.g. hashmap equality
+		if ((b==null)||(a==null)) return false; // no non-null Cell is equal to null
+		if (!(a.getTag()==b.getTag())) return false; // Different tags never equal
+		
+		// Check hashes for equality if they exist
+		Hash ha=a.cachedHash();
+		if (ha!=null) {
+			Hash hb=b.cachedHash();
+			if (hb!=null) return ha.equals(hb);
+		}
+	
+		// Else default to checking encodings
+		// We would need to get encodings anyway to compute a Hash....
+		return a.getEncoding().equals(b.getEncoding());
+	}
 
 	/**
 	 * Converts any collection object to an ACell[] array. Elements must be Cells.
@@ -127,7 +150,7 @@ public class Cells {
 	}
 	
 	/**
-	 * Checks if a Cell is completely encoded, i.e. has not external Refs
+	 * Checks if a Cell is completely encoded, i.e. has no external Refs
 	 * @param a Cell to check
 	 * @return True if completely encoded, false otherwise
 	 */
@@ -320,5 +343,47 @@ public class Cells {
 		if (k==null) return Hash.NULL_HASH;
 		return k.cachedHash();
 	}
+
+	/**
+	 * Returns true if the object is a canonical data object. Canonical data objects
+	 * can be used as first class decentralised data objects.
+	 * 
+	 * @param o Value to test
+	 * @return true if object is canonical, false otherwise.
+	 */
+	public static boolean isCanonical(ACell o) {
+		if (o==null) return true;
+		return o.isCanonical();
+	}
+
+	/**
+	 * Determines if an object should be embedded directly in the encoding rather
+	 * than referenced with a Ref / hash. Defined to be true for most small objects.
+	 * 
+	 * @param cell Value to test
+	 * @return true if object is embedded, false otherwise
+	 */
+	public static boolean isEmbedded(ACell cell) {
+		if (cell == null) return true;
+		return cell.isEmbedded();
+	}
+
+	/**
+	 * Gets the encoded Blob for an object in CAD3 format
+	 * 
+	 * @param o The object to encode
+	 * @return Encoded data as a blob
+	 */
+	public static Blob encode(ACell o) {
+		if (o==null) return Blob.NULL_ENCODING;
+		return o.getEncoding();
+	}
+
+	public static int getEncodingLength(ACell value) {
+		if (value==null) return 1;
+		return value.getEncodingLength();
+	}
+
+
 
 }

@@ -22,16 +22,16 @@ import convex.core.SourceCodes;
 import convex.core.cpos.Belief;
 import convex.core.cpos.Order;
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.Address;
+import convex.core.cvm.Keywords;
 import convex.core.cvm.Peer;
 import convex.core.cvm.State;
 import convex.core.data.ACell;
 import convex.core.data.AMap;
 import convex.core.data.AVector;
 import convex.core.data.AccountKey;
-import convex.core.data.Address;
 import convex.core.data.Hash;
 import convex.core.data.Keyword;
-import convex.core.data.Keywords;
 import convex.core.data.Maps;
 import convex.core.data.Ref;
 import convex.core.data.SignedData;
@@ -631,6 +631,11 @@ public class Server implements Closeable {
 			AMap<ACell,ACell> newRootData = currentRootData.assoc(rootKey, peerData);
 
 			newRootData=store.setRootData(newRootData).getValue();
+			
+			// ensure specific values are persisted, might be needed for lookup
+			store.storeTopRef(peer.getGenesisState().getRef(), Ref.PERSISTED, null);
+			store.storeTopRef(peer.getBelief().getRef(), Ref.PERSISTED, null);
+			
 			peerData=(AMap<Keyword, ACell>) newRootData.get(rootKey);
 			log.debug( "Stored peer data with hash: {}", peerData.getHash().toHexString());
 			return Peer.fromData(getKeyPair(), peerData);

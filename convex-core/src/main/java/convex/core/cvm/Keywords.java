@@ -1,4 +1,6 @@
-package convex.core.data;
+package convex.core.cvm;
+
+import convex.core.data.Keyword;
 
 /**
  * Static intenral Keyword values for configuration maps, records etc.
@@ -119,6 +121,8 @@ public class Keywords {
 	public static final Keyword OFFER = Keyword.intern("offer");
 	public static final Keyword ORIGIN = Keyword.intern("origin");
 	public static final Keyword TARGET = Keyword.intern("target");
+	public static final Keyword ARGS = Keyword.intern("args");
+
 
 	public static final Keyword BLOCKS = Keyword.intern("blocks");
 	public static final Keyword CONSENSUS_POINT = Keyword.intern("consensus-point");

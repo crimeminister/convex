@@ -1,5 +1,13 @@
-package convex.core.data;
+package convex.core.cvm;
 
+import convex.core.data.ACell;
+import convex.core.data.AVector;
+import convex.core.data.Cells;
+import convex.core.data.Hash;
+import convex.core.data.IRefFunction;
+import convex.core.data.Keyword;
+import convex.core.data.MapEntry;
+import convex.core.data.Ref;
 import convex.core.exceptions.InvalidDataException;
 
 /**
@@ -7,14 +15,14 @@ import convex.core.exceptions.InvalidDataException;
  * 
  * Generic records are backed by a Vector of values
  */
-public abstract class ARecordGeneric extends ARecord {
+public abstract class ARecordGeneric extends ACVMRecord {
 
-	protected AVector<ACell> values;
+	protected final AVector<ACell> values;
 	
 	protected final RecordFormat format;
 	
-	protected ARecordGeneric(RecordFormat format, AVector<ACell> values) {
-		super(format.count());
+	protected ARecordGeneric(byte tag,RecordFormat format, AVector<ACell> values) {
+		super(tag,format.count());
 		if (values.count()!=format.count()) throw new IllegalArgumentException("Wrong number of field values for record: "+values.count());
 		this.format=format;
 		this.values=values;
@@ -22,6 +30,7 @@ public abstract class ARecordGeneric extends ARecord {
 	
 	@Override
 	public MapEntry<Keyword, ACell> entryAt(long i) {
+		if ((i<0)||(i>values.count())) throw new IndexOutOfBoundsException(i);
 		return MapEntry.create(format.getKey((int)i), values.get(i));
 	}
 
@@ -33,8 +42,24 @@ public abstract class ARecordGeneric extends ARecord {
 	}
 	
 	@Override
-	public int getRefCount() {
+	public final RecordFormat getFormat() {
+		return format;
+	}
+
+	@Override
+	public final int getRefCount() {
 		return values.getRefCount();
+	}
+	
+	@Override
+	public int estimatedEncodingSize() {
+		return values.estimatedEncodingSize();
+	}
+	
+	@Override
+	public final int encode(byte[] bs, int pos) {
+		bs[pos++]=tag;
+		return encodeRaw(bs,pos);
 	}
 	
 	/**
@@ -42,18 +67,17 @@ public abstract class ARecordGeneric extends ARecord {
 	 * @param bs Array to write to
 	 */
 	@Override
-	public int encodeRaw(byte[] bs, int pos) {
-		AVector<Keyword> keys=getKeys();
-		for (Keyword key: keys) {
-			pos=Format.write(bs,pos, get(key));
-		}
-		return pos;
+	public final int encodeRaw(byte[] bs, int pos) {
+		return values.encodeRaw(bs, pos);
 	}
 	
 	@Override 
 	public boolean equals(ACell a) {
-		if (!(a instanceof ARecordGeneric)) return false;
-		return equals((ARecordGeneric)a);
+		if (a instanceof ARecordGeneric) {
+			return equals((ARecordGeneric)a);
+		} else {
+			return Cells.equalsGeneric(this, a);
+		}
 	}
 		
 	protected boolean equals(ARecordGeneric a) {
@@ -69,13 +93,14 @@ public abstract class ARecordGeneric extends ARecord {
 	}
 	
 	@Override
-	public <R extends ACell> Ref<R> getRef(int index) {
+	public final <R extends ACell> Ref<R> getRef(int index) {
 		return values.getRef(index);
 	}
 
 	@Override
-	public ARecord updateRefs(IRefFunction func) {
-		AVector<ACell> newValues=values.toVector().updateRefs(func); // ensure values are canonical via toVector
+	public final ARecordGeneric updateRefs(IRefFunction func) {
+		AVector<ACell> newValues=values.updateRefs(func); // ensure values are canonical via toVector
+		if (newValues==values) return this;
 		return withValues(newValues);
 	}
 	
@@ -90,9 +115,9 @@ public abstract class ARecordGeneric extends ARecord {
 	 * Returns this if and only if values vector is identical.
 	 * 
 	 * @param newValues New values to use
-	 * @return Updated Record
+	 * @return Updated Record (or null if values not valid)
 	 */
-	protected abstract ARecord withValues(AVector<ACell> newValues);
+	protected abstract ARecordGeneric withValues(AVector<ACell> newValues);
 
 	@Override
 	public void validateCell() throws InvalidDataException {

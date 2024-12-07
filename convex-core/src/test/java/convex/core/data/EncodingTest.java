@@ -23,6 +23,9 @@ import convex.core.cpos.Belief;
 import convex.core.cpos.Block;
 import convex.core.cpos.Order;
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.Address;
+import convex.core.cvm.Symbols;
+import convex.core.cvm.Syntax;
 import convex.core.cvm.ops.Constant;
 import convex.core.cvm.transactions.ATransaction;
 import convex.core.cvm.transactions.Invoke;
@@ -116,10 +119,10 @@ public class EncodingTest {
 	
 	@Test public void testEmbeddedRegression() throws BadFormatException {
 		Keyword k=Keyword.create("foo");
-		Blob b=Format.encodedBlob(k);
+		Blob b=Cells.encode(k);
 		ACell o=Format.read(b);
 		assertEquals(k,o);
-		assertTrue(Format.isEmbedded(k));
+		assertTrue(Cells.isEmbedded(k));
 		Ref<?> r=Ref.get(o);
 		assertTrue(r.isDirect());
 	}
@@ -154,7 +157,7 @@ public class EncodingTest {
 	
 	@Test public void testStringRegression() throws BadFormatException {
 		StringShort s=StringShort.create("��zI�&$\\ž1�����4�E4�a8�#?$wD(�#");
-		Blob b=Format.encodedBlob(s);
+		Blob b=Cells.encode(s);
 		StringShort s2=Format.read(b);
 		assertEquals(s,s2);
 	}
@@ -164,7 +167,7 @@ public class EncodingTest {
 		List<ACell> l=List.reverse(me);
 		assertEquals(me,l.reverse()); // ensure MapEntry gets converted to canonical vector
 		
-		Blob b=Format.encodedBlob(l);
+		Blob b=Cells.encode(l);
 		List<ACell> l2=Format.read(b);
 		
 		assertEquals(l,l2);
@@ -178,16 +181,16 @@ public class EncodingTest {
 	}
 	
 	@Test public void testCanonical() {
-		assertTrue(Format.isCanonical(Vectors.empty()));
-		assertTrue(Format.isCanonical(null));
-		assertTrue(Format.isCanonical(RT.cvm(1)));
-		assertTrue(Format.isCanonical(Blob.create(new byte[1000]))); // should be OK
+		assertTrue(Cells.isCanonical(Vectors.empty()));
+		assertTrue(Cells.isCanonical(null));
+		assertTrue(Cells.isCanonical(RT.cvm(1)));
+		assertTrue(Cells.isCanonical(Blob.create(new byte[1000]))); // should be OK
 		assertFalse(Blob.create(new byte[10000]).isCanonical()); // too big to be canonical	
 	}
 	
 	@Test public void testReadBlobData() throws BadFormatException {
 		Blob d=Blob.fromHex("cafebabe");
-		Blob edData=Format.encodedBlob(d);
+		Blob edData=Cells.encode(d);
 		AArrayBlob dd=Format.read(edData);
 		assertEquals(d,dd);
 		assertSame(edData,dd.getEncoding()); // should re-use encoded data object directly
@@ -196,7 +199,7 @@ public class EncodingTest {
 	@Test
 	public void testBadMessageTooLong() throws BadFormatException {
 		ACell o=Samples.FOO;
-		Blob data=Format.encodedBlob(o).append(Blob.fromHex("ff")).toFlatBlob();
+		Blob data=Cells.encode(o).append(Blob.fromHex("ff")).toFlatBlob();
 		assertThrows(BadFormatException.class,()->Format.read(data));
 	}
 	
@@ -220,6 +223,15 @@ public class EncodingTest {
 		// 2 byte requiring continuation = incomplete length
 		ByteBuffer bb3=Testing.messageBuffer("FFFF");
 		assertEquals(-1,Format.peekMessageLength(bb3));
+		
+		// Very large message length, max integer size
+		ByteBuffer bb4=Testing.messageBuffer("87ffffff7f");
+		assertEquals(Integer.MAX_VALUE,Format.peekMessageLength(bb4));
+		
+		// Excessive message length, overflows max array size :-(
+		ByteBuffer bb5=Testing.messageBuffer("ffffffffffffffff7f");
+		assertThrows(BadFormatException.class,()->Format.peekMessageLength(bb5));
+
 	}
 	
 	@Test 
@@ -380,6 +392,9 @@ public class EncodingTest {
 		doMultiEncodingTest(CVMLong.ONE);
 		doMultiEncodingTest(Samples.NON_EMBEDDED_STRING);
 		doMultiEncodingTest(Vectors.of(1,2,3));
+		
+		doMultiEncodingTest(Syntax.create(Address.create(32)));
+
 		
 		// Two non-embedded identical children
 		AVector<ACell> v1=Vectors.of(1,Samples.NON_EMBEDDED_STRING,Samples.NON_EMBEDDED_STRING,Samples.INT_VECTOR_23);

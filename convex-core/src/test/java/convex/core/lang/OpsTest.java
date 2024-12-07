@@ -12,9 +12,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.Test;
 
 import convex.core.cvm.AOp;
+import convex.core.cvm.Address;
+import convex.core.cvm.CVMTag;
 import convex.core.cvm.Context;
 import convex.core.cvm.Juice;
-import convex.core.cvm.Ops;
+import convex.core.cvm.Symbols;
+import convex.core.cvm.Syntax;
 import convex.core.cvm.ops.Cond;
 import convex.core.cvm.ops.Constant;
 import convex.core.cvm.ops.Def;
@@ -24,18 +27,20 @@ import convex.core.cvm.ops.Lambda;
 import convex.core.cvm.ops.Let;
 import convex.core.cvm.ops.Local;
 import convex.core.cvm.ops.Lookup;
+import convex.core.cvm.ops.Query;
 import convex.core.cvm.ops.Set;
 import convex.core.cvm.ops.Special;
+import convex.core.cvm.ops.Try;
 import convex.core.data.ACell;
 import convex.core.data.AMap;
 import convex.core.data.AString;
-import convex.core.data.Address;
 import convex.core.data.Blob;
+import convex.core.data.CodedValue;
+import convex.core.data.DenseRecord;
+import convex.core.data.ExtensionValue;
 import convex.core.data.Format;
 import convex.core.data.ObjectsTest;
 import convex.core.data.Symbol;
-import convex.core.data.Symbols;
-import convex.core.data.Syntax;
 import convex.core.data.Tag;
 import convex.core.data.Vectors;
 import convex.core.data.prim.CVMLong;
@@ -82,7 +87,7 @@ public class OpsTest extends ACVMTest {
 			assertNull(c2.getResult());
 			doOpTest(op);
 			
-			assertEquals(Blob.wrap(new byte[] {Tag.OP,Ops.CONSTANT,Tag.NULL}),op.getEncoding());
+			assertEquals(Blob.wrap(new byte[] {CVMTag.OP_CODED,CVMTag.OPCODE_CONSTANT,Tag.NULL}),op.getEncoding());
 		}
 		
 		{// nested constant
@@ -93,7 +98,7 @@ public class OpsTest extends ACVMTest {
 			assertEquals(Constant.nil(),c2.getResult());
 			doOpTest(op);
 			
-			assertEquals(Blob.wrap(new byte[] {Tag.OP,Ops.CONSTANT,Tag.OP,Ops.CONSTANT,Tag.NULL}),op.getEncoding());
+			assertEquals(Blob.wrap(new byte[] {CVMTag.OP_CODED,CVMTag.OPCODE_CONSTANT,CVMTag.OP_CODED,CVMTag.OPCODE_CONSTANT,Tag.NULL}),op.getEncoding());
 		}
 	}
 
@@ -148,7 +153,7 @@ public class OpsTest extends ACVMTest {
 	}
 
 	@Test
-	public void testDo() {
+	public void testDo() throws BadFormatException {
 		Context c = context();
 
 		AOp<AString> op = Do.create(Def.create("foo", Constant.createString("bar")), Lookup.create("foo"));
@@ -157,16 +162,57 @@ public class OpsTest extends ACVMTest {
 		long expectedJuice = INITIAL_JUICE - (Juice.CONSTANT + Juice.DEF + Juice.LOOKUP_DYNAMIC + Juice.DO);
 		assertEquals(expectedJuice, c2.getJuiceAvailable());
 		assertEquals("bar", c2.getResult().toString());
+		
+		Blob enc=op.getEncoding();
+		
+		assertEquals(CVMTag.OP_DO,op.getTag());
+		assertEquals(op,DenseRecord.read(CVMTag.OP_DO, enc,0));
+
+		ObjectsTest.doCAD3Tests(op);
+		
+		doOpTest(op);
+	}
+	
+	@Test
+	public void testTry() throws BadFormatException {
+		AOp<CVMLong> op = Try.create(Invoke.create(Constant.of(CVMLong.ZERO)), Constant.of(CVMLong.ONE));
+
+		Context c = context();
+		Context c2 = c.execute(op);
+		assertFalse(c2.isExceptional());
+		assertEquals(CVMLong.ONE,c2.getResult());
 
 		doOpTest(op);
 	}
+	
+	@Test
+	public void testQuery() throws BadFormatException {
+		Query<CVMLong> op = Query.create(Def.create(Symbols.FOO, Constant.of(CVMLong.ONE)));
+
+		Context c = context();
+		Context c2 = c.execute(op);
+		assertFalse(c2.isExceptional());
+		assertEquals(CVMLong.ONE,c2.getResult());
+
+		assertFalse(c2.getEnvironment().containsKey(Symbols.FOO));
+		
+		Blob enc=op.getEncoding();
+		CodedValue cv=CodedValue.read(op.getTag(), enc, 0);
+		assertEquals(op,cv);
+		assertEquals(op.getRefCount(),cv.getRefCount());
+		
+		doOpTest(op);
+	}
+
+
 
 	@Test
 	public void testSpecial() {
 		Context c = context();
 
 		AOp<Address> op = Special.forSymbol(Symbols.STAR_ADDRESS);
-		assertEquals(op,Special.forSymbol(Symbol.create("*address*"))); // double check lookup in hash map
+		AOp<Address> op2 = Special.forSymbol(Symbol.create("*address*"));
+		assertEquals(op,op2); // double check lookup in hash map
 
 		Context c2 = c.execute(op);
 		assertEquals(c2.getAddress(), c2.getResult());
@@ -189,7 +235,7 @@ public class OpsTest extends ACVMTest {
 	@Test
 	public void testSet() throws BadFormatException {
 		AOp<Address> op = Set.create(45, Constant.nil());
-		Blob expectedEncoding=Blob.fromHex("c00b2dc00000");
+		Blob expectedEncoding=Blob.fromHex("c0112dc0b000");
 		assertEquals(expectedEncoding,op.getEncoding());
 		assertEquals(op,Format.read(expectedEncoding));
 		doOpTest(op);
@@ -307,6 +353,8 @@ public class OpsTest extends ACVMTest {
 		
 		// Negative local index should be invalid
 		assertNull(Local.create(-1));
+		
+		assertEquals(Local.create(16567),ExtensionValue.create(CVMTag.OP_LOCAL,16567));
 
 		doOpTest(op);
 	}

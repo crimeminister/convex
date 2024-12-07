@@ -221,12 +221,14 @@ public class VectorTree<T extends ACell> extends AVector<T> {
 		Ref<AVector<T>>[] items = (Ref<AVector<T>>[]) new Ref<?>[n];
 		for (int i = 0; i < n; i++) {
 			Ref<AVector<T>> ref = Format.readRef(b,rpos);
+			// if (ref==Ref.NULL_VALUE) throw new BadFormatException("Null VectorTree child");
 			items[i] = ref;
 			rpos+=ref.getEncodingLength();
 		}
 
 		VectorTree<T> result= new VectorTree<T>(items, count);
-		result.attachEncoding(b.slice(pos, rpos));
+		// Attach encoding only if "real"
+		if (b.byteAtUnchecked(pos)==Tag.VECTOR) result.attachEncoding(b.slice(pos, rpos));
 		return result;
 	}
 

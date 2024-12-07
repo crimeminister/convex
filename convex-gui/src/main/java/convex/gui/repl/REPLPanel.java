@@ -1,4 +1,4 @@
-package convex.gui.panels;
+package convex.gui.repl;
 		
 import java.awt.Color;
 import java.awt.Font;
@@ -35,13 +35,13 @@ import convex.core.data.ACell;
 import convex.core.data.AList;
 import convex.core.data.AString;
 import convex.core.data.AVector;
-import convex.core.data.Address;
+import convex.core.cvm.Address;
 import convex.core.data.SignedData;
 import convex.core.exceptions.ParseException;
 import convex.core.exceptions.ResultException;
 import convex.core.lang.RT;
 import convex.core.lang.Reader;
-import convex.core.data.Symbols;
+import convex.core.cvm.Symbols;
 import convex.core.util.Utils;
 import convex.gui.components.ActionButton;
 import convex.gui.components.ActionPanel;
@@ -171,6 +171,7 @@ public class REPLPanel extends JPanel {
 		output.setFont(OUTPUT_FONT);
 		//outputArea.setForeground(Color.GREEN);
 		output.setBackground(new Color(10,10,10));
+		output.setFocusable(false);
 		output.setToolTipText("Output from transaction execution");
 		//DefaultCaret caret = (DefaultCaret)(outputArea.getCaret());
 		//caret.setUpdatePolicy(DefaultCaret.ALWAYS_UPDATE);

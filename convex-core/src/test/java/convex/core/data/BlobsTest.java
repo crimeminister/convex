@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 
 import convex.core.crypto.ASignature;
 import convex.core.crypto.InsecureRandom;
+import convex.core.cvm.Address;
 import convex.core.data.impl.LongBlob;
 import convex.core.data.impl.ZeroBlob;
 import convex.core.data.prim.CVMLong;
@@ -305,7 +306,7 @@ public class BlobsTest {
 		assertSame(e,e.append(e));
 		assertSame(e,new BlobBuilder().toBlob());
 		
-		assertSame(e,Format.read(Format.encodedBlob(e)));	
+		assertSame(e,Format.read(Cells.encode(e)));	
 		assertSame(e,Format.read(e.getEncoding()));
 		
 		assertSame(e,e.getChunk(0));
@@ -592,7 +593,7 @@ public class BlobsTest {
 
 	   assertEquals(RT.getType(value), RT.getType(o));
 	   assertEquals(value, o);
-	   assertEquals(b, Format.encodedBlob(o));
+	   assertEquals(b, Cells.encode(o));
 	   assertEquals(pref.getValue(), o);
 	}
 	

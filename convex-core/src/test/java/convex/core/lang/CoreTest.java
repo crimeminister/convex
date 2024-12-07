@@ -42,11 +42,15 @@ import convex.core.cpos.BlockResult;
 import convex.core.cpos.CPoSConstants;
 import convex.core.crypto.AKeyPair;
 import convex.core.cvm.AccountStatus;
+import convex.core.cvm.Address;
 import convex.core.cvm.Context;
 import convex.core.cvm.Juice;
+import convex.core.cvm.Keywords;
 import convex.core.cvm.Log;
 import convex.core.cvm.PeerStatus;
 import convex.core.cvm.State;
+import convex.core.cvm.Symbols;
+import convex.core.cvm.Syntax;
 import convex.core.cvm.ops.Cond;
 import convex.core.cvm.ops.Constant;
 import convex.core.cvm.ops.Def;
@@ -65,14 +69,13 @@ import convex.core.data.AHashMap;
 import convex.core.data.ASet;
 import convex.core.data.AVector;
 import convex.core.data.AccountKey;
-import convex.core.data.Address;
 import convex.core.data.Blob;
 import convex.core.data.Blobs;
+import convex.core.data.Cells;
 import convex.core.data.Format;
 import convex.core.data.Hash;
 import convex.core.data.Index;
 import convex.core.data.Keyword;
-import convex.core.data.Keywords;
 import convex.core.data.List;
 import convex.core.data.Lists;
 import convex.core.data.MapEntry;
@@ -81,8 +84,6 @@ import convex.core.data.Sets;
 import convex.core.data.SignedData;
 import convex.core.data.Strings;
 import convex.core.data.Symbol;
-import convex.core.data.Symbols;
-import convex.core.data.Syntax;
 import convex.core.data.Vectors;
 import convex.core.data.prim.CVMBigInteger;
 import convex.core.data.prim.CVMBool;
@@ -95,8 +96,11 @@ import convex.core.exceptions.InvalidDataException;
 import convex.core.init.BaseTest;
 import convex.core.init.Init;
 import convex.core.init.InitTest;
+import convex.core.lang.impl.AClosure;
 import convex.core.lang.impl.CorePred;
+import convex.core.lang.impl.Fn;
 import convex.core.lang.impl.ICoreDef;
+import convex.core.lang.impl.MultiFn;
 import convex.test.Samples;
 
 /**
@@ -2882,6 +2886,7 @@ public class CoreTest extends ACVMTest {
 		Context ctx=context();
 		CVMLong supply=eval("(coin-supply)");
 		assertTrue(supply.longValue()>ctx.getBalance());
+		assertTrue(supply.longValue()==ctx.getState().computeSupply());
 	}
 
 	@Test
@@ -3988,7 +3993,7 @@ public class CoreTest extends ACVMTest {
 			ACell v=Core.ENVIRONMENT.get(sym);
 			assertSame(def, v);
 
-			Blob b = Format.encodedBlob(def);
+			Blob b = Cells.encode(def);
 			assertSame(def, Format.read(b));
 
 			AHashMap<ACell,ACell> meta= Core.METADATA.get(sym);
@@ -4268,6 +4273,36 @@ public class CoreTest extends ACVMTest {
 		assertArityError(step("((fn [[a b]] :OK) [1])"));
 		assertCastError(step("((fn [[a b]] :OK) :foobar)"));
 
+		// Test expected Fn
+		{
+			ACell a=eval("(fn [])");
+			AClosure<?> fn = Fn.ensureFunction(a);
+			assertNotNull(fn);
+			assertTrue(fn.supportsArgs(Cells.EMPTY_ARRAY));
+			assertTrue(fn instanceof Fn);
+		}
+		
+		// Test expected MultiFnFn
+		{
+			ACell a=eval("(fn ([]) ([a]))");
+			AClosure<?> fn = Fn.ensureFunction(a);
+			assertNotNull(fn);
+			assertTrue(fn.hasArity(0));
+			assertTrue(fn.hasArity(1));
+			assertFalse(fn.hasArity(2));
+			assertTrue(fn instanceof MultiFn);
+		}
+
+		
+		// Test lexical env
+		{
+			ACell a=eval("(let [a 1] (fn [] a))");
+			Fn<?> fn = (Fn<?>) Fn.ensureFunction(a);
+			assertNotNull(fn);
+			assertEquals(Vectors.of(1),fn.getLexicalEnvironment());
+		}
+
+		
 		// Bad fn forms
 		assertArityError(step("(fn)"));
 		assertSyntaxError(step("(fn 1)"));
@@ -4543,6 +4578,9 @@ public class CoreTest extends ACVMTest {
 		assertEquals(2L,evalL("(do (defn f ([] 4) ([a] 1 2)) (f 3))"));
 
 		assertArityError(step("(do (defn f ([] nil)) (f 3))"));
+		
+		// Check multi-fns capture lexical env
+		assertEquals(Vectors.of(2,1,2),eval("(do (def a 1) (let [a 2 f (fn ([] a) ([b] (+ a b)))] [a *address*/a (f)]))"));
 	}
 
 	@Test
@@ -4933,7 +4971,7 @@ public class CoreTest extends ACVMTest {
 	
 	@Test
 	public void testExpand_1() {
-		assertEquals(read("(let [v# 1] (cond v# v# (or 2 3)))"), eval("(expand-1 '(or 1 2 3))"));
+		assertEquals(read("(cond 1 *result* (or 2 3))"), eval("(expand-1 '(or 1 2 3))"));
 	}
 
 	@Test
@@ -5186,7 +5224,7 @@ public class CoreTest extends ACVMTest {
 		ctx=exec(ctx,"(def NOONE (address 7777777))");
 
 		// Basic empty holding should match empty Index in account record. See #131
-		assertTrue(evalB("(= *holdings* (:holdings (account *address*)) (index))"));
+		assertTrue(evalB("(= *holdings* (index))"));
 
 		// initial holding behaviour
 		assertNull(eval(ctx,"(get-holding VILLAIN)"));
@@ -5214,8 +5252,10 @@ public class CoreTest extends ACVMTest {
 		}
 
 		{ // test null assign
-			Context c2 = step(ctx,"(set-holding VILLAIN nil)");
-			assertFalse(c2.getAccountStatus(VILLAIN).getHoldings().containsKey(HERO));
+			Context c2 = exec(ctx,"(set-holding VILLAIN nil)");
+			assertNull(eval(c2,"(get-holding VILLAIN)"));
+			AccountStatus vas=c2.getAccountStatus(VILLAIN);
+			assertNull(vas.getHoldings(HERO));
 		}
 	}
 
@@ -5229,19 +5269,19 @@ public class CoreTest extends ACVMTest {
 	public void testCoreFormatRoundTrip() throws BadFormatException {
 		{ // a core function
 			ACell c = eval("count");
-			Blob b = Format.encodedBlob(c);
+			Blob b = Cells.encode(c);
 			assertSame(c, Format.read(b));
 		}
 
 		{ // a core macro
 			ACell c = eval("*initial-expander*");
-			Blob b = Format.encodedBlob(c);
+			Blob b = Cells.encode(c);
 			assertSame(c, Format.read(b));
 		}
 
 		{ // a basic lambda expression
 			ACell c = eval("(fn [x] x)");
-			Blob b = Format.encodedBlob(c);
+			Blob b = Cells.encode(c);
 			assertEquals(c, Format.read(b));
 		}
 	}

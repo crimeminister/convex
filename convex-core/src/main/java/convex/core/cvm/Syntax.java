@@ -1,5 +1,18 @@
-package convex.core.data;
+package convex.core.cvm;
 
+import convex.core.data.ACell;
+import convex.core.data.ACollection;
+import convex.core.data.AHashMap;
+import convex.core.data.AMap;
+import convex.core.data.AString;
+import convex.core.data.Blob;
+import convex.core.data.Cells;
+import convex.core.data.Format;
+import convex.core.data.IRefFunction;
+import convex.core.data.Maps;
+import convex.core.data.Ref;
+import convex.core.data.Strings;
+import convex.core.data.Tag;
 import convex.core.data.prim.CVMLong;
 import convex.core.data.type.AType;
 import convex.core.data.type.Types;
@@ -168,7 +181,7 @@ public final class Syntax extends ACell {
 		
 		epos+=datum.getEncodingLength();
 		AHashMap<ACell, ACell> props = Format.read(b,epos);
-		epos+=Format.getEncodingLength(props);
+		epos+=Cells.getEncodingLength(props);
 		
 		if (props == null) {
 			props = Maps.empty(); // we encode empty props as null for efficiency
@@ -185,7 +198,7 @@ public final class Syntax extends ACell {
 
 	@Override
 	public int encode(byte[] bs, int pos) {
-		bs[pos++]=Tag.SYNTAX;
+		bs[pos++]=CVMTag.SYNTAX;
 		return encodeRaw(bs,pos);
 	}
 
@@ -346,7 +359,7 @@ public final class Syntax extends ACell {
 
 	@Override
 	public byte getTag() {
-		return Tag.SYNTAX;
+		return CVMTag.SYNTAX;
 	}
 
 	@Override

@@ -16,7 +16,10 @@ import org.junit.runners.Parameterized;
 
 import convex.core.cvm.AOp;
 import convex.core.cvm.AccountStatus;
+import convex.core.cvm.Address;
+import convex.core.cvm.Keywords;
 import convex.core.cvm.PeerStatus;
+import convex.core.cvm.Symbols;
 import convex.core.cvm.ops.Constant;
 import convex.core.cvm.ops.Invoke;
 import convex.core.data.prim.ANumeric;
@@ -119,7 +122,7 @@ public class ParamTestValues extends ACVMTest {
 	@Test
 	public void testHexRoundTrip() throws InvalidDataException, ValidationException, IOException {
 		Cells.persist(data);
-		String hex = Format.encodedBlob(data).toHexString();
+		String hex = Cells.encode(data).toHexString();
 		Blob d2 = Blob.fromHex(hex);
 		ACell rec = Format.read(d2);
 		

@@ -1,12 +1,17 @@
 package convex.core.cvm.transactions;
 
+import convex.core.cvm.ARecordGeneric;
+import convex.core.cvm.Address;
 import convex.core.cvm.Context;
+import convex.core.cvm.Keywords;
+import convex.core.cvm.RecordFormat;
 import convex.core.data.ACell;
-import convex.core.data.ARecord;
-import convex.core.data.Address;
-import convex.core.data.Format;
+import convex.core.data.AVector;
+import convex.core.data.Cells;
+import convex.core.data.Keyword;
 import convex.core.data.type.AType;
 import convex.core.data.type.Transaction;
+import convex.core.lang.RT;
 
 /**
  * Abstract base class for immutable transactions
@@ -19,7 +24,7 @@ import convex.core.data.type.Transaction;
  * indicating a code error or system integrity issue.
  *
  */
-public abstract class ATransaction extends ARecord {
+public abstract class ATransaction extends ARecordGeneric {
 	
 	/**
 	 * Sequence number for transactions where required sequence is currently unknown
@@ -29,28 +34,12 @@ public abstract class ATransaction extends ARecord {
 	protected final Address origin;
 	protected final long sequence;
 
-	protected ATransaction(long count,Address origin, long sequence) {
-		super(count);
+	protected ATransaction(byte tag,RecordFormat format, AVector<ACell> values) {
+		super(tag,format,values);
+		this.origin=RT.ensureAddress(values.get(0));
 		if (origin==null) throw new IllegalArgumentException("Null Origin Address for transaction");
-		this.origin=origin;
-		this.sequence = sequence;
+		this.sequence = RT.ensureLong(values.get(1)).longValue();
 	}
-
-	/**
-	 * Writes this transaction to a byte array, including the message tag
-	 */
-	@Override
-	public abstract int encode(byte[] bs, int pos);
-
-	@Override
-	public int encodeRaw(byte[] bs, int pos) {
-		pos = Format.writeVLQCount(bs,pos, origin.longValue());
-		pos = Format.writeVLQCount(bs,pos, sequence);
-		return pos;
-	}
-
-	@Override
-	public abstract int estimatedEncodingSize();
 
 	/**
 	 * Applies the functional effect of this transaction to the current state. 
@@ -93,6 +82,13 @@ public abstract class ATransaction extends ARecord {
 		return Transaction.INSTANCE;
 	}
 	
+	@Override
+	public ACell get(Keyword key) {
+		if (Keywords.ORIGIN.equals(key)) return origin;
+		if (Keywords.SEQUENCE.equals(key)) return values.get(1);
+		return null;
+	}
+	
 	/**
 	 * Updates this transaction with the specified sequence number
 	 * @param newSequence New sequence number
@@ -114,7 +110,7 @@ public abstract class ATransaction extends ARecord {
 	
 	@Override
 	public boolean equals(ACell o) {
-		return ACell.genericEquals(this, o);
+		return Cells.equalsGeneric(this, o);
 	}
 
 }

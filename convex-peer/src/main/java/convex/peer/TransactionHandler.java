@@ -20,6 +20,8 @@ import convex.core.cpos.Block;
 import convex.core.cpos.BlockResult;
 import convex.core.cpos.CPoSConstants;
 import convex.core.cvm.AccountStatus;
+import convex.core.cvm.Address;
+import convex.core.cvm.Keywords;
 import convex.core.cvm.Peer;
 import convex.core.cvm.PeerStatus;
 import convex.core.cvm.State;
@@ -29,11 +31,9 @@ import convex.core.data.ACell;
 import convex.core.data.AString;
 import convex.core.data.AVector;
 import convex.core.data.AccountKey;
-import convex.core.data.Address;
 import convex.core.data.Cells;
 import convex.core.data.Hash;
 import convex.core.data.Keyword;
-import convex.core.data.Keywords;
 import convex.core.data.SignedData;
 import convex.core.data.Strings;
 import convex.core.data.Vectors;
@@ -261,12 +261,17 @@ public class TransactionHandler extends AThreadedComponent {
 			if (m != null) {
 				ACell id = m.getID();
 				log.trace("Returning transaction result ID {}", id);
-				Result res = br.getResults().get(j);
+				Result res = null;
 				
-				extInfo.put(Keywords.LOC,Vectors.of(blockNum,j));
-				extInfo.put(Keywords.TX,t.getHash());
-				
-				res=res.withExtraInfo(extInfo);
+				try {
+					res=br.getResults().get(j);
+					extInfo.put(Keywords.LOC,Vectors.createLongs(blockNum,j));
+					extInfo.put(Keywords.TX,t.getHash());
+					
+					res=res.withExtraInfo(extInfo);
+				} catch (Exception e) {
+					res=Result.error(ErrorCodes.FATAL, "Failed to produce result").withSource(SourceCodes.PEER);
+				}
 
 				boolean reported = m.returnResult(res);
 				if (!reported) {

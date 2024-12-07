@@ -28,9 +28,8 @@ public class Tag {
     // =========================================
 	// Reference types (0x2x)
 
-	// crypto and security primitives
 	public static final byte REF = (byte) 0x20;
-	public static final byte ADDRESS = (byte) 0x21;
+	
 
 	// =========================================
 	// Strings and Blobs (0x3x)
@@ -57,8 +56,6 @@ public class Tag {
 
 	public static final byte INDEX = (byte) 0x84;
 
-	public static final byte SYNTAX = (byte) 0x88;
-	
 	// ==========================================
 	// Cryptographic Structures (0x9x)
 	public static final byte SIGNED_DATA = (byte) 0x90;
@@ -68,61 +65,25 @@ public class Tag {
 	// Sparsely coded record (0xAx)
 	public static final byte SPARSE_RECORD_BASE = (byte) 0xA0;
 	
-	public static final byte STATE = (byte) 0xA0;
-	public static final byte ACCOUNT_STATUS = (byte) 0xA1;
-	public static final byte PEER_STATUS = (byte) 0xA2;
-
-	public static final byte BELIEF = (byte) 0xAA;
-	public static final byte BLOCK = (byte) 0xAB;
-	public static final byte ORDER = (byte) 0xAC;
-	public static final byte RESULT = (byte)0xAD; // transaction result
-	public static final byte BLOCK_RESULT = (byte) 0xAE;
-
 	//=========================
 	// Byte Flags (0xBx)
 
 	public static final byte BYTE_FLAG_BASE = (byte) 0xB0;
 	public static final byte BYTE_FLAG_MASK = (byte) 0xF0;
 
-	// Booleans
-	public static final byte FALSE = (byte) 0xB0;
-	public static final byte TRUE = (byte) 0xB1;
-
 	// ==========================================
 	// Coded data (0xCx)
 	
 	public static final byte CODE_BASE = (byte) 0xC0;
 
-	// CVM Code
-	public static final byte OP = (byte) 0xC0;
-	public static final byte FN = (byte) 0xCF;
-	public static final byte FN_MULTI = (byte) 0xCB;
-	
 	// ==========================================
 	// Densely coded record (0xDx)
 	public static final byte DENSE_RECORD_BASE = (byte) 0xD0;
-	
-	public static final byte INVOKE = (byte) 0xD0;
-	public static final byte TRANSFER = (byte) 0xD1;
-	public static final byte CALL = (byte) 0xD2;
-	public static final byte MULTI = (byte) 0xD3;
-	
-	public static final byte RECEIPT = (byte) 0xD8;
-	public static final byte RECEIPT_MASK = (byte) 0xFC; // 11111100
-	
-	
-	
-	public static final byte RECEIPT_ERROR_MASK = (byte) 0x01;
-	public static final byte RECEIPT_LOG_MASK = (byte) 0x02;
-
 	
 	//==========================================
 	// Extension values (0xEx)
 
 	public static final byte EXTENSION_VALUE_BASE = (byte) 0xE0;
-
-	// CVM Core definitions
-	public static final byte CORE_DEF = (byte) 0xED;
 
 	//===========================================
 	// Illegal / reserved for special values (0xFx)

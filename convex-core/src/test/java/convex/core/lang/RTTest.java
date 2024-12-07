@@ -10,20 +10,20 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import convex.core.cvm.Address;
+import convex.core.cvm.Keywords;
+import convex.core.cvm.Symbols;
 import convex.core.data.ACell;
 import convex.core.data.AList;
 import convex.core.data.AVector;
-import convex.core.data.Address;
 import convex.core.data.Blob;
 import convex.core.data.Blobs;
 import convex.core.data.Index;
 import convex.core.data.Keyword;
-import convex.core.data.Keywords;
 import convex.core.data.Lists;
 import convex.core.data.Maps;
 import convex.core.data.Strings;
 import convex.core.data.Symbol;
-import convex.core.data.Symbols;
 import convex.core.data.Vectors;
 import convex.core.data.prim.CVMBool;
 import convex.core.data.prim.CVMChar;

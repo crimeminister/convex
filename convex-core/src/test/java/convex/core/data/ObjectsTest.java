@@ -13,6 +13,8 @@ import static org.junit.jupiter.api.Assertions.fail;
 import java.io.IOException;
 
 import convex.core.Constants;
+import convex.core.crypto.Hashing;
+import convex.core.cvm.CVMEncoder;
 import convex.core.data.Refs.RefTreeStats;
 import convex.core.data.util.BlobBuilder;
 import convex.core.exceptions.BadFormatException;
@@ -73,8 +75,46 @@ public class ObjectsTest {
 		doPrintTests(a);
 		doBranchTests(a);
 		doMemorySizeTests(a);
+		doCAD3Tests(a);
 	}
 	
+	
+	private static final CAD3Encoder CAD3_ENCODER=new CAD3Encoder();
+	private static final CVMEncoder CVM_ENCODER=new CVMEncoder();
+	
+	public static void doCAD3Tests(ACell a) {
+		try {
+			Blob enc=Format.encodeMultiCell(a, true);
+			ACell cad=CAD3_ENCODER.decodeMultiCell(enc);
+			assertEquals(a,cad);	
+			assertEquals(cad,a);	
+			
+			// First byte should be tag of top level cell
+			assertEquals(a.getTag(),enc.byteAt(0));
+			
+			ACell cvm=CVM_ENCODER.decodeMultiCell(enc);
+			assertEquals(a,cvm);
+			assertEquals(cvm,a);
+			
+			// re-ecoding should be same result
+			assertEquals(enc,Format.encodeMultiCell(cvm, true));
+		} catch (BadFormatException e) {
+			fail(e);
+		}
+		
+		try {
+			Blob encoding=a.getEncoding();
+			ACell b=Format.read(encoding);
+			assertEquals(b.getHash(),Hashing.sha3(encoding.getBytes()));
+			assertEquals(a,b);
+			
+			b.attachEncoding(null);
+			assertEquals(encoding,b.getEncoding());
+		} catch (BadFormatException e) {
+			fail(e);
+		}
+	}
+
 	private static void doBranchTests(ACell a) {
 		int bc=a.getBranchCount();
 		assertTrue(bc>=0);
@@ -197,10 +237,10 @@ public class ObjectsTest {
 		}
 	}
 
-
 	private static void doCellEncodingTest(ACell a) {
 		Blob enc=a.getEncoding();
 		EncodingTest.checkCodingSize(a);
+		long n=enc.count();
 		
 		// Re=read on encoding
 		ACell b;
@@ -211,7 +251,11 @@ public class ObjectsTest {
 			return;
 		}
 		assertEquals(a,b);
+		assertEquals(b,a);
 		assertEquals(enc,b.getEncoding()); // Encoding should be the same
+		
+		// Truncated encoding is never valid
+		assertThrows(BadFormatException.class,()->Format.read(enc.slice(0,n-1)));
 		
 		// Tag must equal first byte of encoding
 		assertEquals(a.getTag(),enc.byteAt(0));
@@ -228,7 +272,7 @@ public class ObjectsTest {
 	 * @param a Any Cell, might not be CVM value
 	 */
 	private static void doAnyEncodingTests(ACell a) {
-		Blob encoding = Format.encodedBlob(a);
+		Blob encoding = Cells.encode(a);
 		if (a==null) {
 			assertSame(Blob.NULL_ENCODING,encoding);
 			return;
@@ -247,7 +291,7 @@ public class ObjectsTest {
 		
 		// If length exceeds MAX_EMBEDDED_LENGTH, cannot be an embedded value
 		if (encoding.count > Format.MAX_EMBEDDED_LENGTH) {
-			assertFalse(Format.isEmbedded(a),()->"Should not be embedded: "+Utils.getClassName(a)+ " = "+Utils.toString(a));
+			assertFalse(Cells.isEmbedded(a),()->"Should not be embedded: "+Utils.getClassName(a)+ " = "+Utils.toString(a));
 		}
 
 		try {
@@ -315,7 +359,7 @@ public class ObjectsTest {
 				long cms=childRef.getMemorySize();
 				childMem+=cms;
 			}
-			boolean embedded=Format.isEmbedded(a);
+			boolean embedded=Cells.isEmbedded(a);
 			if (embedded) {
 				assertEquals(memorySize,childMem);
 			} else {

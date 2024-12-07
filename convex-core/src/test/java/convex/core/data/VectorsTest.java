@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.Test;
 
+import convex.core.cvm.Symbols;
 import convex.core.data.prim.CVMLong;
 import convex.core.data.util.VectorBuilder;
 import convex.core.exceptions.BadFormatException;
@@ -158,6 +159,12 @@ public class VectorsTest {
 			assertEquals(ci, lv.get(i));
 		}
 		assertEquals(300L, lv.count());
+	}
+	
+	@Test
+	public void testCreateLongs() {
+		assertEquals(Vectors.of(1,2,3),Vectors.createLongs(new long[] {1,2,3}));
+		assertEquals(Vectors.of(1,2,3),Vectors.createLongs(1,2,3));
 	}
 
 	@Test

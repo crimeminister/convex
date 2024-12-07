@@ -2,7 +2,6 @@ package convex.core.cvm.ops;
 
 import convex.core.cvm.AOp;
 import convex.core.data.ACell;
-import convex.core.data.ASequence;
 import convex.core.data.AVector;
 import convex.core.data.Format;
 import convex.core.data.IRefFunction;
@@ -18,9 +17,10 @@ import convex.core.exceptions.InvalidDataException;
  */
 public abstract class AMultiOp<T extends ACell> extends AOp<T> {
 	protected final AVector<AOp<ACell>> ops;
-
-	protected AMultiOp(AVector<AOp<ACell>> ops) {
-		// TODO: need to think about bounds on number of child ops?
+	protected final byte tag;
+	
+	protected AMultiOp(byte tag,AVector<AOp<ACell>> ops) {
+		this.tag=tag;
 		this.ops = ops;
 	}
 
@@ -30,10 +30,10 @@ public abstract class AMultiOp<T extends ACell> extends AOp<T> {
 	 * @param newOps
 	 * @return
 	 */
-	protected abstract AMultiOp<T> recreate(ASequence<AOp<ACell>> newOps);
+	protected abstract AMultiOp<T> recreate(AVector<AOp<ACell>> newOps);
 
 	@Override
-	public int encodeRaw(byte[] bs, int pos) {
+	public int encodeAfterOpcode(byte[] bs, int pos) {
 		pos = Format.write(bs,pos, ops);
 		return pos;
 	}
@@ -45,7 +45,7 @@ public abstract class AMultiOp<T extends ACell> extends AOp<T> {
 
 	@Override
 	public AMultiOp<T> updateRefs(IRefFunction func) {
-		ASequence<AOp<ACell>> newOps = ops.updateRefs(func);
+		AVector<AOp<ACell>> newOps = ops.updateRefs(func);
 		return recreate(newOps);
 	}
 

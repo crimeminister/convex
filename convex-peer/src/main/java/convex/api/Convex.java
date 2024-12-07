@@ -20,7 +20,9 @@ import convex.core.SourceCodes;
 import convex.core.crypto.AKeyPair;
 import convex.core.cvm.AOp;
 import convex.core.cvm.AccountStatus;
+import convex.core.cvm.Address;
 import convex.core.cvm.State;
+import convex.core.cvm.Symbols;
 import convex.core.cvm.ops.Special;
 import convex.core.cvm.transactions.ATransaction;
 import convex.core.cvm.transactions.Invoke;
@@ -29,14 +31,12 @@ import convex.core.data.ABlob;
 import convex.core.data.ACell;
 import convex.core.data.AList;
 import convex.core.data.AccountKey;
-import convex.core.data.Address;
 import convex.core.data.Blob;
 import convex.core.data.Cells;
 import convex.core.data.Hash;
 import convex.core.data.List;
 import convex.core.data.Lists;
 import convex.core.data.SignedData;
-import convex.core.data.Symbols;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.ResultException;
 import convex.core.lang.RT;
@@ -351,7 +351,11 @@ public abstract class Convex implements AutoCloseable {
 	public CompletableFuture<Address> createAccount(AccountKey publicKey) {
 		Invoke trans = Invoke.create(address, 0, Lists.of(Symbols.CREATE_ACCOUNT, publicKey));
 		CompletableFuture<Result> fr = transact(trans);
-		return fr.thenApply(r -> r.getValue());
+		return fr.thenCompose(r -> {
+			if (r.isError()) return CompletableFuture.failedFuture(new ResultException(r));
+			ACell a=r.getValue();
+			return CompletableFuture.completedFuture((Address)a);
+		});
 	}
 
 	/**
@@ -479,15 +483,21 @@ public abstract class Convex implements AutoCloseable {
 				}
 			}
 			
-			// If local, update sequence number based on latest consensus state
-			Server s=getLocalServer();
-			if (s!=null) {
-				State state=s.getPeer().getConsensusState();
-				AccountStatus as=state.getAccount(origin);
-				if (as!=null) {
-					long expected=as.getSequence()+1;
-					if (expected>seq) {
-						seq=expected;
+			
+			if (sequence!=null) {
+				// use auto-sequence value if available
+				seq=sequence+1; 
+			} else {
+				// If local, update sequence number based on latest consensus state
+				Server s=getLocalServer();
+				if (s!=null) {
+					State state=s.getPeer().getConsensusState();
+					AccountStatus as=state.getAccount(origin);
+					if (as!=null) {
+						long expected=as.getSequence()+1;
+						if (expected>seq) {
+							seq=expected;
+						}
 					}
 				}
 			}
@@ -517,7 +527,8 @@ public abstract class Convex implements AutoCloseable {
 	 * @return A Future for the result of the transaction
 	 */
 	public CompletableFuture<Result> transact(String code) {
-		return transact((ACell)Reader.read(code));
+		ACell cmd=buildCodeForm(code);
+		return transact(cmd);
 	}
 	
 	/**
@@ -532,7 +543,8 @@ public abstract class Convex implements AutoCloseable {
 		if (isPreCompile()) {
 			return preCompile(code).thenCompose(r->{
 				if (r.isError()) return CompletableFuture.completedFuture(r);
-				ATransaction trans = Invoke.create(getAddress(), ATransaction.UNKNOWN_SEQUENCE, r.getValue());
+				ACell compiledCode=r.getValue();
+				ATransaction trans = Invoke.create(getAddress(), ATransaction.UNKNOWN_SEQUENCE, compiledCode);
 				return transact(trans);
 			});
 		} else {
@@ -560,7 +572,8 @@ public abstract class Convex implements AutoCloseable {
 	 * @throws InterruptedException in case of interrupt while waiting
 	 */
 	public synchronized Result transactSync(String code) throws InterruptedException {
-		ATransaction trans = Invoke.create(getAddress(), ATransaction.UNKNOWN_SEQUENCE, code);
+		ACell form=buildCodeForm(code);
+		ATransaction trans = Invoke.create(getAddress(), ATransaction.UNKNOWN_SEQUENCE, form);
 		return transactSync(trans);
 	}
 

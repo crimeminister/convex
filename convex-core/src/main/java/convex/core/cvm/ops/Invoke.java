@@ -2,13 +2,13 @@ package convex.core.cvm.ops;
 
 import convex.core.cvm.AFn;
 import convex.core.cvm.AOp;
+import convex.core.cvm.CVMTag;
 import convex.core.cvm.Context;
-import convex.core.cvm.Ops;
 import convex.core.data.ACell;
 import convex.core.data.ASequence;
 import convex.core.data.AVector;
 import convex.core.data.Blob;
-import convex.core.data.Format;
+import convex.core.data.Cells;
 import convex.core.data.Vectors;
 import convex.core.data.type.Types;
 import convex.core.data.util.BlobBuilder;
@@ -23,10 +23,10 @@ import convex.core.lang.RT;
  *
  * @param <T> Result type of Op
  */
-public class Invoke<T extends ACell> extends AMultiOp<T> {
+public class Invoke<T extends ACell> extends AFlatMultiOp<T> {
 
 	protected Invoke(AVector<AOp<ACell>> ops) {
-		super(ops);
+		super(CVMTag.OP_INVOKE,ops);
 	}
 
 	public static <T extends ACell> Invoke<T> create(ASequence<AOp<ACell>> ops) {
@@ -38,7 +38,12 @@ public class Invoke<T extends ACell> extends AMultiOp<T> {
 		return create(Vectors.create(ops));
 	}
 	
-	// Build an invoke using the given values
+	/**
+	 *  Build an invoke using the given values. Slow, for testing purposes
+	 * @param <T>
+	 * @param vals
+	 * @return
+	 */
 	public static <T extends ACell> Invoke<T> build(Object... vals) {
 		int n=vals.length;
 		AOp<?>[] ops=new AOp[n];
@@ -58,7 +63,7 @@ public class Invoke<T extends ACell> extends AMultiOp<T> {
 	}
 
 	@Override
-	protected Invoke<T> recreate(ASequence<AOp<ACell>> newOps) {
+	protected Invoke<T> recreate(AVector<AOp<ACell>> newOps) {
 		if (ops == newOps) return this;
 		return create(newOps);
 	}
@@ -97,7 +102,11 @@ public class Invoke<T extends ACell> extends AMultiOp<T> {
 		// Specific check for an error so we can add stack trace info
 		if (ctx.isError()) {
 			// getError()must be non-null at this point
-			ctx.getError().addTrace("In expression: "+RT.print(this));
+			try {
+			   ctx.getError().addTrace("In expression: "+RT.print(this));
+			} catch (Exception e) {
+			   ctx.getError().addTrace("TRACE FAILED");
+			}
 		}
 
 		return ctx;
@@ -115,11 +124,6 @@ public class Invoke<T extends ACell> extends AMultiOp<T> {
 		return bb.check(limit);
 	}
 
-	@Override
-	public byte opCode() {
-		return Ops.INVOKE;
-	}
-
 	/**
 	 * Read an Invoke Op from a Blob encoding
 	 * 
@@ -129,9 +133,9 @@ public class Invoke<T extends ACell> extends AMultiOp<T> {
 	 * @throws BadFormatException In the event of any encoding error
 	 */
 	public static<T extends ACell> Invoke<T> read(Blob b, int pos) throws BadFormatException {
-		int epos=pos+Ops.OP_DATA_OFFSET; // skip tag and opcode to get to data
-		AVector<AOp<ACell>> ops = Format.read(b,epos);
-		epos+=Format.getEncodingLength(ops);
+		int epos=pos;
+		AVector<AOp<ACell>> ops = Vectors.read(b,epos);
+		epos+=Cells.getEncodingLength(ops);
 		
 		Invoke<T> result=create(ops);
 		result.attachEncoding(b.slice(pos, epos));

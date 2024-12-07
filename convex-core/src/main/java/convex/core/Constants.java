@@ -19,7 +19,8 @@ public class Constants {
 	/**
 	 * Initial timestamp for new States
 	 */
-	public static final long INITIAL_TIMESTAMP = Instant.parse("2020-02-02T00:20:20.0202Z").toEpochMilli();
+	public static final long INITIAL_TIMESTAMP = Instant.parse("2020-12-06T05:08:13.0864Z").toEpochMilli();
+	// public static final long INITIAL_TIMESTAMP = Instant.parse("2024-12-06T05:08:13.0864Z").toEpochMilli();
 
 	/**
 	 * Juice price in the initial Genesis State
@@ -170,6 +171,19 @@ public class Constants {
 	 * Maximum depth of lookups via parent accounts
 	 */
 	public static final int LOOKUP_DEPTH = 16;
+
+	/**
+	 * SLIP-44 Chain code for Convex CVM
+	 * 
+	 * Convex Coin is coin type 864 in SLIP-0044 : 
+	 * https://github.com/satoshilabs/slips/blob/master/slip-0044.md
+	 */
+	public static final int CHAIN_CODE = 864;
+
+	/**
+	 * Default derivation path for Convex keys
+	 */
+	public static final String DEFAULT_BIP39_PATH = "m/44/"+CHAIN_CODE+"/0/0/0";
 
 
 }

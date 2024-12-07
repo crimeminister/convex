@@ -12,10 +12,10 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import convex.core.cvm.AOp;
+import convex.core.cvm.Address;
 import convex.core.cvm.Context;
 import convex.core.cvm.Juice;
 import convex.core.data.ACell;
-import convex.core.data.Address;
 import convex.core.data.Blob;
 import convex.core.data.Cells;
 import convex.core.data.Format;
@@ -106,11 +106,11 @@ public class ParamTestEvals {
 	@Test
 	public void testOpRoundTrip() throws BadFormatException, IOException {
 		AOp<?> op = compile(source);
-		Blob b = Format.encodedBlob(op);
+		Blob b = Cells.encode(op);
 		Cells.persist(op); // persist to allow re-creation
 
 		AOp<?> op2 = Format.read(b);
-		Blob b2 = Format.encodedBlob(op2);
+		Blob b2 = Cells.encode(op2);
 		assertEquals(b, b2);
 
 		ACell result = eval(op2).getResult();

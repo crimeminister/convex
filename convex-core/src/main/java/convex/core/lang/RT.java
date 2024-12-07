@@ -5,10 +5,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 import convex.core.Constants;
 import convex.core.cvm.AFn;
+import convex.core.cvm.Address;
 import convex.core.cvm.transactions.ATransaction;
 import convex.core.data.ABlob;
 import convex.core.data.ABlobLike;
@@ -25,11 +25,11 @@ import convex.core.data.AString;
 import convex.core.data.ASymbolic;
 import convex.core.data.AVector;
 import convex.core.data.AccountKey;
-import convex.core.data.Address;
 import convex.core.data.Blobs;
 import convex.core.data.Cells;
 import convex.core.data.Hash;
 import convex.core.data.IAssociative;
+import convex.core.data.Index;
 import convex.core.data.Keyword;
 import convex.core.data.Lists;
 import convex.core.data.MapEntry;
@@ -1562,12 +1562,7 @@ public class RT {
 		if (!(a instanceof AMap))
 			return null;
 		AMap<ACell, R> m = (AMap<ACell, R>) a;
-		return m.reduceValues(new BiFunction<AVector<R>, R, AVector<R>>() {
-			@Override
-			public AVector<R> apply(AVector<R> t, R u) {
-				return t.conj(u);
-			}
-		}, Vectors.empty());
+		return m.values();
 	}
 
 	/**
@@ -1615,6 +1610,13 @@ public class RT {
 			return Maps.empty();
 		if (a instanceof AHashMap)
 			return (AHashMap<K, V>) a;
+		return null;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static <K extends ABlobLike<?>, V extends ACell> Index<K, V> ensureIndex(ACell a) {
+		if (a instanceof Index)
+			return (Index<K, V>) a;
 		return null;
 	}
 
@@ -1882,6 +1884,17 @@ public class RT {
 		sb.append((byte)']');
 		return sb.check(limit);
 	}
+
+	public static long[] toLongArray(AVector<?> v) {
+		int n=v.size();
+		long[] result=new long[n];
+		for (int i=0; i<n; i++) {
+			result[i]=RT.ensureLong(v.get(i)).longValue();
+		}
+		return result;
+	}
+
+
 
 
 }

@@ -39,8 +39,11 @@ public class StateTest {
 	@Test
 	public void testEmptyState() {
 		State s = State.EMPTY;
+		assertSame(s,s.updateRefs(rf->rf));
+		
 		AVector<AccountStatus> accts = s.getAccounts();
 		assertEquals(0, accts.count());
+
 
 		RecordTest.doRecordTests(s);
 	}
@@ -70,7 +73,7 @@ public class StateTest {
 		// TODO: consider if cached ref in state should now have persisted status?
 		// assertTrue(s.getRef().isPersisted());
 
-		Blob b = Format.encodedBlob(s);
+		Blob b = Cells.encode(s);
 		State s2 = Format.read(b);
 		assertEquals(s, s2);
 

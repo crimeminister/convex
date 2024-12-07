@@ -20,10 +20,8 @@ import convex.core.data.ACell;
 import convex.core.data.AMap;
 import convex.core.data.AVector;
 import convex.core.data.AccountKey;
-import convex.core.data.Address;
 import convex.core.data.Hash;
 import convex.core.data.Keyword;
-import convex.core.data.Keywords;
 import convex.core.data.Maps;
 import convex.core.data.Ref;
 import convex.core.data.SignedData;
@@ -606,7 +604,7 @@ public class Peer {
 		}
 		
 		result=result.updateBelief(newBelief);
-		result=result.updateState();
+		// result=result.updateState();
 		return result;
 	}
 

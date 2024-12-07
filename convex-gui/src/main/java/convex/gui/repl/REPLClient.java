@@ -1,4 +1,4 @@
-package convex.gui.client;
+package convex.gui.repl;
 
 import java.awt.BorderLayout;
 import java.awt.Dimension;
@@ -13,10 +13,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import convex.api.Convex;
+import convex.core.crypto.AKeyPair;
+import convex.core.crypto.wallet.AWalletEntry;
 import convex.gui.components.AbstractGUI;
 import convex.gui.components.ConnectPanel;
 import convex.gui.keys.KeyRingPanel;
-import convex.gui.panels.REPLPanel;
+import convex.gui.keys.UnlockWalletDialog;
+import convex.gui.utils.Toolkit;
 import net.miginfocom.swing.MigLayout;
 
 /**
@@ -25,9 +28,9 @@ import net.miginfocom.swing.MigLayout;
  * Doesn't run a Peer. Connects to convex.world.
  */
 @SuppressWarnings("serial")
-public class ConvexClient extends AbstractGUI {
+public class REPLClient extends AbstractGUI {
 
-	private static final Logger log = LoggerFactory.getLogger(ConvexClient.class.getName());
+	private static final Logger log = LoggerFactory.getLogger(REPLClient.class.getName());
 
 	public static long maxBlock = 0;
 
@@ -46,7 +49,7 @@ public class ConvexClient extends AbstractGUI {
 		if (convex==null) {
 			System.exit(1);
 		}
-		ConvexClient gui=new ConvexClient(convex);
+		REPLClient gui=new REPLClient(convex);
 		gui.run();
 		gui.waitForClose();
 		System.exit(0);
@@ -60,8 +63,8 @@ public class ConvexClient extends AbstractGUI {
 	 * Create the application.
 	 * @param convex Convex client instance
 	 */
-	public ConvexClient(Convex convex) {
-		super ("Convex Client");
+	public REPLClient(Convex convex) {
+		super ("Convex Terminal");
 		setLayout(new BorderLayout());
 		replPanel=new REPLPanel(convex);
 		this.add(tabs, BorderLayout.CENTER);
@@ -74,7 +77,22 @@ public class ConvexClient extends AbstractGUI {
 		this.setPreferredSize(new Dimension(800,600));
 		
 		this.convex=convex;
-
+	}
+	
+	@Override
+	public void afterRun() {
+		if (convex.getKeyPair()==null) {
+			AWalletEntry we=KeyRingPanel.findWalletEntry(convex);
+			if (we!=null) {
+				if (we.isLocked()) {
+					UnlockWalletDialog.offerUnlock(this, we);
+				}
+				AKeyPair kp=we.getKeyPair();
+				convex.setKeyPair(kp);
+			} else {
+				Toolkit.showMessge(this, "The key for this account is not in your key ring.\n\nTerminal opened in Query mode.");
+			}
+		}
 	}
 
 	public void switchPanel(String title) {

@@ -13,10 +13,14 @@ import convex.core.crypto.Hashing;
 import convex.core.cvm.AFn;
 import convex.core.cvm.AOp;
 import convex.core.cvm.AccountStatus;
+import convex.core.cvm.Address;
 import convex.core.cvm.Context;
 import convex.core.cvm.Juice;
+import convex.core.cvm.Keywords;
 import convex.core.cvm.PeerStatus;
 import convex.core.cvm.State;
+import convex.core.cvm.Symbols;
+import convex.core.cvm.Syntax;
 import convex.core.cvm.exception.AExceptional;
 import convex.core.cvm.exception.ErrorValue;
 import convex.core.cvm.exception.HaltValue;
@@ -38,22 +42,17 @@ import convex.core.data.ASet;
 import convex.core.data.AString;
 import convex.core.data.AVector;
 import convex.core.data.AccountKey;
-import convex.core.data.Address;
 import convex.core.data.Blob;
 import convex.core.data.Cells;
-import convex.core.data.Format;
 import convex.core.data.Hash;
 import convex.core.data.Index;
 import convex.core.data.Keyword;
-import convex.core.data.Keywords;
 import convex.core.data.List;
 import convex.core.data.MapEntry;
 import convex.core.data.Maps;
 import convex.core.data.Sets;
 import convex.core.data.Strings;
 import convex.core.data.Symbol;
-import convex.core.data.Symbols;
-import convex.core.data.Syntax;
 import convex.core.data.Vectors;
 import convex.core.data.prim.AInteger;
 import convex.core.data.prim.ANumeric;
@@ -1271,7 +1270,7 @@ public class Core {
 			Index<Address,ACell> holdings=as.getHoldings();
 
 			// we get the target accounts holdings for the currently executing account
-			ACell result=holdings.get(context.getAddress());
+			ACell result=(holdings==null)?null:holdings.get(context.getAddress());
 
 			return context.withResult(Juice.LOOKUP, result);
 		}
@@ -1808,7 +1807,7 @@ public class Core {
 			if (args.length != 1) return context.withArityError(exactArityMessage(1, args.length));
 
 			ACell a = args[0];
-			Blob encoding=Format.encodedBlob(a);
+			Blob encoding=Cells.encode(a);
 			long juice=Juice.buildBlobCost(encoding.count());
 			if (!context.checkJuice(juice)) return context.withJuiceError();
 			

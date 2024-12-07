@@ -10,10 +10,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.Test;
 
 import convex.core.ErrorCodes;
+import convex.core.cvm.Address;
 import convex.core.cvm.Context;
 import convex.core.data.AVector;
-import convex.core.data.Address;
 import convex.core.data.prim.CVMDouble;
+import convex.core.data.prim.CVMLong;
 import convex.core.lang.ACVMTest;
 import convex.core.lang.RT;
 import convex.lib.AssetTester;
@@ -198,6 +199,64 @@ public class TorusTest extends ACVMTest {
 		});
 	}
 
+	@Test public void testLiquidityZeroTokens() {
+		Context ctx=context();
+		ctx= exec(ctx,"(def BROK (deploy (@convex.fungible/build-token {:supply 1000000})))");
+		
+		ctx= exec(ctx,"(def BM (call torus (create-market BROK)))");
+		assertNull(eval(ctx,"(torus/price BROK)"));
+		
+		ctx= exec(ctx,"(torus/add-liquidity BROK 0 1000)");
+		assertEquals(CVMLong.ZERO,ctx.getResult());
+		assertNull(eval(ctx,"(torus/price BROK)"));
+
+		ctx= exec(ctx,"(torus/add-liquidity BROK 1000 1000)");
+		assertEquals(CVMDouble.create(2.0),eval(ctx,"(torus/price BROK)"));
+		
+		CVMLong E_SHARES=CVMLong.create(1414); // 1000 * sqrt(2)
+		assertEquals(E_SHARES,eval(ctx,"(asset/balance BM *address*)"));
+	}
+	
+	@Test public void testBadWithdraw() {
+		Context ctx=context();
+		ctx= exec(ctx,"(def TOK (deploy (@convex.fungible/build-token {:supply 10000})))");
+		ctx= exec(ctx,"(def TM (torus/get-market TOK))");
+		
+		CVMLong E_SHARES=CVMLong.create(10000);
+		ctx= exec(ctx,"(torus/add-liquidity TOK 5000 20000)");
+		assertEquals(E_SHARES,ctx.getResult());
+		assertEquals(RT.cvm(4.0),eval(ctx,"(torus/price TOK)"));
+		
+		assertFundsError(step(ctx,"(torus/withdraw-liquidity TOK 10001)"));
+		assertArgumentError(step(ctx,"(torus/withdraw-liquidity TOK -100)"));
+	}
+	
+	@Test public void testLiquidityZeroCVM() {
+		// Bug fix for #517, thanks Ash!
+		Context ctx=context();
+		ctx= exec(ctx,"(def BROK (deploy (@convex.fungible/build-token {:supply 1000000})))");
+		
+		ctx= exec(ctx,"(def BM (call torus (create-market BROK)))");
+		assertNull(eval(ctx,"(torus/price BROK)"));
+		
+		ctx= exec(ctx,"(torus/add-liquidity BROK 1000 0)");
+		assertEquals(CVMLong.ZERO,ctx.getResult());
+		assertNull(eval(ctx,"(torus/price BROK)"));
+
+		ctx= exec(ctx,"(torus/add-liquidity BROK 0 1000)");
+		CVMLong E_SHARES=CVMLong.create(1000);
+		assertEquals(E_SHARES,ctx.getResult());
+		assertEquals(CVMDouble.ONE,eval(ctx,"(torus/price BROK)"));
+		assertEquals(E_SHARES,eval(ctx,"(asset/balance BM *address*)"));
+
+		// check withdrawing all shares
+		ctx= exec(ctx,"(torus/withdraw-liquidity BROK "+E_SHARES+")");
+		assertNull(eval(ctx,"(torus/price BROK)"));
+		assertEquals(CVMLong.ZERO,eval(ctx,"(asset/balance BM *address*)"));
+		assertEquals(CVMLong.ZERO,eval(ctx,"(asset/balance BROK BM)"));
+		assertEquals(CVMLong.ZERO,eval(ctx,"(balance BM)"));
+	}
+	
 	@Test public void testTorusAPI() {
 		Context ctx=context();
 

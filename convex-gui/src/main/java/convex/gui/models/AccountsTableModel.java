@@ -4,7 +4,7 @@ import convex.core.cvm.State;
 import convex.core.data.ACell;
 import convex.core.data.AMap;
 import convex.core.cvm.AccountStatus;
-import convex.core.data.Address;
+import convex.core.cvm.Address;
 import convex.core.data.Keyword;
 import convex.core.init.Init;
 import convex.core.text.Text;
@@ -60,7 +60,7 @@ public class AccountsTableModel extends BaseTableModel {
 		case 3:
 			return as.getBalance();
 		case 4: {
-			ACell o = as.getHoldings().get(Init.REGISTRY_ADDRESS);
+			ACell o = as.getHolding(Init.REGISTRY_ADDRESS);
 			if (o == null) return "";
 			if (!(o instanceof AMap)) return "<Invalid registration, not a map!>";
 			AMap<Keyword, ACell> a = (AMap<Keyword, ACell>) o;

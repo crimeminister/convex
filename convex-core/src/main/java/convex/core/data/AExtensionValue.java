@@ -13,7 +13,7 @@ public abstract class AExtensionValue extends ABlobLike<CVMLong> {
 	/**
 	 * Length of an Address in bytes (when considered as a Blob)
 	 */
-	static final int BYTE_LENGTH = 8;
+	protected static final int BYTE_LENGTH = 8;
 
 	@Override
 	public final long count() {
@@ -97,7 +97,7 @@ public abstract class AExtensionValue extends ABlobLike<CVMLong> {
 	@Override
 	public boolean equals(ACell a) {
 		if (a instanceof AExtensionValue) return equals((AExtensionValue) a);
-		return false;
+		return Cells.equalsGeneric(this, a);
 	}
 	
 	protected boolean equals(AExtensionValue a) {

@@ -1,9 +1,9 @@
 package convex.core.util;
 
 import convex.core.ErrorCodes;
+import convex.core.cvm.Address;
 import convex.core.cvm.exception.ErrorValue;
 import convex.core.data.ARecord;
-import convex.core.data.Address;
 import convex.core.data.Keyword;
 
 /**
@@ -18,6 +18,11 @@ import convex.core.data.Keyword;
 public class ErrorMessages {
 
 
+
+	public static final String TODO = "Not yet implemented.";
+	public static final String UNREACHABLE = "Should be unreachable";
+	public static final String RECORD_VALUE_NUMBER = "Wrong number of record values";
+	public static final String BAD_AMOUNT = "Illegal Convex Coin amount";
 
 	public static String immutable(Object a) {
 		return "Object is immutable: "+a.getClass();
@@ -35,7 +40,7 @@ public class ErrorMessages {
 		return "Insufficient funds in account ["+source+"] required="+amount;
 	}
 
-	public static String unknownKey(Keyword key, ARecord record) {
+	public static String unknownKey(Keyword key, ARecord<?,?> record) {
 		return "Unknown key ["+key+"] for record type: "+record.getClass();
 	}
 
@@ -60,5 +65,9 @@ public class ErrorMessages {
 	}
 	
 	public static ErrorValue INVALID_NUMERIC = ErrorValue.create(ErrorCodes.ARGUMENT,"Invalid numeric result");
+
+	public static String badTagMessage(byte tag) {
+		return "Unrecognised tag byte 0x"+Utils.toHexString(tag);
+	}
 
 }

@@ -1,5 +1,6 @@
 package convex.core.data.prim;
 
+import convex.core.cvm.CVMTag;
 import convex.core.data.ACell;
 import convex.core.data.Cells;
 import convex.core.data.Tag;
@@ -9,14 +10,14 @@ import convex.core.lang.RT;
 /**
  * Class implementing the CAD3 extended byte flags `0xB2` to `0xBF`
  */
-public class ByteFlagExtended extends AByteFlag {
+public class ByteFlag extends AByteFlag {
 
-	private static final ByteFlagExtended[] cache = new ByteFlagExtended[16];
+	private static final ByteFlag[] cache = new ByteFlag[16];
 	
 	static {
-		for (int i=2; i<16;i++) {
+		for (int i=0; i<16;i++) {
 			byte tag=(byte)(Tag.BYTE_FLAG_BASE+i);
-			cache[i] = Cells.intern(new ByteFlagExtended(tag));
+			cache[i] = Cells.intern(new ByteFlag(tag));
 		}
 	}
 	
@@ -26,22 +27,27 @@ public class ByteFlagExtended extends AByteFlag {
 	 * Private constructor, to enforce singleton instances
 	 * @param tag
 	 */
-	private ByteFlagExtended(byte tag) {
+	public ByteFlag(byte tag) {
 		this.tag=tag;
 	}
 
 	/**
-	 * Creates an extended byte flag for the given value 2-15
+	 * Creates an extended byte flag for the given value 0-15
 	 * @param value
 	 * @return
 	 */
-	public static ByteFlagExtended create(long value) {
+	public static ByteFlag create(long value) {
 		int m=(int)(value&0xf);
 		if (m!=value) return null; // out of range
 		return unsafeCreate(m);
 	}
 	
-	static ByteFlagExtended unsafeCreate(int value) {
+	public static ByteFlag forTag(byte tag) {
+		if ((tag & 0xF0)!=Tag.BYTE_FLAG_BASE) return null;
+		return new ByteFlag(tag);
+	}
+	
+	static ByteFlag unsafeCreate(int value) {
 		return cache[value];
 	}
 
@@ -53,7 +59,7 @@ public class ByteFlagExtended extends AByteFlag {
 	}
 
 	@Override public boolean isCVMValue() {
-		return (tag==Tag.TRUE)||(tag==Tag.FALSE);
+		return (tag==CVMTag.TRUE)||(tag==CVMTag.FALSE);
 	}
 	
 	@Override
@@ -74,7 +80,7 @@ public class ByteFlagExtended extends AByteFlag {
 	@Override
 	public boolean equals(ACell a) {
 		if (a==null) return false;
-		return tag==a.getTag();
+		return tag==a.getTag(); // equivalent to comparing full encoding
 	}
 
 	@Override
@@ -82,5 +88,7 @@ public class ByteFlagExtended extends AByteFlag {
 		return RT.printCAD3(sb,limit,this);
 		
 	}
+
+
 
 }

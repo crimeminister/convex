@@ -2,6 +2,7 @@ package convex.core;
 
 import static convex.test.Assertions.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -13,12 +14,12 @@ import convex.core.cpos.Block;
 import convex.core.cpos.CPoSConstants;
 import convex.core.cpos.Order;
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.Address;
 import convex.core.cvm.Peer;
 import convex.core.cvm.PeerStatus;
 import convex.core.cvm.State;
 import convex.core.cvm.transactions.Invoke;
 import convex.core.data.AccountKey;
-import convex.core.data.Address;
 import convex.core.data.Index;
 import convex.core.data.RecordTest;
 import convex.core.data.SignedData;
@@ -113,6 +114,9 @@ public class PeerTest {
 		p=p.updateBelief(b);
 		assertEquals(ST,p.getConsensusState());
 		p=p.updateState();
+		Result r=p.getResult(0, 0);
+		assertFalse(r.isError());
+		assertEquals(CVMLong.create(13),r.getValue());
 		assertEquals(CVMLong.create(13),p.executeQuery(Reader.read("foo"), addr).getResult());
 
 		Block b2=Block.of(0, kp.signData(Invoke.create(addr, 1,"(def bar 17)")));
