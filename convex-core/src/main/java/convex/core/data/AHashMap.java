@@ -1,7 +1,5 @@
 package convex.core.data;
 
-import java.util.HashSet;
-import java.util.Map;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -20,26 +18,22 @@ public abstract class AHashMap<K extends ACell, V extends ACell> extends AMap<K,
 		return Maps.empty();
 	}
 
-	/**
-	 * Dissoc given a Ref to the key value.
-	 * @param key Ref of key to remove
-	 * @return Map with specified key removed.
-	 */
-	public abstract AHashMap<K, V> dissocRef(Ref<K> key);
-
-	public abstract AHashMap<K, V> assocRef(Ref<K> keyRef, V value);
-
 	@Override
 	public abstract AHashMap<K, V> assoc(ACell key, ACell value);
-
-	@Override
-	public abstract AHashMap<K, V> dissoc(ACell key);
-
-	protected abstract AHashMap<K, V> assocRef(Ref<K> keyRef, V value, int shift);
+	
+	public abstract AHashMap<K, V> assocRef(Ref<K> keyRef, V value);
 
 	public abstract AHashMap<K, V> assocEntry(MapEntry<K, V> e);
 
-	protected abstract AHashMap<K, V> assocEntry(MapEntry<K, V> e, int shift);
+	@Override
+	public abstract AHashMap<K, V> dissoc(ACell key);
+	
+	/**
+	 * Dissoc given a Hash for the key value.
+	 * @param key Hash of key to remove
+	 * @return Map with specified key removed.
+	 */
+	public abstract AHashMap<K, V> dissocHash(Hash key);
 
 	/**
 	 * Merge another map into this map. Replaces existing entries if they are
@@ -125,17 +119,11 @@ public abstract class AHashMap<K extends ACell, V extends ACell> extends AMap<K,
 	public abstract AHashMap<K, V> mapEntries(Function<MapEntry<K, V>, MapEntry<K, V>> func);
 
 	/**
-	 * Validates the map with a given hex prefix for the Hash. This is necessary to ensure that
-	 * child maps are valid, in particular have the correct shift level and that all
-	 * key hashes start with the correct prefix of hex characters.
+	 * Validates the map checking the prefix of children is consistent for the given shift level
 	 * 
-	 * TODO: consider faster way of passing prefix than hex string, probably a
-	 * byte[] stack.
-	 * 
-	 * @param string
 	 * @throws InvalidDataException
 	 */
-	protected abstract void validateWithPrefix(String string) throws InvalidDataException;
+	protected abstract void validateWithPrefix(Hash prefix, int shift) throws InvalidDataException;
 
 	@Override
 	public abstract AHashMap<K,V> updateRefs(IRefFunction func);
@@ -175,13 +163,11 @@ public abstract class AHashMap<K extends ACell, V extends ACell> extends AMap<K,
 		return Vectors.wrap(keys);
 	}
 	
-	@Override
-	public HashSet<Entry<K, V>> entrySet() {
-		int len = size();
-		HashSet<Map.Entry<K, V>> h = new HashSet<Map.Entry<K, V>>(len);
-		accumulateEntrySet(h);
-		return h;
-	}
+	/**
+	 * Gets the Hash for the first entry. Useful for prefix comparisons etc.
+	 * @return
+	 */
+	protected abstract Hash getFirstHash();
 	
 	@Override
 	public AHashMap<K,V> slice(long start) {

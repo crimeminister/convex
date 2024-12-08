@@ -6,9 +6,9 @@ import java.awt.Dimension;
 import javax.swing.JPanel;
 import javax.swing.JTextArea;
 
-import convex.core.State;
-import convex.core.data.AccountStatus;
-import convex.core.data.Address;
+import convex.core.cvm.State;
+import convex.core.cvm.AccountStatus;
+import convex.core.cvm.Address;
 import convex.core.data.Cells;
 import convex.core.lang.RT;
 import convex.core.text.Text;

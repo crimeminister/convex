@@ -7,16 +7,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import org.junit.jupiter.api.Test;
 
+import convex.core.cvm.Address;
+import convex.core.cvm.Context;
 import convex.core.data.ACell;
 import convex.core.data.AVector;
-import convex.core.data.Address;
 import convex.core.data.Keyword;
 import convex.core.data.Symbol;
 import convex.core.data.Vectors;
 import convex.core.data.prim.CVMLong;
 import convex.core.init.InitTest;
 import convex.core.lang.ACVMTest;
-import convex.core.lang.Context;
 
 public class MultiTokenTest extends ACVMTest {
 	

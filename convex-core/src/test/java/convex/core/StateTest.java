@@ -8,11 +8,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.TestInstance.Lifecycle;
 
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.AccountStatus;
+import convex.core.cvm.State;
 import convex.core.data.ACell;
 import convex.core.data.AVector;
-import convex.core.data.AccountStatus;
 import convex.core.data.Blob;
 import convex.core.data.Cells;
 import convex.core.data.Format;
@@ -29,14 +32,18 @@ import convex.core.init.InitTest;
 /**
  * Tests for the State data structure
  */
+@TestInstance(Lifecycle.PER_CLASS)
 public class StateTest {
 	State INIT_STATE=InitTest.createState();
 
 	@Test
 	public void testEmptyState() {
 		State s = State.EMPTY;
+		assertSame(s,s.updateRefs(rf->rf));
+		
 		AVector<AccountStatus> accts = s.getAccounts();
 		assertEquals(0, accts.count());
+
 
 		RecordTest.doRecordTests(s);
 	}
@@ -66,7 +73,7 @@ public class StateTest {
 		// TODO: consider if cached ref in state should now have persisted status?
 		// assertTrue(s.getRef().isPersisted());
 
-		Blob b = Format.encodedBlob(s);
+		Blob b = Cells.encode(s);
 		State s2 = Format.read(b);
 		assertEquals(s, s2);
 

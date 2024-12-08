@@ -16,12 +16,21 @@ import java.util.Random;
 import java.util.function.Consumer;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.TestInstance.Lifecycle;
 
-import convex.core.Belief;
-import convex.core.Block;
-import convex.core.Order;
+import convex.core.cpos.Belief;
+import convex.core.cpos.Block;
+import convex.core.cpos.Order;
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.Address;
+import convex.core.cvm.Symbols;
+import convex.core.cvm.Syntax;
+import convex.core.cvm.ops.Constant;
+import convex.core.cvm.transactions.ATransaction;
+import convex.core.cvm.transactions.Invoke;
 import convex.core.data.Refs.RefTreeStats;
+import convex.core.data.prim.AByteFlag;
 import convex.core.data.prim.CVMBigInteger;
 import convex.core.data.prim.CVMBool;
 import convex.core.data.prim.CVMDouble;
@@ -29,87 +38,99 @@ import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.InvalidDataException;
 import convex.core.lang.RT;
-import convex.core.lang.Symbols;
-import convex.core.lang.ops.Constant;
-import convex.core.transactions.ATransaction;
-import convex.core.transactions.Invoke;
 import convex.test.Samples;
 import convex.test.Testing;
  
+@TestInstance(Lifecycle.PER_CLASS)
 public class EncodingTest {
 
-	@Test public void testVLCLongLength() throws BadFormatException, BufferUnderflowException {
-		assertEquals(1,Format.getVLCLength(0x0f));
-		assertEquals(1,Format.getVLCLength(0x3f));
-		assertEquals(2,Format.getVLCLength(0x40)); // roll over at 64
-		assertEquals(Format.MAX_VLC_LONG_LENGTH,Format.getVLCLength(Long.MAX_VALUE));
+	@Test public void testVLQLongLength() throws BadFormatException, BufferUnderflowException {
+		assertEquals(1,Format.getVLQLongLength(0x0f));
+		assertEquals(1,Format.getVLQLongLength(0x3f));
+		assertEquals(2,Format.getVLQLongLength(0x40)); // roll over at 64
+		assertEquals(Format.MAX_VLQ_LONG_LENGTH,Format.getVLQLongLength(Long.MAX_VALUE));
 		
-		assertEquals(1,Format.getVLCLength(-1)); // small negative numbers in one byte
-		assertEquals(1,Format.getVLCLength(-64)); 
-		assertEquals(2,Format.getVLCLength(-65)); // roll over at -65
+		assertEquals(1,Format.getVLQLongLength(-1)); // small negative numbers in one byte
+		assertEquals(1,Format.getVLQLongLength(-64)); 
+		assertEquals(2,Format.getVLQLongLength(-65)); // roll over at -65
 
 	}
 	
-	@Test public void testVLCCountLength() throws BadFormatException, BufferUnderflowException {
-		assertEquals(1,Format.getVLCCountLength(0x0f));
-		assertEquals(1,Format.getVLCCountLength(0x7f));
-		assertEquals(2,Format.getVLCCountLength(0x80)); // roll over at 128
-		assertEquals(Format.MAX_VLC_COUNT_LENGTH,Format.getVLCCountLength(Long.MAX_VALUE));
+	@Test public void testVLQCountLength() throws BadFormatException, BufferUnderflowException {
+		assertEquals(1,Format.getVLQCountLength(0x0f));
+		assertEquals(1,Format.getVLQCountLength(0x7f));
+		assertEquals(2,Format.getVLQCountLength(0x80)); // roll over at 128
+		assertEquals(Format.MAX_VLQ_COUNT_LENGTH,Format.getVLQCountLength(Long.MAX_VALUE));
 		
-		assertThrows(IllegalArgumentException.class, ()->Format.getVLCCountLength(-10));
+		// technically an overflow
+		assertEquals(0,Format.getVLQCountLength(-10));
 	}
 	
 	@Test public void testVLCCount() throws BadFormatException {
-		doVLCCountTest(0);
-		doVLCCountTest(1);
-		doVLCCountTest(63);
-		doVLCCountTest(64);
-		doVLCCountTest(127);
-		doVLCCountTest(128);
-		doVLCCountTest(255);
-		doVLCCountTest(256);
-		doVLCCountTest(65535);
-		doVLCCountTest(65536);
-		doVLCCountTest(56447567);
-		doVLCCountTest(Integer.MAX_VALUE);
-		doVLCCountTest(Long.MAX_VALUE);
-		doVLCLongTest(Long.MIN_VALUE);
+		doVLQCountTest(0);
+		doVLQCountTest(1);
+		doVLQCountTest(63);
+		doVLQCountTest(64);
+		doVLQCountTest(127);
+		doVLQCountTest(128);
+		doVLQCountTest(255);
+		doVLQCountTest(256);
+		doVLQCountTest(65535);
+		doVLQCountTest(65536);
+		doVLQCountTest(56447567);
+		doVLQCountTest(Integer.MAX_VALUE);
+		doVLQCountTest(Long.MAX_VALUE);
+		doVLQLongTest(Long.MIN_VALUE);
 	}
 	
 	byte[] buf=new byte[50];
-	private void doVLCCountTest(long x) throws BadFormatException {
-		int n=Format.getVLCCountLength(x);
+	private void doVLQCountTest(long x) throws BadFormatException {
+		int n=Format.getVLQCountLength(x);
 		int offset=(int) (x%10); // variable offset, somewhat pseudorandom
 		
-		long pos=Format.writeVLCCount(buf, offset, x);
+		long pos=Format.writeVLQCount(buf, offset, x);
 		assertEquals(n+offset,pos);
 		
-		long r=Format.readVLCCount(buf, offset);
+		long r=Format.readVLQCount(buf, offset);
 		assertEquals(x,r);
 		
-		doVLCLongTest(x);
-		doVLCLongTest(-x);
+		doVLQLongTest(x);
+		doVLQLongTest(-x);
 	}
 	
-	private void doVLCLongTest(long x) throws BadFormatException {
-		int n=Format.getVLCLength(x);
+	@Test public void testOneGigabyte() throws BadFormatException {
+		long GIG=1024l*1024l*1024l;
+		Blob b=Blob.fromHex("8480808000"); // 1 bit (4) followed by 30 zeros, VLQ encoded
+		assertEquals(b.count(),Format.getVLQCountLength(GIG));
+		assertEquals(GIG,Format.readVLQCount(b, 0));
+		
+	}
+	
+	private void doVLQLongTest(long x) throws BadFormatException {
+		int n=Format.getVLQLongLength(x);
 		int offset=(int) ((x+n)&0x0f); // variable offset, somewhat pseudorandom
 		
-		long pos=Format.writeVLCLong(buf, offset, x);
+		long pos=Format.writeVLQLong(buf, offset, x);
 		assertEquals(n+offset,pos);
 		
-		long r=Format.readVLCLong(buf, offset);
+		long r=Format.readVLQLong(buf, offset);
 		assertEquals(x,r);
 	}
 	
 	@Test public void testEmbeddedRegression() throws BadFormatException {
 		Keyword k=Keyword.create("foo");
-		Blob b=Format.encodedBlob(k);
+		Blob b=Cells.encode(k);
 		ACell o=Format.read(b);
 		assertEquals(k,o);
-		assertTrue(Format.isEmbedded(k));
+		assertTrue(Cells.isEmbedded(k));
 		Ref<?> r=Ref.get(o);
 		assertTrue(r.isDirect());
+	}
+	
+	@Test public void testByteFlags() throws BadFormatException {
+		assertEquals(CVMBool.TRUE,Format.read("b1"));
+		assertEquals(CVMBool.FALSE,Format.read("B0"));
+		assertEquals(AByteFlag.create(10),Format.read("bA"));
 	}
 	
 	@Test public void testEmbeddedBigInteger() throws BadFormatException {
@@ -136,7 +157,7 @@ public class EncodingTest {
 	
 	@Test public void testStringRegression() throws BadFormatException {
 		StringShort s=StringShort.create("��zI�&$\\ž1�����4�E4�a8�#?$wD(�#");
-		Blob b=Format.encodedBlob(s);
+		Blob b=Cells.encode(s);
 		StringShort s2=Format.read(b);
 		assertEquals(s,s2);
 	}
@@ -146,7 +167,7 @@ public class EncodingTest {
 		List<ACell> l=List.reverse(me);
 		assertEquals(me,l.reverse()); // ensure MapEntry gets converted to canonical vector
 		
-		Blob b=Format.encodedBlob(l);
+		Blob b=Cells.encode(l);
 		List<ACell> l2=Format.read(b);
 		
 		assertEquals(l,l2);
@@ -160,16 +181,16 @@ public class EncodingTest {
 	}
 	
 	@Test public void testCanonical() {
-		assertTrue(Format.isCanonical(Vectors.empty()));
-		assertTrue(Format.isCanonical(null));
-		assertTrue(Format.isCanonical(RT.cvm(1)));
-		assertTrue(Format.isCanonical(Blob.create(new byte[1000]))); // should be OK
+		assertTrue(Cells.isCanonical(Vectors.empty()));
+		assertTrue(Cells.isCanonical(null));
+		assertTrue(Cells.isCanonical(RT.cvm(1)));
+		assertTrue(Cells.isCanonical(Blob.create(new byte[1000]))); // should be OK
 		assertFalse(Blob.create(new byte[10000]).isCanonical()); // too big to be canonical	
 	}
 	
 	@Test public void testReadBlobData() throws BadFormatException {
 		Blob d=Blob.fromHex("cafebabe");
-		Blob edData=Format.encodedBlob(d);
+		Blob edData=Cells.encode(d);
 		AArrayBlob dd=Format.read(edData);
 		assertEquals(d,dd);
 		assertSame(edData,dd.getEncoding()); // should re-use encoded data object directly
@@ -178,7 +199,7 @@ public class EncodingTest {
 	@Test
 	public void testBadMessageTooLong() throws BadFormatException {
 		ACell o=Samples.FOO;
-		Blob data=Format.encodedBlob(o).append(Blob.fromHex("ff")).toFlatBlob();
+		Blob data=Cells.encode(o).append(Blob.fromHex("ff")).toFlatBlob();
 		assertThrows(BadFormatException.class,()->Format.read(data));
 	}
 	
@@ -186,25 +207,31 @@ public class EncodingTest {
 	public void testMessageLength() throws BadFormatException {
 		// empty bytebuffer, therefore no message length -> returns negative
 		ByteBuffer bb1=Blob.fromHex("").toByteBuffer();
-		assertTrue(0>Format.peekMessageLength(bb1));
-		
-		// bad first byte! Needs to carry if 0x40 or more
-		ByteBuffer bb2=Testing.messageBuffer("43");
-		assertThrows(BadFormatException.class,()->Format.peekMessageLength(bb2));
+		assertEquals(-1,Format.peekMessageLength(bb1));
 		
 		// maximum message length 
-		ByteBuffer bb2a=Testing.messageBuffer("BF7F");
+		ByteBuffer bb2a=Testing.messageBuffer("FF7F");
 		assertEquals(Format.LIMIT_ENCODING_LENGTH,Format.peekMessageLength(bb2a));
 
-		// 2 byte message length with negative sign = BAD
-		ByteBuffer bb2aa=Testing.messageBuffer("C000");
-		assertThrows(BadFormatException.class,()->Format.peekMessageLength(bb2aa));
+		// 1 byte requiring continuation = incomplete length
+		ByteBuffer bb2aa=Testing.messageBuffer("ff");
+		assertEquals(-1,Format.peekMessageLength(bb2aa));
 		
 		ByteBuffer bb2b=Testing.messageBuffer("8101");
 		assertEquals(129,Format.peekMessageLength(bb2b));
 
+		// 2 byte requiring continuation = incomplete length
 		ByteBuffer bb3=Testing.messageBuffer("FFFF");
-		assertThrows(BadFormatException.class,()->Format.peekMessageLength(bb3));
+		assertEquals(-1,Format.peekMessageLength(bb3));
+		
+		// Very large message length, max integer size
+		ByteBuffer bb4=Testing.messageBuffer("87ffffff7f");
+		assertEquals(Integer.MAX_VALUE,Format.peekMessageLength(bb4));
+		
+		// Excessive message length, overflows max array size :-(
+		ByteBuffer bb5=Testing.messageBuffer("ffffffffffffffff7f");
+		assertThrows(BadFormatException.class,()->Format.peekMessageLength(bb5));
+
 	}
 	
 	@Test 
@@ -238,12 +265,12 @@ public class EncodingTest {
 		assertEquals(ME, maxEmbedded.getEncodingLength());
 		
 		// Maps
-		assertEquals(2+16*ME,MapLeaf.MAX_ENCODING_LENGTH);
+		assertEquals(2+2*MapLeaf.MAX_ENTRIES*ME,MapLeaf.MAX_ENCODING_LENGTH);
 		// assertEquals(4+16*ME,MapTree.MAX_ENCODING_LENGTH); // TODO: recheck
-		assertEquals(Maps.MAX_ENCODING_SIZE,MapTree.MAX_ENCODING_LENGTH);
+		assertEquals(Maps.MAX_ENCODING_SIZE,Math.max(MapTree.MAX_ENCODING_LENGTH,MapLeaf.MAX_ENCODING_LENGTH));
 		
 		// Vectors
-		assertEquals(1+Format.MAX_VLC_COUNT_LENGTH+17*ME,VectorLeaf.MAX_ENCODING_LENGTH);
+		assertEquals(1+Format.MAX_VLQ_COUNT_LENGTH+17*ME,VectorLeaf.MAX_ENCODING_LENGTH);
 		
 		// Blobs
 		Blob maxBlob=Blob.create(new byte[Blob.CHUNK_LENGTH]);
@@ -252,7 +279,7 @@ public class EncodingTest {
 		
 		// Address
 		Address maxAddress=Address.create(Long.MAX_VALUE);
-		assertEquals(1+Format.MAX_VLC_COUNT_LENGTH,Address.MAX_ENCODING_LENGTH);
+		assertEquals(1+Format.MAX_VLQ_COUNT_LENGTH,Address.MAX_ENCODING_LENGTH);
 		assertEquals(Address.MAX_ENCODING_LENGTH,maxAddress.getEncodingLength());
 	}
 	
@@ -365,6 +392,9 @@ public class EncodingTest {
 		doMultiEncodingTest(CVMLong.ONE);
 		doMultiEncodingTest(Samples.NON_EMBEDDED_STRING);
 		doMultiEncodingTest(Vectors.of(1,2,3));
+		
+		doMultiEncodingTest(Syntax.create(Address.create(32)));
+
 		
 		// Two non-embedded identical children
 		AVector<ACell> v1=Vectors.of(1,Samples.NON_EMBEDDED_STRING,Samples.NON_EMBEDDED_STRING,Samples.INT_VECTOR_23);

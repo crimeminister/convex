@@ -17,14 +17,21 @@ import org.slf4j.LoggerFactory;
 import convex.core.ErrorCodes;
 import convex.core.Result;
 import convex.core.SourceCodes;
-import convex.core.State;
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.AOp;
+import convex.core.cvm.AccountStatus;
+import convex.core.cvm.Address;
+import convex.core.cvm.State;
+import convex.core.cvm.Symbols;
+import convex.core.cvm.ops.Special;
+import convex.core.cvm.transactions.ATransaction;
+import convex.core.cvm.transactions.Invoke;
+import convex.core.cvm.transactions.Transfer;
 import convex.core.data.ABlob;
 import convex.core.data.ACell;
 import convex.core.data.AList;
 import convex.core.data.AccountKey;
-import convex.core.data.AccountStatus;
-import convex.core.data.Address;
+import convex.core.data.Blob;
 import convex.core.data.Cells;
 import convex.core.data.Hash;
 import convex.core.data.List;
@@ -32,17 +39,12 @@ import convex.core.data.Lists;
 import convex.core.data.SignedData;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.ResultException;
-import convex.core.lang.AOp;
 import convex.core.lang.RT;
 import convex.core.lang.Reader;
-import convex.core.lang.Symbols;
-import convex.core.lang.ops.Special;
 import convex.core.store.AStore;
 import convex.core.store.Stores;
-import convex.core.transactions.ATransaction;
-import convex.core.transactions.Invoke;
-import convex.core.transactions.Transfer;
 import convex.core.util.Utils;
+import convex.net.IPUtils;
 import convex.net.Message;
 import convex.net.ResultConsumer;
 import convex.peer.Config;
@@ -94,14 +96,14 @@ public abstract class Convex implements AutoCloseable {
 	/**
 	 * Map of results awaiting completion.
 	 */
-	protected HashMap<Long, CompletableFuture<Message>> awaiting = new HashMap<>();
+	protected HashMap<ACell, CompletableFuture<Message>> awaiting = new HashMap<>();
 
 	/**
 	 * Result Consumer for messages received back from a client connection
 	 */
 	protected final Consumer<Message> messageHandler = new ResultConsumer() {
 		@Override
-		protected synchronized void handleResult(long id, Result v) {
+		protected synchronized void handleResult(ACell id, Result v) {
 			ACell ec=v.getErrorCode();
 			
 			if ((ec!=null)&&(!SourceCodes.CODE.equals(v.getSource()))) {
@@ -115,8 +117,8 @@ public abstract class Convex implements AutoCloseable {
 		public void accept(Message m) {
 			// Check if we are waiting for a Result with this ID for this connection
 			synchronized (awaiting) {
-				CVMLong id=m.getID();
-				CompletableFuture<Message> cf = (id==null)?null:awaiting.remove((Long)id.longValue());
+				ACell id=m.getID();
+				CompletableFuture<Message> cf = (id==null)?null:awaiting.remove(id);
 				if (cf != null) {
 					// log.info("Return message received for message ID: {} with type: {} "+m.toString(), id,m.getType());
 					if (cf.complete(m)) return;
@@ -138,6 +140,22 @@ public abstract class Convex implements AutoCloseable {
 	protected Convex(Address address, AKeyPair keyPair) {
 		this.keyPair = keyPair;
 		this.address = address;
+	}
+	
+	/**
+	 * Attempts best possible connection
+	 * @throws TimeoutException 
+	 * @throws IOException 
+	 */
+	public static Convex connect(Object host) throws IOException, TimeoutException {
+		if (host instanceof Convex) return (Convex)host;
+		if (host instanceof Convex) return connect((Server)host);
+		
+		InetSocketAddress sa=IPUtils.toInetSocketAddress(host);
+		if (sa==null) {
+			throw new IllegalArgumentException("Unrecognised connect type "+Utils.getClassName(host));
+		}
+		return connect(sa);
 	}
 
 	/**
@@ -333,7 +351,11 @@ public abstract class Convex implements AutoCloseable {
 	public CompletableFuture<Address> createAccount(AccountKey publicKey) {
 		Invoke trans = Invoke.create(address, 0, Lists.of(Symbols.CREATE_ACCOUNT, publicKey));
 		CompletableFuture<Result> fr = transact(trans);
-		return fr.thenApply(r -> r.getValue());
+		return fr.thenCompose(r -> {
+			if (r.isError()) return CompletableFuture.failedFuture(new ResultException(r));
+			ACell a=r.getValue();
+			return CompletableFuture.completedFuture((Address)a);
+		});
 	}
 
 	/**
@@ -401,20 +423,25 @@ public abstract class Convex implements AutoCloseable {
 	 * Prepares a transaction for network submission
 	 * - Pre-compiles if needed
 	 * - Sets origin account to current address
-	 * - Sets sequence number (if autosequencing is enabled)
+	 * - Sets sequence number (if auto-sequencing is enabled)
 	 * - Signs transaction with current key pair
 	 *
 	 * @param code Code to prepare as transaction
 	 * @return Signed transaction ready to submit
 	 * @throws ResultException If an error occurs preparing the transaction (e.g. failure to pre-compile)
 	 */
+	@SuppressWarnings("unchecked")
 	public SignedData<ATransaction> prepareTransaction(ACell code) throws ResultException,InterruptedException {
 		ATransaction transaction;
 		if (code instanceof ATransaction) {
 			transaction=(ATransaction)code;
-		} else if (code instanceof SignedData) {
-			throw new IllegalArgumentException("Can't prepare transaction that is already signed");
 		} else {
+			if (code instanceof SignedData) {
+				SignedData<?> signed=(SignedData<?>) code;
+				ACell val=signed.getValue();
+				if (val instanceof ATransaction) return (SignedData<ATransaction>) signed;
+				code=val;
+			} 
 			if (isPreCompile() ) {
 				Result compResult=preCompile(code).join();
 				if (compResult.isError()) throw new ResultException(compResult);
@@ -456,15 +483,21 @@ public abstract class Convex implements AutoCloseable {
 				}
 			}
 			
-			// If local, update sequence number based on latest consensus state
-			Server s=getLocalServer();
-			if (s!=null) {
-				State state=s.getPeer().getConsensusState();
-				AccountStatus as=state.getAccount(origin);
-				if (as!=null) {
-					long expected=as.getSequence()+1;
-					if (expected>seq) {
-						seq=expected;
+			
+			if (sequence!=null) {
+				// use auto-sequence value if available
+				seq=sequence+1; 
+			} else {
+				// If local, update sequence number based on latest consensus state
+				Server s=getLocalServer();
+				if (s!=null) {
+					State state=s.getPeer().getConsensusState();
+					AccountStatus as=state.getAccount(origin);
+					if (as!=null) {
+						long expected=as.getSequence()+1;
+						if (expected>seq) {
+							seq=expected;
+						}
 					}
 				}
 			}
@@ -481,6 +514,7 @@ public abstract class Convex implements AutoCloseable {
 		if (Cells.equals(origin, address)) { 
 			this.sequence=seq;
 		}		
+		if (keyPair==null) throw new ResultException(Result.error(ErrorCodes.SIGNATURE, "No key pair set"));
 		
 		SignedData<ATransaction> signed = keyPair.signData(transaction);
 		return signed;
@@ -493,7 +527,8 @@ public abstract class Convex implements AutoCloseable {
 	 * @return A Future for the result of the transaction
 	 */
 	public CompletableFuture<Result> transact(String code) {
-		return transact((ACell)Reader.read(code));
+		ACell cmd=buildCodeForm(code);
+		return transact(cmd);
 	}
 	
 	/**
@@ -508,7 +543,8 @@ public abstract class Convex implements AutoCloseable {
 		if (isPreCompile()) {
 			return preCompile(code).thenCompose(r->{
 				if (r.isError()) return CompletableFuture.completedFuture(r);
-				ATransaction trans = Invoke.create(getAddress(), ATransaction.UNKNOWN_SEQUENCE, r.getValue());
+				ACell compiledCode=r.getValue();
+				ATransaction trans = Invoke.create(getAddress(), ATransaction.UNKNOWN_SEQUENCE, compiledCode);
 				return transact(trans);
 			});
 		} else {
@@ -536,7 +572,8 @@ public abstract class Convex implements AutoCloseable {
 	 * @throws InterruptedException in case of interrupt while waiting
 	 */
 	public synchronized Result transactSync(String code) throws InterruptedException {
-		ATransaction trans = Invoke.create(getAddress(), ATransaction.UNKNOWN_SEQUENCE, code);
+		ACell form=buildCodeForm(code);
+		ATransaction trans = Invoke.create(getAddress(), ATransaction.UNKNOWN_SEQUENCE, form);
 		return transactSync(trans);
 	}
 
@@ -685,6 +722,23 @@ public abstract class Convex implements AutoCloseable {
 	}
 	
 	/**
+	 * Submits raw message data to the Convex network, returning a Future for any Result
+	 *
+	 * @param message Raw message data
+	 * @return A Future for the result of the query
+	 */
+	public abstract CompletableFuture<Result> message(Blob message);
+	
+	/**
+	 * Submits a Message to the Convex network, returning a Future for any Result
+	 *
+	 * @param message Message data
+	 * @return A Future for the result of the query
+	 */
+	public abstract CompletableFuture<Result> message(Message message);
+
+	
+	/**
 	 * Attempts to resolve a CNS name
 	 *
 	 * @param cnsName CNS name to resolve
@@ -752,7 +806,7 @@ public abstract class Convex implements AutoCloseable {
 	 * @param id ID of result message to await
 	 * @return
 	 */
-	protected CompletableFuture<Result> awaitResult(long id, long timeout) {
+	protected CompletableFuture<Result> awaitResult(ACell id, long timeout) {
 		CompletableFuture<Message> cf = new CompletableFuture<Message>();
 		if (timeout>0) {
 			cf=cf.orTimeout(timeout, TimeUnit.MILLISECONDS);

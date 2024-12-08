@@ -15,6 +15,9 @@ import java.util.Random;
 import org.junit.jupiter.api.Test;
 
 import convex.core.crypto.ASignature;
+import convex.core.crypto.InsecureRandom;
+import convex.core.cvm.Address;
+import convex.core.data.impl.LongBlob;
 import convex.core.data.impl.ZeroBlob;
 import convex.core.data.prim.CVMLong;
 import convex.core.data.util.BlobBuilder;
@@ -198,6 +201,28 @@ public class BlobsTest {
 	}
 	
 	@Test
+	public void testBlobBuilderBuffers() {
+		Random r=new InsecureRandom(5678);
+		Blob bv=Blob.createRandom(r, 16384);
+		
+		BlobBuilder bb=new BlobBuilder();
+		long len=0;
+		for (int i=0; i<10; i++) {
+			int start=r.nextInt(16384);
+			int end=r.nextInt(start,16384);
+			ABlob slc=bv.slice(start, end);
+			ByteBuffer bbuf=slc.toByteBuffer();
+			long n=end-start;
+			bb.append(bbuf);
+			assertEquals(len+n,bb.count());
+			
+			assertEquals(slc,bb.toBlob().slice(len, len+n));
+			len+=n; // update accumulated length
+		}
+		assertEquals(len,bb.count());
+	}
+	
+	@Test
 	public void testSignature() {
 		// Signature is another Blob special case
 		ASignature sig=Samples.BAD_SIGNATURE;
@@ -281,7 +306,7 @@ public class BlobsTest {
 		assertSame(e,e.append(e));
 		assertSame(e,new BlobBuilder().toBlob());
 		
-		assertSame(e,Format.read(Format.encodedBlob(e)));	
+		assertSame(e,Format.read(Cells.encode(e)));	
 		assertSame(e,Format.read(e.getEncoding()));
 		
 		assertSame(e,e.getChunk(0));
@@ -387,6 +412,22 @@ public class BlobsTest {
 		
 		assertTrue(Samples.MAX_EMBEDDED_BLOB.isEmbedded());
 		assertFalse(Samples.FULL_BLOB.isEmbedded());
+	}
+	
+	@Test
+	public void testHexMatch() {
+		assertEquals(3,Blob.fromHex("1234").hexMatch(Blob.fromHex("123fff")));
+		assertEquals(0,Blob.fromHex("").hexMatch(Blob.fromHex("123fff")));
+		assertEquals(0,Blob.fromHex("1234").hexMatch(Blob.fromHex("")));
+		assertEquals(6,Blob.fromHex("123456").hexMatch(Blob.fromHex("123456")));
+
+		// checking correct handling of max parameter
+		Blob b=Blob.fromHex("123456");
+		assertEquals(6,b.commonHexPrefixLength(b,1000));
+		assertEquals(5,b.commonHexPrefixLength(b,5));
+		assertEquals(3,b.commonHexPrefixLength(b,3));
+		assertEquals(2,b.commonHexPrefixLength(b,2));
+		assertEquals(0,b.commonHexPrefixLength(b,0));
 	}
 
 	@Test
@@ -527,6 +568,14 @@ public class BlobsTest {
 		byte[] bf = new byte[] { Tag.BLOB, 0 };
 		Blob b = Format.read(Blob.wrap(bf));
 		assertSame(Blob.EMPTY,b);
+		
+		Blob enc=Blob.createRandom(new InsecureRandom(3452534), 100).getEncoding();
+		
+		// Blob should re-use encoding array
+		Blob b2=Format.read(enc);
+		assertSame(enc.getInternalArray(),b2.getInternalArray());	
+		assertTrue(b2.isEmbedded());
+		assertEquals(0,b2.getBranchCount());
 	}
 	
 	/*
@@ -544,8 +593,21 @@ public class BlobsTest {
 
 	   assertEquals(RT.getType(value), RT.getType(o));
 	   assertEquals(value, o);
-	   assertEquals(b, Format.encodedBlob(o));
+	   assertEquals(b, Cells.encode(o));
 	   assertEquals(pref.getValue(), o);
+	}
+	
+	@Test
+	public void testLongBlobDecoded() throws BadFormatException {
+		long V=0xFF1234567899L;
+		// LongBlob has custom hash implementation, we want to make sure it reads from encoding correctly
+		LongBlob l0=LongBlob.create(V);
+		Blob enc=(Blob.fromHex("F000").append(l0.getEncoding()).toFlatBlob().slice(2));
+		
+		LongBlob l1=LongBlob.create(V);
+		l1.attachEncoding(enc);
+		
+		assertEquals(l0.getHash(),l1.getHash());
 	}
 
 	/**

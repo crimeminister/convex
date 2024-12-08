@@ -4,10 +4,14 @@ import convex.core.crypto.AKeyPair;
 import convex.core.crypto.ASignature;
 import convex.core.crypto.Ed25519Signature;
 import convex.core.crypto.Providers;
+import convex.core.cvm.ACVMRecord;
+import convex.core.cvm.Keywords;
+import convex.core.cvm.RecordFormat;
+import convex.core.data.util.BlobBuilder;
 import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.BadSignatureException;
 import convex.core.exceptions.InvalidDataException;
-import convex.core.lang.RecordFormat;
+import convex.core.lang.RT;
 
 /**
  * Node representing a signed data object.
@@ -41,7 +45,7 @@ import convex.core.lang.RecordFormat;
  *
  * @param <T> The type of the signed object
  */
-public final class SignedData<T extends ACell> extends ARecord {
+public final class SignedData<T extends ACell> extends ACVMRecord {
 	// Encoded fields
 	private final AccountKey pubKey;
 	private final ASignature signature;
@@ -50,13 +54,13 @@ public final class SignedData<T extends ACell> extends ARecord {
 	private static final Keyword[] KEYS = new Keyword[] { Keywords.PUBLIC_KEY, Keywords.SIGNATURE, Keywords.VALUE };
 
 	private static final RecordFormat FORMAT = RecordFormat.of(KEYS);
+	private static final StringShort SIGNED_TAG = StringShort.create("#Signed");
 	
 	//Cached fields
 	private AccountKey verifiedKey=null;
 
-
 	private SignedData(Ref<T> refToValue, AccountKey address, ASignature sig) {
-		super(FORMAT.count());
+		super(Tag.SIGNED_DATA,FORMAT.count());
 		this.valueRef = refToValue;
 		this.pubKey = address;
 		signature = sig;
@@ -196,6 +200,14 @@ public final class SignedData<T extends ACell> extends ARecord {
 		pos = valueRef.encode(bs,pos);
 		return pos;
 	}
+	
+	@Override
+	public boolean print(BlobBuilder sb, long limit) {
+		sb.append(SIGNED_TAG);
+		sb.append(' ');
+		return super.print(sb,limit);
+	}
+
 
 	@Override
 	public int estimatedEncodingSize() {
@@ -312,10 +324,6 @@ public final class SignedData<T extends ACell> extends ARecord {
 		return true;
 	}
 
-	@Override public final boolean isCVMValue() {
-		return false;
-	}
-
 	@Override
 	public final int getRefCount() {
 		// Value Ref only
@@ -368,11 +376,6 @@ public final class SignedData<T extends ACell> extends ARecord {
 	public boolean isEmbedded() {
 		return false;
 	}
-	
-	@Override
-	public byte getTag() {
-		return Tag.SIGNED_DATA;
-	}
 
 	@Override
 	public RecordFormat getFormat() {
@@ -390,4 +393,11 @@ public final class SignedData<T extends ACell> extends ARecord {
 		return valueRef.equals(b.valueRef);
 	}
 
+	@SuppressWarnings("unchecked")
+	public static <T extends ACell> SignedData<T> fromData(AHashMap<Keyword, ACell> value) {
+		Ref<T> ref=Ref.get((T)(value.get(Keywords.VALUE)));
+		AccountKey key=AccountKey.parse(value.get(Keywords.PUBLIC_KEY));
+		ASignature sig=ASignature.fromBlob(RT.ensureBlob(value.get(Keywords.SIGNATURE)));
+		return create(key,sig,ref);
+	}
 }

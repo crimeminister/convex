@@ -8,9 +8,8 @@ import convex.core.data.AString;
 import convex.core.data.Blob;
 import convex.core.data.Cells;
 import convex.core.data.Format;
-import convex.core.data.LongBlob;
-import convex.core.data.Strings;
 import convex.core.data.Tag;
+import convex.core.data.impl.LongBlob;
 import convex.core.data.type.AType;
 import convex.core.data.type.Types;
 import convex.core.data.util.BlobBuilder;
@@ -107,7 +106,7 @@ public final class CVMLong extends AInteger {
 	
 	@Override
 	public int estimatedEncodingSize() {
-		return 1+Format.MAX_VLC_LONG_LENGTH;
+		return 1+Format.MAX_VLQ_LONG_LENGTH;
 	}
 
 	@Override
@@ -151,7 +150,7 @@ public final class CVMLong extends AInteger {
 
 	@Override
 	public boolean print(BlobBuilder bb, long limit) {
-		bb.append(toCVMString(20));
+		bb.appendLongString(value);
 		return bb.check(limit);
 	}
 
@@ -204,7 +203,7 @@ public final class CVMLong extends AInteger {
 	}
 	
 	@Override
-	public byte getTag() {
+	public final byte getTag() {
 		if (encoding!=null) {
 			return encoding.byteAt(0);
 		}
@@ -216,12 +215,6 @@ public final class CVMLong extends AInteger {
 		if (value>0) return CVMLong.ONE;
 		if (value<0) return CVMLong.MINUS_ONE;
 		return CVMLong.ZERO;
-	}
-
-	@Override
-	public AString toCVMString(long limit) {
-		if (limit<1) return null;
-		return Strings.create(toString());
 	}
 	
 	@Override
@@ -295,7 +288,7 @@ public final class CVMLong extends AInteger {
 	}
 
 	@Override
-	public long byteLength() {
+	public int byteLength() {
 		return Utils.byteLength(value);
 	}
 

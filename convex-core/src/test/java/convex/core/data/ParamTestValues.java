@@ -14,6 +14,14 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import convex.core.cvm.AOp;
+import convex.core.cvm.AccountStatus;
+import convex.core.cvm.Address;
+import convex.core.cvm.Keywords;
+import convex.core.cvm.PeerStatus;
+import convex.core.cvm.Symbols;
+import convex.core.cvm.ops.Constant;
+import convex.core.cvm.ops.Invoke;
 import convex.core.data.prim.ANumeric;
 import convex.core.data.prim.CVMChar;
 import convex.core.data.prim.CVMDouble;
@@ -23,13 +31,9 @@ import convex.core.data.type.Types;
 import convex.core.exceptions.InvalidDataException;
 import convex.core.exceptions.ValidationException;
 import convex.core.lang.ACVMTest;
-import convex.core.lang.AOp;
 import convex.core.lang.Core;
 import convex.core.lang.NumericsTest;
 import convex.core.lang.RT;
-import convex.core.lang.Symbols;
-import convex.core.lang.ops.Constant;
-import convex.core.lang.ops.Invoke;
 import convex.test.Samples;
 
 /**
@@ -118,7 +122,7 @@ public class ParamTestValues extends ACVMTest {
 	@Test
 	public void testHexRoundTrip() throws InvalidDataException, ValidationException, IOException {
 		Cells.persist(data);
-		String hex = Format.encodedBlob(data).toHexString();
+		String hex = Cells.encode(data).toHexString();
 		Blob d2 = Blob.fromHex(hex);
 		ACell rec = Format.read(d2);
 		

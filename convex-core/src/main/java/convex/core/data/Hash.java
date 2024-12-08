@@ -2,8 +2,9 @@ package convex.core.data;
 
 import convex.core.Constants;
 import convex.core.crypto.Hashing;
+import convex.core.cvm.CVMTag;
 import convex.core.exceptions.InvalidDataException;
-import convex.core.util.Errors;
+import convex.core.util.ErrorMessages;
 import convex.core.util.Utils;
 
 /**
@@ -24,6 +25,7 @@ public class Hash extends AArrayBlob {
 	 * Standard length of a Hash in bytes
 	 */
 	public static final int LENGTH = Constants.HASH_LENGTH;
+	public static final int HEX_LENGTH = LENGTH*2;
 	
 	private Hash(byte[] hashBytes, int offset) {
 		super(hashBytes, offset, LENGTH);
@@ -40,8 +42,8 @@ public class Hash extends AArrayBlob {
 	 * for efficiency
 	 */
 	public static final Hash NULL_HASH = Hashing.sha3(new byte[] { Tag.NULL });
-	public static final Hash TRUE_HASH = Hashing.sha3(new byte[] { Tag.TRUE });
-	public static final Hash FALSE_HASH = Hashing.sha3(new byte[] { Tag.FALSE });
+	public static final Hash TRUE_HASH = Hashing.sha3(new byte[] { CVMTag.TRUE });
+	public static final Hash FALSE_HASH = Hashing.sha3(new byte[] { CVMTag.FALSE });
 	public static final Hash EMPTY_HASH = Hashing.sha3(new byte[0]);
 
 
@@ -94,7 +96,7 @@ public class Hash extends AArrayBlob {
 	/**
 	 * Wraps the specified bytes as a Data object Warning: underlying bytes are used
 	 * directly. Use only if no external references to the byte array will be
-	 * retained.
+	 * retained, and the byte array is effectively immutable.
 	 * 
 	 * @param hashBytes Byte array containing hash value
 	 * @param offset Offset into byte array for start of hash value
@@ -102,8 +104,12 @@ public class Hash extends AArrayBlob {
 	 */
 	public static Hash wrap(byte[] hashBytes, int offset) {
 		if ((offset < 0) || (offset + LENGTH > hashBytes.length))
-			throw new IllegalArgumentException(Errors.badRange(offset, offset+LENGTH));
-		return new Hash(hashBytes, offset);
+			throw new IllegalArgumentException(ErrorMessages.badRange(offset, offset+LENGTH));
+		Hash h= new Hash(hashBytes, offset);
+		if ((offset>=2)&&(hashBytes[offset-1]==LENGTH)&&(hashBytes[offset-2]==Tag.BLOB)) {
+			h.attachEncoding(Blob.wrap(hashBytes, offset-2, LENGTH+2));
+		}
+		return h;
 	}
 	
 	/**
@@ -184,7 +190,7 @@ public class Hash extends AArrayBlob {
 
 	@Override
 	public Blob getChunk(long i) {
-		if (i != 0) throw new IndexOutOfBoundsException(Errors.badIndex(i));
+		if (i != 0) throw new IndexOutOfBoundsException(ErrorMessages.badIndex(i));
 		return toFlatBlob();
 	}
 

@@ -18,10 +18,15 @@ import java.util.function.Consumer;
 
 import org.junit.Test;
 
-import convex.core.Belief;
-import convex.core.Block;
-import convex.core.Order;
+import convex.core.cpos.Belief;
+import convex.core.cpos.Block;
+import convex.core.cpos.Order;
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.Keywords;
+import convex.core.cvm.Symbols;
+import convex.core.cvm.transactions.ATransaction;
+import convex.core.cvm.transactions.Invoke;
+import convex.core.cvm.transactions.Transfer;
 import convex.core.data.ACell;
 import convex.core.data.AMap;
 import convex.core.data.AVector;
@@ -30,7 +35,6 @@ import convex.core.data.Blobs;
 import convex.core.data.Cells;
 import convex.core.data.Format;
 import convex.core.data.Hash;
-import convex.core.data.Keywords;
 import convex.core.data.Lists;
 import convex.core.data.Maps;
 import convex.core.data.Ref;
@@ -39,12 +43,8 @@ import convex.core.data.Vectors;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
 import convex.core.init.InitTest;
-import convex.core.lang.Symbols;
 import convex.core.store.AStore;
 import convex.core.store.Stores;
-import convex.core.transactions.ATransaction;
-import convex.core.transactions.Invoke;
-import convex.core.transactions.Transfer;
 import convex.core.util.Utils;
 import convex.etch.EtchStore;
 import convex.test.Samples;
@@ -195,8 +195,8 @@ public class EtchStoreTest {
 			assertEquals(Ref.UNKNOWN,rt.getStatus());
 
 			assertEquals(3,Cells.refCount(t1));
-			assertEquals(0,Cells.refCount(t2));
-			assertEquals(14,Refs.totalRefCount(belief));
+			assertEquals(4,Cells.refCount(t2));
+			assertEquals(30,Refs.totalRefCount(belief));
 
 
 			Consumer<Ref<ACell>> noveltyHandler=r-> {

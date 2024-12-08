@@ -5,11 +5,13 @@ import java.nio.ByteBuffer;
 import convex.core.Constants;
 import convex.core.exceptions.InvalidDataException;
 import convex.core.lang.RT;
-import convex.core.util.Errors;
+import convex.core.util.ErrorMessages;
 import convex.core.util.Utils;
 
 /**
- * Immutable class representing an Ed25519 public key for a Convex account
+ * Immutable class representing an Ed25519 public key.
+ * 
+ * Used for verification of CAD3 Signed Data
  * 
  * AccountKey is basically the public key represented as a 256-bit blob (32 bytes)
  * 
@@ -247,7 +249,7 @@ public class AccountKey extends AArrayBlob {
 
 	@Override
 	public Blob getChunk(long i) {
-		if (i != 0) throw new IndexOutOfBoundsException(Errors.badIndex(i));
+		if (i != 0) throw new IndexOutOfBoundsException(ErrorMessages.badIndex(i));
 		return toFlatBlob();
 	}
 

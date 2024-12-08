@@ -10,16 +10,16 @@ import java.io.IOException;
 
 import org.junit.jupiter.api.Test;
 
+import convex.core.cvm.Address;
+import convex.core.cvm.Context;
 import convex.core.data.ACell;
 import convex.core.data.AHashMap;
-import convex.core.data.Address;
 import convex.core.data.Keyword;
 import convex.core.data.Maps;
 import convex.core.data.Symbol;
 import convex.core.init.BaseTest;
 import convex.core.init.Init;
 import convex.core.lang.ACVMTest;
-import convex.core.lang.Context;
 import convex.test.Samples;
 
 public class RegistryTest extends ACVMTest {

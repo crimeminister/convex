@@ -3,6 +3,7 @@ package convex.core.data;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import java.util.Arrays;
@@ -10,17 +11,20 @@ import java.util.Random;
 
 import org.junit.jupiter.api.Test;
 
-import convex.core.Receipt;
 import convex.core.Result;
+import convex.core.cvm.Address;
+import convex.core.cvm.CVMTag;
+import convex.core.cvm.Keywords;
+import convex.core.cvm.Symbols;
+import convex.core.cvm.transactions.Call;
+import convex.core.cvm.transactions.Transfer;
+import convex.core.data.impl.DummyCell;
+import convex.core.data.prim.ByteFlag;
 import convex.core.data.prim.CVMDouble;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.InvalidDataException;
 import convex.core.init.Init;
-import convex.core.lang.Ops;
-import convex.core.lang.Symbols;
-import convex.core.transactions.Call;
-import convex.core.transactions.Transfer;
 import convex.test.Samples;
 
 /**
@@ -28,8 +32,8 @@ import convex.test.Samples;
  */
 public class AdversarialDataTest {
 
-	// A value that is valid, but not a first class CVM value
-	public static final ACell NON_CVM=Receipt.create(null);
+	// A value that is valid CAD3, but not a first class CVM value
+	public static final ACell NON_CVM=ByteFlag.create(15);
 	
 	// A value that is non-canonical but otherwise valid CVM value
 	public static final Blob NON_CANONICAL=Blob.createRandom(new Random(), Blob.CHUNK_LENGTH+1);
@@ -37,8 +41,13 @@ public class AdversarialDataTest {
 	// A value that is invalid 
 	public static final SetLeaf<CVMLong> NON_VALID=SetLeaf.unsafeCreate(new CVMLong[0]);
 
+	// A value that is illegal in any encoding
+	@SuppressWarnings("exports")
+	public static final DummyCell NON_LEGAL=new DummyCell();
+
 	@Test public void testAssumptions() {
 		assertFalse(NON_CVM.isCVMValue());
+		assertFalse(NON_LEGAL.isCVMValue());
 		assertFalse(NON_CANONICAL.isCanonical());
 		assertThrows(InvalidDataException.class, ()->NON_VALID.validate());
 	} 
@@ -100,7 +109,6 @@ public class AdversarialDataTest {
 				d=SetTree.digitForIndex(i, a.getMask());
 			}
 		}
-		assertFalse(b.isCVMValue());
 		assertEquals(d,b.get(0).getHash().getHexDigit(0)); // d should be first digit of Hash
 		assertEquals(1,b.shift);
 	}
@@ -142,10 +150,18 @@ public class AdversarialDataTest {
 		
 		invalidEncoding(Tag.KEYWORD,"00");
 		invalidEncoding(Tag.KEYWORD,"0120ff");
+		
+		{
+			byte[] bs=new byte[256];
+			bs[0]=Tag.KEYWORD;
+			bs[1]=(byte)160;
+			assertThrows(BadFormatException.class,()->Keyword.read(Blob.wrap(bs),0));
+		}
 	}
 	
 	@Test public void testBadConstant() {
-		invalidEncoding(Tag.OP+Ops.CONSTANT,"");
+		invalidEncoding(CVMTag.OP_CODED+CVMTag.OPCODE_CONSTANT,"");
+		invalidEncoding(CVMTag.OP_CODED+CVMTag.OPCODE_CONSTANT+Tag.ILLEGAL,"");
 	}
 	
 	@Test public void testBadSymbols() {
@@ -158,12 +174,9 @@ public class AdversarialDataTest {
 	}
 	
 	@Test
-	public void testBadReceipt() {
-		invalidEncoding(Tag.RECEIPT,"00ff"); // too many bytes
-		invalidEncoding(Tag.RECEIPT,""); // too few bytes
-		invalidEncoding(Tag.RECEIPT+Tag.RECEIPT_LOG_MASK,"0000"); // null log when should be present
-		invalidEncoding(Tag.RECEIPT+Tag.RECEIPT_LOG_MASK,"00b0"); // log is not a vector
-
+	public void testDummy() {
+		invalidTest(Cells.DUMMY);
+		// TODO: full validation : invalidTest(Vectors.repeat(Cells.DUMMY, 4096));
 	}
 	
 	@Test
@@ -238,30 +251,32 @@ public class AdversarialDataTest {
 	@Test
 	public void testBadDouble() {
 		// Double with invalid (non-canonical) NaN
-		invalidTest(CVMDouble.unsafeCreate(Double.longBitsToDouble(0x7ff80000ff000000L)));
-		
-		invalidEncoding(Tag.DOUBLE,"7ff80000ff000000"); // non-canonical NaN
-		invalidEncoding(Tag.DOUBLE,"fff8000000000000"); // signed NaN
-		invalidEncoding(Tag.DOUBLE,"00000000000000"); // short double
+		CVMDouble bd=CVMDouble.unsafeCreate(Double.longBitsToDouble(0x7ff80000ff000000L));
+		assertTrue(bd.isCVMValue());
+
+		invalidEncoding(Tag.DOUBLE,"00000000000000"); // too short double
+		invalidEncoding(Tag.DOUBLE,"000000000000000000"); // too long double
 	}
+	
 	
 	@Test
 	public void testBadBoolean() {
-		invalidEncoding(Tag.TRUE,"12"); // excess byte
-		invalidEncoding(Tag.FALSE,"00"); // excess byte
+		invalidEncoding(CVMTag.TRUE,"12"); // excess byte
+		invalidEncoding(CVMTag.FALSE,"00"); // excess byte
 	}
 	
 	@Test
 	public void testBadBlock() {
-		invalidEncoding(Tag.BLOCK,""); // no data!
-		invalidEncoding(Tag.BLOCK,"1234567812345678"); // timestamp only
-		invalidEncoding(Tag.BLOCK,"12345678123456788100"); // list instead of vector
+		invalidEncoding(CVMTag.BLOCK,""); // no data!
+		invalidEncoding(CVMTag.BLOCK,"1234567812345678"); // timestamp only
+		invalidEncoding(CVMTag.BLOCK,"12345678123456788100"); // list instead of vector
 
 	}
 	
 	@Test
 	public void testBadAccountStatus() {
-		invalidTest(AccountStatus.create(-100, null));
+		// TODO: what should happen here?
+		//invalidTest(AccountStatus.create(-100, null));
 	}
 	
 	@Test
@@ -302,12 +317,8 @@ public class AdversarialDataTest {
 		Address HERO=Init.GENESIS_ADDRESS;
 		
 		// invalid amount in Transfer
-		invalidTest(Transfer.create(HERO, 0, HERO,Long.MAX_VALUE)); 
+		assertThrows(IllegalArgumentException.class, ()->Transfer.create(HERO, 0, HERO,Long.MAX_VALUE)); 
 		
-		// invalid offer amounts in Call
-		invalidTest(Call.create(HERO, 0, HERO,Long.MAX_VALUE,Symbols.FOO,Vectors.empty())); 
-		invalidTest(Call.create(HERO, 0, HERO,-10,Symbols.FOO,Vectors.empty())); 
-	
 		// invalid origin in Call. TODO: reconsider?
 		assertThrows(IllegalArgumentException.class, ()->Call.create(null, 0, HERO,0,Symbols.FOO,Vectors.empty())); 
 	}

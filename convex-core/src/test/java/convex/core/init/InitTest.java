@@ -12,18 +12,23 @@ import java.util.HashSet;
 import org.junit.jupiter.api.Test;
 
 import convex.core.Constants;
-import convex.core.State;
+import convex.core.cpos.CPoSConstants;
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.Address;
+import convex.core.cvm.PeerStatus;
+import convex.core.cvm.State;
 import convex.core.data.AccountKey;
-import convex.core.data.Address;
+import convex.core.data.Blob;
+import convex.core.data.Format;
 import convex.core.data.Hash;
 import convex.core.data.MapEntry;
-import convex.core.data.PeerStatus;
 import convex.core.data.Ref;
 import convex.core.data.Refs;
 import convex.core.data.prim.CVMLong;
+import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.InvalidDataException;
 import convex.core.lang.ACVMTest;
+import convex.core.lang.Core;
 
 /**
  * Tests for Init functionality
@@ -103,7 +108,7 @@ public class InitTest extends ACVMTest {
 		
 		MapEntry<AccountKey, PeerStatus> psEntry=STATE.getPeers().get(0);
 		PeerStatus ps=psEntry.getValue();
-		assertEquals(Constants.INITIAL_PEER_TIMESTAMP,ps.getTimestamp());
+		assertEquals(CPoSConstants.INITIAL_PEER_TIMESTAMP,ps.getTimestamp());
 	}
 
 	@Test
@@ -112,6 +117,19 @@ public class InitTest extends ACVMTest {
 		CVMLong cvx=STATE.getGlobalMemoryValue();
 		assertEquals(Constants.INITIAL_MEMORY_POOL,mem.longValue());
 		assertEquals(Constants.INITIAL_MEMORY_POOL*Constants.INITIAL_MEMORY_PRICE,cvx.longValue());
+	}
+	
+	@Test
+	public void testInitEncoding() throws BadFormatException {
+		Blob b=Format.encodeMultiCell(STATE, true);
+		State s=Format.decodeMultiCell(b);
+		assertEquals(STATE,s);
+		assertEquals(STATE.getAccount(Core.CORE_ADDRESS),s.getAccount(Core.CORE_ADDRESS));
+		assertEquals(STATE.getAccount(29),s.getAccount(29));
+		
+		HashSet<Hash> hs=new HashSet<>();
+		s.getRef().findMissing(hs, 100);
+		assertTrue(hs.isEmpty());
 	}
 	
 	@Test
@@ -133,12 +151,7 @@ public class InitTest extends ACVMTest {
 		//	c[1]=v;
 		//});
 		//assertEquals(0L,s1s.persisted);
-		
 		assertSame(s1s.root,sr);
-		
-		HashSet<Hash> hs=new HashSet<>();
-		sr.findMissing(hs, 100);
-		assertTrue(hs.isEmpty());
 	}
 
 }

@@ -1,6 +1,8 @@
 package convex.core.data;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
@@ -12,7 +14,7 @@ import convex.core.data.type.Types;
 import convex.core.data.util.BlobBuilder;
 import convex.core.exceptions.TODOException;
 import convex.core.lang.RT;
-import convex.core.util.Errors;
+import convex.core.util.ErrorMessages;
 import convex.core.util.Utils;
 
 /**
@@ -39,24 +41,6 @@ public abstract class AMap<K extends ACell, V extends ACell> extends ADataStruct
 		return Types.MAP;
 	}
 
-	/**
-	 * Gets the values from this map, in map-determined order
-	 */
-	@Override
-	public AVector<V> values() {
-		int len = size();
-		ArrayList<V> al = new ArrayList<V>(len);
-		accumulateValues(al);
-		return Vectors.create(al);
-	}
-	
-	// TODO: Review plausible alternative implementation for values()
-	//
-	//	@Override
-	//	public AVector<V> values() {
-	//		return reduceValues((v,e)->((AVector<V>)v).append(e), Vectors.empty());
-	//	}
-	
 	/**
 	 * Associates the given key with the specified value.
 	 * 
@@ -118,11 +102,11 @@ public abstract class AMap<K extends ACell, V extends ACell> extends ADataStruct
 	public abstract MapEntry<K, V> getKeyRefEntry(Ref<ACell> ref);
 
 	/**
-	 * Accumulate all entries from this map in the given mutable Set.
+	 * Accumulate all entries from this map in the given collection
 	 * 
 	 * @param h HashSet in which to accumulate entries
 	 */
-	protected abstract void accumulateEntrySet(Set<Entry<K, V>> h);
+	protected abstract void accumulateEntries(Collection<Entry<K, V>> h);
 
 	/**
 	 * Accumulate all keys from this map in the given mutable Set.
@@ -140,22 +124,22 @@ public abstract class AMap<K extends ACell, V extends ACell> extends ADataStruct
 
 	@Override
 	public final V put(K key, V value) {
-		throw new UnsupportedOperationException(Errors.immutable(this));
+		throw new UnsupportedOperationException(ErrorMessages.immutable(this));
 	}
 
 	@Override
 	public final V remove(Object key) {
-		throw new UnsupportedOperationException(Errors.immutable(this));
+		throw new UnsupportedOperationException(ErrorMessages.immutable(this));
 	}
 
 	@Override
 	public final void putAll(Map<? extends K, ? extends V> m) {
-		throw new UnsupportedOperationException(Errors.immutable(this));
+		throw new UnsupportedOperationException(ErrorMessages.immutable(this));
 	}
 
 	@Override
 	public final void clear() {
-		throw new UnsupportedOperationException(Errors.immutable(this));
+		throw new UnsupportedOperationException(ErrorMessages.immutable(this));
 	}
 
 	@Override
@@ -237,7 +221,7 @@ public abstract class AMap<K extends ACell, V extends ACell> extends ADataStruct
 	 * @return Value for the specified key, or the notFound value.
 	 */
 	@SuppressWarnings("unchecked")
-	public final V get(ACell key, ACell notFound) {
+	public V get(ACell key, ACell notFound) {
 		MapEntry<K, V> me = getEntry((K) key);
 		if (me == null) {
 			return (V) notFound;
@@ -283,6 +267,14 @@ public abstract class AMap<K extends ACell, V extends ACell> extends ADataStruct
 	public Set<K> keySet() {
 		ASet<K> ks=reduceEntries((s,me)->s.conj(me.getKey()), (ASet<K>)(Sets.empty()));
 		return ks;
+	}
+	
+	@Override
+	public Set<Entry<K, V>> entrySet() {
+		int len = size();
+		HashSet<Map.Entry<K, V>> h = new HashSet<Map.Entry<K, V>>(len);
+		accumulateEntries(h);
+		return h;
 	}
 	
 	/**
@@ -367,5 +359,17 @@ public abstract class AMap<K extends ACell, V extends ACell> extends ADataStruct
 		}
 		return Vectors.wrap(keys);
 	}
+	
+	/**
+	 * Gets the values from this map, in map-determined order
+	 */
+	@Override
+	public AVector<V> values() {
+		int len = size();
+		ArrayList<V> al = new ArrayList<V>(len);
+		accumulateValues(al);
+		return Vectors.create(al);
+	}
+	
 
 }

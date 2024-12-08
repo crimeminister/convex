@@ -14,6 +14,8 @@ import java.util.function.Predicate;
 
 import org.junit.jupiter.api.Test;
 
+import convex.core.cvm.transactions.ATransaction;
+import convex.core.cvm.transactions.Transfer;
 import convex.core.data.prim.CVMBool;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
@@ -21,8 +23,6 @@ import convex.core.exceptions.InvalidDataException;
 import convex.core.exceptions.ValidationException;
 import convex.core.init.InitTest;
 import convex.core.lang.RT;
-import convex.core.transactions.ATransaction;
-import convex.core.transactions.Transfer;
 import convex.core.util.Bits;
 import convex.test.Samples;
 
@@ -276,10 +276,17 @@ public class MapsTest {
 		assertNull(m.slice(4,3));
 	}
 	
+	@SuppressWarnings("unchecked")
+	@Test 
+	public void testBigMapChild() {
+		MapTree<CVMLong,CVMLong> bm=(MapTree<CVMLong,CVMLong>)Samples.LONG_MAP_100;
+		AHashMap<CVMLong,CVMLong> cm=(AHashMap<CVMLong, CVMLong>) bm.getRef(0).getValue();
+		doHashMapTest(cm);
+	}
+
+	
 	@Test 
 	public void testBigMapSlice() {
-
-		
 		AHashMap<CVMLong,CVMLong> bm=Samples.LONG_MAP_100;
 		AHashMap<CVMLong,CVMLong> bm1=bm.slice(0,18);
 		assertEquals(18,bm1.count());
@@ -303,12 +310,6 @@ public class MapsTest {
 		assertNotEquals(m, m.assoc(RT.cvm(2L), RT.cvm(3L)));
 
 		CollectionsTest.doMapTests(m);
-	}
-
-	@SuppressWarnings("unchecked")
-	@Test
-	public void testTreeMapBuilding() {
-		assertThrows(Throwable.class, () -> MapTree.create(new MapEntry[] { MapEntry.of(1, 2) }, 0));
 	}
 
 	@Test
@@ -416,6 +417,7 @@ public class MapsTest {
 			MapEntry<K, V> firstEntry = m.entryAt(0);
 			K firstKey=firstEntry.getKey();
 			assertEquals(firstEntry,m.getEntryByHash(Hash.get(firstKey)));
+			assertEquals(m,m.assocEntry(firstEntry));
 			
 			// Test a smaller version of this map
 			AHashMap<K, V> smaller = m.dissoc(firstKey);

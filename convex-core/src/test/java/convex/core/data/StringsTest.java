@@ -8,10 +8,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.Test;
 
 import convex.core.Constants;
+import convex.core.cvm.Keywords;
+import convex.core.cvm.Symbols;
 import convex.core.data.prim.CVMChar;
 import convex.core.data.util.BlobBuilder;
 import convex.core.lang.RT;
-import convex.core.lang.Symbols;
 import convex.test.Samples;
 
 public class StringsTest {

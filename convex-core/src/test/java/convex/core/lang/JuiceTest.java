@@ -5,7 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import org.junit.jupiter.api.Test;
 
 import convex.core.Constants;
-import convex.core.data.Address;
+import convex.core.cvm.Address;
+import convex.core.cvm.Context;
+import convex.core.cvm.Juice;
 
 import static convex.test.Assertions.*;
 

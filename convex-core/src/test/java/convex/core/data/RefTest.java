@@ -16,6 +16,8 @@ import org.junit.jupiter.api.Test;
 
 import convex.core.ErrorCodes;
 import convex.core.SourceCodes;
+import convex.core.cvm.Keywords;
+import convex.core.cvm.Symbols;
 import convex.core.data.Refs.RefTreeStats;
 import convex.core.data.prim.CVMBool;
 import convex.core.data.prim.CVMLong;
@@ -24,7 +26,6 @@ import convex.core.exceptions.InvalidDataException;
 import convex.core.exceptions.MissingDataException;
 import convex.core.lang.Core;
 import convex.core.lang.RT;
-import convex.core.lang.Symbols;
 import convex.core.util.Utils;
 import convex.test.Samples;
 

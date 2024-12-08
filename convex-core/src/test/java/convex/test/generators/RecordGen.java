@@ -4,16 +4,17 @@ import com.pholser.junit.quickcheck.generator.GenerationStatus;
 import com.pholser.junit.quickcheck.generator.Generator;
 import com.pholser.junit.quickcheck.random.SourceOfRandomness;
 
-import convex.core.State;
+import convex.core.cvm.AccountStatus;
+import convex.core.cvm.PeerStatus;
+import convex.core.cvm.State;
 import convex.core.data.ARecord;
-import convex.core.data.AccountStatus;
-import convex.core.data.PeerStatus;
 import convex.core.lang.TestState;
 
 /**
  * Generator for records, will be CVM Values
  *
  */
+@SuppressWarnings("rawtypes")
 public class RecordGen extends Generator<ARecord> {
 	public RecordGen() {
 		super(ARecord.class);

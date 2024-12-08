@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import java.security.NoSuchAlgorithmException;
@@ -17,11 +18,46 @@ import org.junit.jupiter.params.provider.ValueSource;
 import convex.core.data.Blob;
 
 public class BIP39Test {
-
 	@Test public void testWordList() {
 		assertEquals(2048,BIP39.wordlist.length);
 	}
 	
+	@Test
+	public void testFromEntropy() {
+		// Test vectors from https://github.com/trezor/python-mnemonic/blob/master/vectors.json
+		{
+			byte[] ent=Blob.fromHex("00000000000000000000000000000000").getBytes();
+			String ph=BIP39.mnemonic(BIP39.createWordsAddingChecksum(ent, 12));
+			assertEquals("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",ph);
+			Blob b=BIP39.getSeed(ph, "TREZOR");
+			assertEquals("c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e53495531f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04",b.toHexString());
+		}
+		
+		{
+			byte[] ent=Blob.fromHex("ffffffffffffffffffffffffffffffff").getBytes();
+			String ph=BIP39.mnemonic(BIP39.createWordsAddingChecksum(ent, 12));
+			assertEquals("zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong",ph);
+			assertTrue(BIP39.checkSum(ph)); // should be valid checksum
+		}
+		
+		{
+			byte[] ent=Blob.fromHex("68a79eaca2324873eacc50cb9c6eca8cc68ea5d936f98787c60c7ebc74e6ce7c").getBytes();
+			String ph=BIP39.mnemonic(BIP39.createWordsAddingChecksum(ent, 24));
+			assertEquals("hamster diagram private dutch cause delay private meat slide toddler razor book happy fancy gospel tennis maple dilemma loan word shrug inflict delay length",ph);
+			doMnemonicTest(ph);
+		}
+	}
+	
+	@Test
+	public void testExtendWord() {
+		assertEquals("shallow",BIP39.extendWord("SHAL"));
+		assertEquals("zoo",BIP39.extendWord(" zoo "));
+		assertEquals("list",BIP39.extendWord("list"));
+		assertEquals("capital",BIP39.extendWord("capi"));
+		assertNull(BIP39.extendWord(""));
+		assertNull(BIP39.extendWord("z"));
+		assertNull(BIP39.extendWord(" zo"));
+	}
 	
 	@Test
 	public void testSeed() throws NoSuchAlgorithmException, InvalidKeySpecException {
@@ -46,9 +82,10 @@ public class BIP39Test {
 		assertEquals(exSeed,seed.toHexString());
 		assertEquals(BIP39.SEED_LENGTH,seed.count());
 		
+		// Different string equals different seed
 		String s2=s1.replaceAll(" " , "  ");
 		assertNotEquals(s1,s2);
-		assertEquals(exSeed,BIP39.getSeed(s2,"").toHexString());
+		assertNotEquals(exSeed,BIP39.getSeed(s2,"").toHexString());
 	}
 	
 	@ParameterizedTest
@@ -70,28 +107,54 @@ public class BIP39Test {
 	}
 
 	@Test public void testNewlyGenerated() {
-		doValidStringTest(BIP39.createSecureMnemonic(3));
+		doValidStringTest(BIP39.createSecureMnemonic(12));
 		doValidStringTest(BIP39.createSecureMnemonic(15));
-		doValidStringTest("   "+BIP39.createSecureMnemonic(12));
-		doValidStringTest(BIP39.createSecureMnemonic(24)+"\t");
+		doValidStringTest(BIP39.createSecureMnemonic(24));
+		doValidStringTest(BIP39.createSecureMnemonic(3));
 		doValidStringTest(BIP39.mnemonic(BIP39.createWords(new InsecureRandom(4), 3)));
 		doValidStringTest(BIP39.mnemonic(BIP39.createWords(new InsecureRandom(16), 12)));
 		
 		String newGen=BIP39.createSecureMnemonic(24);
-		assertEquals(newGen,BIP39.normalise(newGen));
+		assertEquals(newGen,BIP39.normaliseFormat(newGen));
 	}
 	
+	@Test
+	public void testDerivePath() {
+		// Ed25199 Test vector 2 from : https://github.com/satoshilabs/slips/blob/master/slip-0010.md
+		Blob seed = Blob.fromHex("fffcf9f6f3f0edeae7e4e1dedbd8d5d2cfccc9c6c3c0bdbab7b4b1aeaba8a5a29f9c999693908d8a8784817e7b7875726f6c696663605d5a5754514e4b484542");	
+		{
+			Blob priv=SLIP10.deriveKeyPair(seed, "m").getSeed();
+			assertEquals(priv,SLIP10.deriveKeyPair(seed, new int[0]).getSeed());
+			assertEquals("171cb88b1b3c1db25add599712e36245d75bc65a1a5c9e18d76f9f2b1eab4012",priv.toHexString());
+		}
+		
+		{
+			Blob priv=SLIP10.deriveKeyPair(seed, "m/0").getSeed();
+			assertEquals("1559eb2bbec5790b0c65d8693e4d0875b1747f4970ae8b650486ed7470845635",priv.toHexString());
+		}
+		
+		{
+			Blob priv=SLIP10.deriveKeyPair(seed, "m/0/2147483647/1/2147483646/2").getSeed();
+			assertEquals("551d333177df541ad876a60ea71f00447931c0a9da16f227c11ea080d7391b8d",priv.toHexString());
+		}
+
+
+	}
 	
 	@Test 
 	public void testValidStrings() {
-		doValidStringTest("behind emotion squeeze"); // insufficient words
-		doValidStringTest("behinD Emotion SQUEEZE"); // insufficient words
+		doValidStringTest("double liar property"); 
+		
+		// Another example from https://github.com/trezor/python-mnemonic/blob/master/vectors.json
+		doValidStringTest("legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth title");
 	}
 
 	private void doValidStringTest(String m) {
-		assertNull(BIP39.checkMnemonic(m));
+		assertTrue(BIP39.checkSum(m));
+
 		String PP="pass";
 		List<String> words=BIP39.getWords(m);
+		int n=words.size();
 		try {
 			Blob seed=BIP39.getSeed(words, PP);
 			assertEquals(BIP39.SEED_LENGTH,seed.count());
@@ -99,16 +162,22 @@ public class BIP39Test {
 			// Wrong passphrase => different seed
 			assertNotEquals(seed,BIP39.getSeed(words, "badpass"));
 			
-			// with extra whitespace is OK
-			assertEquals(seed,BIP39.getSeed(" \t  "+m, PP));
-
 			AKeyPair kp=BIP39.seedToKeyPair(seed);
 			assertNotNull(kp);
 			
 		} catch (Exception e) {
-			fail("Enexpected Exception "+e);
+			fail("Unexpected Exception "+e);
 		}
 	
+		// Tests for round trips to entropy
+		byte[] bs=BIP39.mnemonicToBytes(m);
+		List<String> rwords=BIP39.createWords(bs, n);
+		String rm=BIP39.mnemonic(rwords);
+		
+		
+		assertNull(BIP39.checkMnemonic(m),()->"For string: "+m);
+		
+		assertEquals(m,rm);
 	}
 
 	@Test 

@@ -8,8 +8,9 @@ import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-
+import convex.core.cvm.CVMEncoder;
 import convex.core.data.ACell;
+import convex.core.data.AEncoder;
 import convex.core.data.Blob;
 import convex.core.data.Hash;
 import convex.core.data.Ref;
@@ -27,6 +28,8 @@ public class MemoryStore extends AStore {
 	public static final MemoryStore DEFAULT = new MemoryStore();
 	
 	private static final Logger log = LoggerFactory.getLogger(MemoryStore.class.getName());
+	
+	protected static final CVMEncoder encoder=new CVMEncoder();
 
 	/**
 	 * Storage of persisted Refs for each hash value
@@ -65,14 +68,20 @@ public class MemoryStore extends AStore {
 		AStore tempStore=Stores.current();
 		ACell decoded;
 		if (tempStore==this) {
-			decoded = decodeImpl(encoding);
+			decoded = encoder.decode(encoding);
 		} else try {
 			Stores.setCurrent(this);
-			decoded = decodeImpl(encoding);
+			decoded = encoder.decode(encoding);
 		} finally {
 			Stores.setCurrent(tempStore);
 		}
 		return (T)decoded;
+	}
+	
+
+	@Override
+	public AEncoder<ACell> getEncoder() {
+		return encoder;
 	}
 	
 	@SuppressWarnings("unchecked")
@@ -150,4 +159,5 @@ public class MemoryStore extends AStore {
 	public String shortName() {
 		return "Memory Store "+Objects.toIdentityString(this);
 	}
+
 }

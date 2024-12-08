@@ -14,7 +14,10 @@ import java.util.List;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
 
+import org.bouncycastle.util.Arrays;
+
 import convex.core.data.Blob;
+import convex.core.data.Hash;
 import convex.core.util.Utils;
 import convex.core.exceptions.Panic;
 
@@ -207,7 +210,20 @@ public class BIP39 {
 	
 	public static final int NUM_WORDS=wordlist.length;
 	
-	private static final HashMap<String,Integer> lookup=new HashMap<>();
+	public static final int BITS_PER_WORD=11;
+	
+	public static final String DEMO_PHRASE="sing bomb stay manual powder hard north mixture sausage lunch retreat desert";
+	public static final String DEMO_PASS="hello1234567890ZZ";
+	
+	/**
+	 * Map of words to integer values
+	 */
+	private static final HashMap<String,Integer> LOOKUP=new HashMap<>();
+	
+	/**
+	 * Map of abbreviated words to full words
+	 */
+	private static final HashMap<String,String> ABBR=new HashMap<>();
 
 	public static final int SEED_LENGTH = 64;
 	
@@ -218,7 +234,11 @@ public class BIP39 {
 	
 	static {
 		for (int i=0; i<NUM_WORDS; i++) {
-			lookup.put(wordlist[i], i);
+			String word=wordlist[i];
+			LOOKUP.put(word, i);
+			
+			String abbr=word.substring(0, Math.min(4, word.length()));
+			ABBR.put(abbr, word);
 		}
 	}
 	
@@ -229,14 +249,7 @@ public class BIP39 {
 	 * @return Blob containing BIP39 seed (64 bytes)
 	 */
 	public static Blob getSeed(List<String> words, String passphrase) throws NoSuchAlgorithmException, InvalidKeySpecException {
-		if (passphrase==null) passphrase="";
-
-		// Normalise words and convert to char array
-		String joined=Utils.joinStrings(words, " ");
-		joined=Normalizer.normalize(joined, Normalizer.Form.NFKD);		
-		char[] pass= joined.toCharArray(); 
-		
-		return getSeedInternal(pass,passphrase);
+		return getSeed(mnemonic(words),passphrase);
 	}
 	
 	public static AKeyPair seedToKeyPair(Blob seed) {
@@ -262,15 +275,25 @@ public class BIP39 {
 	}
 	
 	/**
-	 * Tests if the string is a valid mnemonic phrase, returns null if no problem
+	 * Tests if the string is a valid BIP39 mnemonic phrase, returns null if no problem
 	 * @param s String to be tested as a mnemonic phrase
 	 * @return String containing reason that mnemonic is not valid, or null if OK
 	 */
 	public static String checkMnemonic(String s) {
 		List<String> words=getWords(s);
-		if (words.size()<MIN_WORDS) return "Insufficient words in BIP39 mnemonic (min="+MIN_WORDS+")";
-		return checkWords(words);
+		if (words.size()<MIN_WORDS) return "Inadqeuate number of words in BIP39 mnemonic (at least "+MIN_WORDS+" recommended)";
+		
+		String err= checkWords(words);
+		if (err!=null) return "Not in word list: "+err;
+		
+		if (!s.equals(normaliseFormat(s))) return "String not normalised";
+		
+		if (!checkSum(s)) return "Invalid checksum";
+		
+		return null;
 	}
+	
+
 	
 	/**
 	 * Gets a BIP39 seed given a mnemonic and passphrase
@@ -279,7 +302,6 @@ public class BIP39 {
 	 * @return Blob containing BIP39 seed (64 bytes)
 	 */
 	public static Blob getSeed(String mnemonic, String passphrase) {
-			mnemonic=normalise(mnemonic);
 			mnemonic=Normalizer.normalize(mnemonic, Normalizer.Form.NFKD);		
 			char[] normalisedMnemonic= mnemonic.toCharArray(); 
 			return getSeedInternal(normalisedMnemonic,passphrase);
@@ -320,45 +342,147 @@ public class BIP39 {
 	 * @return List of words
 	 */
 	public static List<String> createWords(SecureRandom r, int n) {
+		int CS=n/3; // number of checksum bits
+		int ENT=CS*32;
+
+		byte[] bs=new byte[ENT/8]; // enough space for entropy
+		r.nextBytes(bs);
+		
+		return createWordsAddingChecksum(bs,n);
+	}
+	
+	public static List<String> createWordsAddingChecksum(byte[] entropy, int n) {
+		int CS=n/3; // number of checksum bits
+		int ENT=CS*32;
+		Hash checkHash=Hashing.sha256(entropy);
+		int checkSum=Utils.extractBits(checkHash.getBytes(), CS, 256-CS); // BIP39 checksum
+		
+		int blen=((CS+ENT+7)/8); // enough space for entropy plus checksum
+		byte[] bs=new byte[blen];
+		System.arraycopy(entropy, 0, bs, 0, ENT/8);
+		Utils.setBits(bs, CS, (blen*8)-(ENT+CS),checkSum);
+		
+		return createWords(bs,n);
+	}
+	
+	/**
+	 * Check if BIP39 checksum is correct
+	 * @param s
+	 * @return True if BIP39 checksum is valid
+	 */
+	public static boolean checkSum(String mnemonic) {
+		List<String> words=getWords(mnemonic);
+		int n=words.size();
+		byte[] bs=mnemonicToBytes(words);
+		if (bs==null) return false;
+		
+		int CS=n/3; // number of checksum bits
+		int ENT=CS*32;
+		Hash checkHash=Hashing.sha256(Arrays.copyOf(bs, ENT/8));
+		int checkSum=Utils.extractBits(checkHash.getBytes(), CS, 256-CS); // BIP39 checksum
+		
+		int storedSum=Utils.extractBits(bs, CS, (bs.length*8)-(ENT+CS));
+		return checkSum==storedSum;	
+	}
+	
+	public static List<String> createWords(byte[] material, int n) {
+		int mbits=material.length*8;
 		ArrayList<String> al=new ArrayList<>(n);
 		for (int i=0; i<n; i++) {
-			int ix=r.nextInt(wordlist.length);
+			int ix=Utils.extractBits(material, BITS_PER_WORD, mbits - (i+1)*BITS_PER_WORD);
 			String word=wordlist[ix];
 			al.add(word);
 		}
 		return al;
 	}
+	
+	/**
+	 * Gets bytes containing the entropy and checksum used to create the given words
+	 * @param mnemonic
+	 * @return byte array of sufficient size, or null if not valid BIP39 words
+	 */
+	public static byte[] mnemonicToBytes(String mnemonic) {
+		List<String> words=getWords(mnemonic);
+		return mnemonicToBytes(words);
+	}
+	
+	/**
+	 * Gets bytes containing the entropy and checksum used to create the given words
+	 * @param mnemonic
+	 * @return byte array of sufficient size, or null if not valid BIP39 words
+	 */
+	public static byte[] mnemonicToBytes(List<String> words) {
+		int n=words.size();
+		if ((n<MIN_WORDS)||(n>24)) return null;
+		
+		int CS=n/3;
+		if ((CS*3!=n)) return null; // must be a multiple of 3 for valid BIP39
+		int ENT=CS*32;
+		
+		int blen=((CS+ENT+7)/8); // enough space for entropy plus checksum
+		byte[] bs=new byte[blen];
+		
+		for (int i=0; i<n; i++) {
+			String w=words.get(i);
+			Integer ix=LOOKUP.get(w);
+			if (ix==null) return null;
+			Utils.setBits(bs, BITS_PER_WORD, (blen*8) - (i+1)*BITS_PER_WORD, ix);
+		}
+		return bs;
+	}
 
 	/**
-	 * Gets the individual words from a mnemonic String. Will trim and normalise whitespace, convert to lowercase
+	 * Gets the individual words from a mnemonic String. Will trim and normalise whitespace
 	 * @param mnemonic Mnemonic String
 	 * @return List of words
 	 */
 	public static List<String> getWords(String mnemonic) {
 		mnemonic=mnemonic.trim();
-		mnemonic=normalise(mnemonic);
+		mnemonic=normaliseFormat(mnemonic);
 		String[] ss=mnemonic.split(" ");
 		ArrayList<String> al=new ArrayList<>();
 		for (int i=0; i<ss.length; i++) {
 			String w=ss[i].trim();
-			
 			if (!w.isBlank()) {
-				w=w.toLowerCase();
 				al.add(w);
 			}
 		}
 		return al;
 	}
 
-	public static String normalise(String s) {
+	public static String normaliseFormat(String s) {
 		s=s.trim().replaceAll("\\s+"," ");
 		s=s.toLowerCase();
 		return s;
 	}
+	
+	public static String normaliseAll(String s) {
+		// to lowercase and standard whitespace
+		s=normaliseFormat(s);
+		
+		List<String> words=getWords(s);
+		
+		int n=words.size();
+		for (int i=0; i<n; i++) {
+			String w=words.get(i);
+			if (LOOKUP.containsKey(w)) continue; // legit word, continue
+			
+			String ext=extendWord(w);
+			if (ext!=null) {
+				words.set(i, ext);
+				continue;
+			}
+			
+			words.set(i, w.toUpperCase()); // An unexpected word, highlight in uppercase
+		}
+		
+		String result = mnemonic(words);
+		return result;
+	}
 
 	/**
 	 * Create a mnemonic String from a list of words, separated by spaces
-	 * @param words  List of words for mnemonic
+	 * @param words List of words for mnemonic
 	 * @return Combined mnemonic string
 	 */
 	public static String mnemonic(List<String> words) {
@@ -378,9 +502,39 @@ public class BIP39 {
 	 */
 	public static String checkWords(List<String> words) {
 		for (String w: words) {
-			if (!lookup.containsKey(w)) return w;
+			if (!LOOKUP.containsKey(w)) return w;
 		}
 		return null;
+	}
+
+	/**
+	 * Extends an abbreviated form of a BIP39 word to a full word e.g. 'SHAL' => 'shallow'
+	 * @param abbr
+	 * @return
+	 */
+	public static String extendWord(String abbr) {
+		return ABBR.get(abbr.trim().toLowerCase());
+	}
+
+	public static int[] parsePath(String path) {
+		try {
+			String[] es=path.split("/");
+			if (!"m".equals(es[0])) throw new Exception("<Bad derivation path, must start with 'm'>");
+			
+			int n=es.length-1;
+			int[] proposedPath=new int[n];
+			for (int i=0; i<n; i++) {
+				try {
+					Integer ix= Integer.parseInt(es[i+1]);
+					proposedPath[i]=ix;
+				} catch (NumberFormatException e) {
+					throw new Exception("<Bad derivation path, should be integer indexes 'm/44/888/1/0/123' >");
+				}
+			}
+			return proposedPath;
+		} catch (Exception ex) {
+			return null;
+		}
 	}
 	
 }

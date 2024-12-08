@@ -45,7 +45,7 @@ public class Strings {
 	public static final StringShort MISSING_PEER = StringShort.create("Missing Peer!");
 
 	public static final StringShort INSUFFICIENT_STAKE = StringShort.create("Insufficient Stake!");
-
+	
 	public static final StringShort ILLEGAL_BLOCK_SIZE = StringShort.create("Illegal Block Size!");
 
 	public static final StringShort BACKDATED_BLOCK = StringShort.create("Block too old");
@@ -62,6 +62,8 @@ public class Strings {
 
 	public static final StringShort PRINT_EXCEEDED = StringShort.create(Constants.PRINT_EXCEEDED_STRING);
 
+	public static final StringShort LONG_MIN_VALUE = StringShort.create("-9223372036854775808");
+
 
 	/**
 	 * Reads a String from a Blob encoding.
@@ -72,7 +74,7 @@ public class Strings {
 	 * @throws BadFormatException If any problem with encoding
 	 */
 	public static AString read(Blob blob, int offset) throws BadFormatException {
-		long length=Format.readVLCCount(blob,offset+1);
+		long length=Format.readVLQCount(blob,offset+1);
 		if (length<0) throw new BadFormatException("Negative string length!");
 		if (length>Integer.MAX_VALUE) throw new BadFormatException("String length too long! "+length);
 		if (length<=StringShort.MAX_LENGTH) {

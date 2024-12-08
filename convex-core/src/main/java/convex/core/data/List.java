@@ -9,7 +9,7 @@ import convex.core.data.util.BlobBuilder;
 import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.InvalidDataException;
 import convex.core.lang.RT;
-import convex.core.util.Errors;
+import convex.core.util.ErrorMessages;
 import convex.core.util.Utils;
 
 /**
@@ -118,28 +118,14 @@ public class List<T extends ACell> extends AList<T> {
 	}
 
 	@Override
-	public int indexOf(Object o) {
-		int pos = data.lastIndexOf(o);
-		if (pos < 0) return -1;
-		return size() - 1 - pos;
-	}
-
-	@Override
-	public int lastIndexOf(Object o) {
-		int pos = data.indexOf(o);
-		if (pos < 0) return -1;
-		return size() - 1 - pos;
-	}
-
-	@Override
-	public long longIndexOf(Object o) {
+	public long longIndexOf(ACell o) {
 		long pos = data.longLastIndexOf(o);
 		if (pos < 0) return -1;
 		return count - 1 - pos;
 	}
 
 	@Override
-	public long longLastIndexOf(Object o) {
+	public long longLastIndexOf(ACell o) {
 		long pos = data.longIndexOf(o);
 		if (pos < 0) return -1;
 		return count - 1 - pos;
@@ -200,17 +186,17 @@ public class List<T extends ACell> extends AList<T> {
 
 		@Override
 		public void remove() {
-			throw new UnsupportedOperationException(Errors.immutable(this));
+			throw new UnsupportedOperationException(ErrorMessages.immutable(this));
 		}
 
 		@Override
 		public void set(T e) {
-			throw new UnsupportedOperationException(Errors.immutable(this));
+			throw new UnsupportedOperationException(ErrorMessages.immutable(this));
 		}
 
 		@Override
 		public void add(T e) {
-			throw new UnsupportedOperationException(Errors.immutable(this));
+			throw new UnsupportedOperationException(ErrorMessages.immutable(this));
 		}
 	}
 
@@ -233,6 +219,11 @@ public class List<T extends ACell> extends AList<T> {
 
 	@Override
 	public boolean isCanonical() {
+		return true;
+	}
+	
+	@Override public final boolean isCVMValue() {
+		// Lists are always valid CVM values
 		return true;
 	}
 	
@@ -402,12 +393,6 @@ public class List<T extends ACell> extends AList<T> {
 		if (newLen==0) return Lists.empty();
 		return new List<T>(data.slice(0, newLen));
 	}
-
-	@Override
-	public byte getTag() {
-		return Tag.LIST;
-	}
-
 
 	@Override
 	public AVector<T> reverse() {

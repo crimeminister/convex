@@ -2,6 +2,7 @@ package convex.core.data;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.function.BiConsumer;
@@ -26,8 +27,9 @@ import convex.core.util.Utils;
 public class MapLeaf<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 	/**
 	 * Maximum number of entries in a MapLeaf
+	 * 15 provides optimal binary search in leaf nodes
 	 */
-	public static final int MAX_ENTRIES = 8;
+	public static final int MAX_ENTRIES = 15;
 
 	static final MapEntry<?, ?>[] EMPTY_ENTRIES = new MapEntry[0];
 
@@ -42,7 +44,7 @@ public class MapLeaf<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 	}
 
 	/**
-	 * Creates a ListMap with the specified entries. Entries must have distinct keys
+	 * Creates a MapLeaf with the specified entries. Entries must have distinct keys
 	 * but may otherwise be specified in any order.
 	 * 
 	 * Null entries are ignored/removed.
@@ -112,16 +114,26 @@ public class MapLeaf<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 
 	@Override
 	protected MapEntry<K, V> getEntryByHash(Hash hash) {
-		int len = size();
-		for (int i = 0; i < len; i++) {
-			MapEntry<K, V> e = entries[i];
-			if (hash.equals(e.getKeyHash())) return e;
+		int start =0;
+		int end = size();
+		while (end>start) { // binary search since we have hash
+			int mid=(end+start)/2;
+			MapEntry<K, V> e = entries[mid];
+			Hash eh=e.getKeyHash();
+			int comp=(hash.compareTo(eh));
+			if (comp==0) return e;
+			if (comp<0) {
+				end=mid; // first half
+			} else {
+				start=mid+1; // second half
+			}
 		}
 		return null;
 	}
 
 	@Override
 	public boolean containsValue(ACell value) {
+		// this always needs a linear scan
 		int len = size();
 		for (int i = 0; i < len; i++) {
 			if (Cells.equals(value, entries[i].getValue())) return true;
@@ -150,10 +162,10 @@ public class MapLeaf<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 		return -1;
 	}
 
-	private int seekKeyRef(Ref<K> key) {
+	private int seekKeyRef(Hash keyHash) {
 		int len = size();
 		for (int i = 0; i < len; i++) {
-			if (Utils.equals(key, entries[i].getKeyRef())) return i;
+			if (Utils.equals(keyHash, entries[i].getKeyHash())) return i;
 		}
 		return -1;
 	}
@@ -167,7 +179,7 @@ public class MapLeaf<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 	}
 
 	@Override
-	public MapLeaf<K, V> dissocRef(Ref<K> key) {
+	public MapLeaf<K, V> dissocHash(Hash key) {
 		int i = seekKeyRef(key);
 		if (i < 0) return this; // not found
 		return dissocEntry(i);
@@ -185,11 +197,6 @@ public class MapLeaf<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 
 	@Override
 	public AHashMap<K, V> assocEntry(MapEntry<K, V> e) {
-		return assocEntry(e, 0);
-	}
-
-	@Override
-	public AHashMap<K, V> assocEntry(MapEntry<K, V> e, int shift) {
 		int len = size();
 
 		// first check for update with existing key
@@ -216,7 +223,7 @@ public class MapLeaf<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 			return new MapLeaf<K, V>(newEntries);
 		} else {
 			// new size implies a TreeMap with the current given shift
-			return MapTree.create(newEntries, shift);
+			return MapTree.create(newEntries);
 		}
 	}
 
@@ -226,7 +233,7 @@ public class MapLeaf<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 		return assoc((K)key, (V) value, 0);
 	}
 
-	protected AHashMap<K, V> assoc(K key, V value, int shift) {
+	AHashMap<K, V> assoc(K key, V value, int shift) {
 		int len = size();
 
 		// first check for update with existing key
@@ -250,24 +257,20 @@ public class MapLeaf<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 		System.arraycopy(entries, 0, newEntries, 0, len);
 		newEntries[len] = MapEntry.create(key, value);
 		if (len + 1 <= MAX_ENTRIES) {
-			// new size should be a ListMap
+			// new size should be a MapLeaf
 			Arrays.sort(newEntries);
 			return new MapLeaf<K, V>(newEntries);
 		} else {
-			// new Size should be a TreeMap with current shift
-			return MapTree.create(newEntries, shift);
+			// new Size should be a MapTree with current shift
+			return MapTree.create(newEntries);
 		}
 	}
 
 	@Override
-	protected AHashMap<K, V> assocRef(Ref<K> keyRef, V value, int shift) {
-		return assoc(keyRef.getValue(), value, shift);
+	public AHashMap<K, V> assocRef(Ref<K> keyRef, V value) {
+		return assoc(keyRef.getValue(), value);
 	}
 
-	@Override
-	public AHashMap<K, V> assocRef(Ref<K> keyRef, V value) {
-		return assocRef(keyRef, value, 0);
-	}
 
 	@Override
 	public Set<K> keySet() {
@@ -298,7 +301,7 @@ public class MapLeaf<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 	}
 
 	@Override
-	protected void accumulateEntrySet(Set<Entry<K, V>> h) {
+	protected void accumulateEntries(Collection<Entry<K, V>> h) {
 		for (int i = 0; i < entries.length; i++) {
 			MapEntry<K, V> me = entries[i];
 			h.add(me);
@@ -313,7 +316,7 @@ public class MapLeaf<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 	
 	@Override
 	public int encodeRaw(byte[] bs, int pos) {
-		pos = Format.writeVLCLong(bs,pos, count);
+		pos = Format.writeVLQCount(bs,pos, count);
 
 		for (int i = 0; i < count; i++) {
 			// Note we encode the Map Entry refs only, skipping the general vector encoding
@@ -340,7 +343,7 @@ public class MapLeaf<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 	 * @throws BadFormatException If encoding is invalid
 	 */
 	public static <K extends ACell, V extends ACell> MapLeaf<K, V> read(Blob b, int pos, long count) throws BadFormatException {
-		int epos=pos+2; // Note: Tag byte plus VLC length of count which is always 1
+		int epos=pos+2; // Note: Tag byte plus VLQ Count length which is always 1
 		
 		@SuppressWarnings("unchecked")
 		MapEntry<K, V>[] items = (MapEntry<K, V>[]) new MapEntry[(int) count];
@@ -349,7 +352,7 @@ public class MapLeaf<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 			epos+=kr.getEncodingLength();
 			Ref<V> vr=Format.readRef(b,epos);
 			epos+=vr.getEncodingLength();
-			items[i] = MapEntry.createRef(kr, vr);
+			items[i] = MapEntry.fromRefs(kr, vr);
 		}
 
 		if (!isValidOrder(items)) {
@@ -433,12 +436,12 @@ public class MapLeaf<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 	}
 
 	/**
-	 * Filters this ListMap to contain only key hashes with the hex digits specified
+	 * Filters this MapLeaf to contain only key hashes with the hex digits specified
 	 * in the given Mask
 	 * 
 	 * @param digitPos Position of the hex digit to filter
 	 * @param mask     Mask of digits to include
-	 * @return Filtered ListMap
+	 * @return Filtered MapLeaf
 	 */
 	public MapLeaf<K, V> filterHexDigits(int digitPos, int mask) {
 		mask = mask & 0xFFFF;
@@ -654,12 +657,12 @@ public class MapLeaf<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 	}
 
 	@Override
-	protected void validateWithPrefix(String prefix) throws InvalidDataException {
+	protected void validateWithPrefix(Hash prefix, int shift) throws InvalidDataException {
 		validate();
 		for (int i = 0; i < entries.length; i++) {
 			MapEntry<K, V> e = entries[i];
-			Hash h = e.getKeyRef().getHash();
-			if (!h.toHexString().startsWith(prefix)) {
+			Hash h = e.getKeyHash();
+			if (h.commonHexPrefixLength(prefix,shift)<shift) {
 				throw new InvalidDataException("Prefix " + prefix + " invalid for map entry: " + e + " with hash: " + h,
 						this);
 			}
@@ -745,6 +748,12 @@ public class MapLeaf<K extends ACell, V extends ACell> extends AHashMap<K, V> {
 		MapEntry<K,V>[] nrefs=new MapEntry[n];
 		System.arraycopy(entries, (int) start, nrefs, 0, n);
 		return new MapLeaf<K,V>(nrefs);
+	}
+
+	@Override
+	protected Hash getFirstHash() {
+		if (count==0) return null;
+		return entries[0].getKeyHash();
 	}
 
 }

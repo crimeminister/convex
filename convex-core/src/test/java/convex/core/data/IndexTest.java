@@ -13,13 +13,17 @@ import java.util.HashMap;
 
 import org.junit.jupiter.api.Test;
 
+import convex.core.cvm.Address;
+import convex.core.cvm.Keywords;
+import convex.core.cvm.PeerStatus;
+import convex.core.cvm.Symbols;
+import convex.core.data.impl.LongBlob;
 import convex.core.data.prim.CVMDouble;
 import convex.core.data.prim.CVMLong;
 import convex.core.data.type.Types;
 import convex.core.exceptions.InvalidDataException;
 import convex.core.init.InitTest;
 import convex.core.lang.RT;
-import convex.core.lang.Symbols;
 import convex.test.Samples;
 
 public class IndexTest {
@@ -233,6 +237,11 @@ public class IndexTest {
 		assertNotEquals(Index.create(bb, bl), Index.create(ba,bl)); // different entry key types
 		assertEquals(Index.create(bb, bl), Index.create(bl,bl)); // same entry key types
 	}
+	
+	@Test 
+	public void testPrint() {
+		assertEquals("#Index {}",Index.EMPTY.toString());
+	}
 
 	@Test
 	public void testSingleEntry() throws InvalidDataException {
@@ -441,6 +450,9 @@ public class IndexTest {
 			MapEntry<K, V> e2 = m.entryAt(n - 1);
 			assertTrue(e1.getKey().compareTo(e2.getKey().toBlob()) < 0);
 		}
+		
+		// TODO: should round trip when all child types do
+		// assertEquals(m,Reader.read(RT.print(m).toString()));
 		
 		assertEquals(Types.INDEX,m.getType());
 

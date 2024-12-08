@@ -11,11 +11,13 @@ import convex.core.data.prim.AInteger;
 import convex.core.data.prim.CVMLong;
 import convex.core.data.util.SequenceSpliterator;
 import convex.core.lang.RT;
-import convex.core.util.Errors;
+import convex.core.util.ErrorMessages;
 import convex.core.util.Utils;
 
 /**
  * Abstract base class for concrete sequential data structure (immutable persistent lists and vectors etc.)
+ * 
+ * Implements standard java.util.List interface
  *
  * @param <T> Type of list elements
  */
@@ -27,7 +29,24 @@ public abstract class ASequence<T extends ACell> extends ACollection<T> implemen
 	
 	@Override
 	public boolean contains(Object o) {
-		return longIndexOf(o) >= 0;
+		if (!(o==null||(o instanceof ACell))) return false;
+		return longIndexOf((ACell)o) >= 0;
+	}
+	
+	@Override
+	public int indexOf(Object o) {
+		if (!(o==null||(o instanceof ACell))) return -1;
+		long pos =longIndexOf((ACell) o);
+		if (pos < 0) return -1;
+		return Utils.checkedInt(pos);
+	}
+
+	@Override
+	public int lastIndexOf(Object o) {
+		if (!(o==null||(o instanceof ACell))) return -1;
+		long pos =longLastIndexOf((ACell) o);
+		if (pos < 0) return -1;
+		return Utils.checkedInt(pos);
 	}
 
 	/**
@@ -37,7 +56,7 @@ public abstract class ASequence<T extends ACell> extends ACollection<T> implemen
 	 * @param value Any value which could appear as an element of the sequence.
 	 * @return Index of the value, or -1 if not found.
 	 */
-	public abstract long longIndexOf(Object value);
+	public abstract long longIndexOf(ACell value);
 
 	/**
 	 * Gets the last long index at which the specified value appears in the the sequence.
@@ -47,7 +66,7 @@ public abstract class ASequence<T extends ACell> extends ACollection<T> implemen
 	 * @param value Any value which could appear as an element of the sequence.
 	 * @return Index of the value, or -1 if not found.
 	 */
-	public abstract long longLastIndexOf(Object value);
+	public abstract long longLastIndexOf(ACell value);
 
 	@Override
 	public abstract <R extends ACell> ASequence<R> map(Function<? super T, ? extends R> mapper);
@@ -84,7 +103,7 @@ public abstract class ASequence<T extends ACell> extends ACollection<T> implemen
 	@Override
 	public final boolean addAll(int index, Collection<? extends T> c) {
 		// Convex sequences are never mutable
-		throw new UnsupportedOperationException(Errors.immutable(this));
+		throw new UnsupportedOperationException(ErrorMessages.immutable(this));
 	}
 
 	/**
@@ -109,13 +128,6 @@ public abstract class ASequence<T extends ACell> extends ACollection<T> implemen
 	@Override
 	public T get(int index) {
 		return get((long) index);
-	}
-	
-	/**
-	 * Sequences are always valid CVM values
-	 */
-	@Override public final boolean isCVMValue() {
-		return true;
 	}
 
 	@Override
@@ -159,8 +171,6 @@ public abstract class ASequence<T extends ACell> extends ACollection<T> implemen
 		return false;
 	}
 
-
-
 	/**
 	 * Gets the element Ref at the specified index
 	 * 
@@ -171,7 +181,7 @@ public abstract class ASequence<T extends ACell> extends ACollection<T> implemen
 
 	@Override
 	public T set(int index, T element) {
-		throw new UnsupportedOperationException(Errors.immutable(this));
+		throw new UnsupportedOperationException(ErrorMessages.immutable(this));
 	}
 	
 	@SuppressWarnings("unchecked")
@@ -206,12 +216,12 @@ public abstract class ASequence<T extends ACell> extends ACollection<T> implemen
 
 	@Override
 	public final void add(int index, T element) {
-		throw new UnsupportedOperationException(Errors.immutable(this));
+		throw new UnsupportedOperationException(ErrorMessages.immutable(this));
 	}
 
 	@Override
 	public final T remove(int index) {
-		throw new UnsupportedOperationException(Errors.immutable(this));
+		throw new UnsupportedOperationException(ErrorMessages.immutable(this));
 	}
 	
 	/**
@@ -268,7 +278,7 @@ public abstract class ASequence<T extends ACell> extends ACollection<T> implemen
 		long start = fromIndex;
 		long end = toIndex;
 		ASequence<T> result= slice(start, end);
-		if (result==null) throw new IndexOutOfBoundsException(Errors.badRange(start, end));
+		if (result==null) throw new IndexOutOfBoundsException(ErrorMessages.badRange(start, end));
 		return result;
 	}
 

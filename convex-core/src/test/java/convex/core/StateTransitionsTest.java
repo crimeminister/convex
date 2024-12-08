@@ -9,26 +9,32 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import org.junit.jupiter.api.Test;
 
+import convex.core.cpos.Block;
+import convex.core.cpos.BlockResult;
+import convex.core.cpos.CPoSConstants;
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.AccountStatus;
+import convex.core.cvm.Address;
+import convex.core.cvm.Juice;
+import convex.core.cvm.PeerStatus;
+import convex.core.cvm.State;
+import convex.core.cvm.transactions.ATransaction;
+import convex.core.cvm.transactions.Invoke;
+import convex.core.cvm.transactions.Transfer;
 import convex.core.data.ABlob;
 import convex.core.data.ACell;
 import convex.core.data.AVector;
 import convex.core.data.AccountKey;
-import convex.core.data.AccountStatus;
-import convex.core.data.Address;
 import convex.core.data.Index;
-import convex.core.data.PeerStatus;
 import convex.core.data.SignedData;
 import convex.core.data.Strings;
+import convex.core.data.Symbol;
 import convex.core.data.Vectors;
+import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadSignatureException;
 import convex.core.init.InitTest;
-import convex.core.lang.Juice;
 import convex.core.lang.Reader;
 import convex.core.lang.TestState;
-import convex.core.transactions.ATransaction;
-import convex.core.transactions.Invoke;
-import convex.core.transactions.Transfer;
 
 /**
  * Tests for State transition scenarios
@@ -44,22 +50,25 @@ public class StateTransitionsTest {
 	final AKeyPair KEYPAIR_PEER = InitTest.FIRST_PEER_KEYPAIR;
 	final AccountKey FIRST_PEER_KEY=KEYPAIR_PEER.getAccountKey();
 
-	final Address ADDRESS_A = Address.create(0); // initial account, also Peer
-	final Address ADDRESS_B = Address.create(1); // initial account
-	final Address ADDRESS_ROBB = Address.create(2); // initial account
-	final Address ADDRESS_C = Address.create(3);
-
-	final Address ADDRESS_NIKI = Address.create(4);
+	final Address REWARD_POOL = Address.create(0); // reward pool account
+	final Address ADDRESS_A = Address.create(1); // initial account, also Peer
+	final Address ADDRESS_B = Address.create(2); // initial account
+	final Address ADDRESS_ROBB = Address.create(3); // initial account
 	
-	final long ABAL=10000;
-	final long BBAL=2000;
+	// extra accounts to add later
+	final Address ADDRESS_C = Address.create(4);
+	final Address ADDRESS_NIKI = Address.create(5);
+	
+	final long ABAL=100000;
+	final long BBAL=20000;
 
 	@Test
 	public void testAccountTransfers() throws BadSignatureException {
 		AccountKey ka=KEYPAIR_A.getAccountKey();
 		AccountKey kb=KEYPAIR_B.getAccountKey();
-		long STAKE=Constants.MINIMUM_EFFECTIVE_STAKE*10;
+		long STAKE=CPoSConstants.MINIMUM_EFFECTIVE_STAKE*10;
 		AVector<AccountStatus> accounts = Vectors.of(
+				AccountStatus.create(0,null).withMemory(0),
 				AccountStatus.create(ABAL,ka).withMemory(10000),
 				AccountStatus.create(BBAL,kb).withMemory(10000),
 				AccountStatus.create(Constants.MAX_SUPPLY - STAKE - ABAL - BBAL,KEYPAIR_ROBB.getAccountKey()).withMemory(10000)
@@ -192,7 +201,7 @@ public class StateTransitionsTest {
 		}
 
 		{ // transfer amount greater than current balance
-			Transfer t1 = Transfer.create(ADDRESS_A,1, ADDRESS_C, 50000);
+			Transfer t1 = Transfer.create(ADDRESS_A,1, ADDRESS_C, 10*ABAL);
 			SignedData<ATransaction> st = KEYPAIR_A.signData(t1);
 			Block b = Block.of(System.currentTimeMillis(), st);
 			SignedData<Block> sb=KEYPAIR_A.signData(b);
@@ -308,6 +317,16 @@ public class StateTransitionsTest {
 			s=newState;
 		}
 	}
+	
+	@Test public void testDefTransaction() {
+		State s = TestState.STATE;
+		ATransaction t1 = Invoke.create(InitTest.HERO,1,Reader.read("(def a 1)"));
+		ResultContext rc=s.applyTransaction(t1);
+		assertFalse(rc.isError());
+		State s2=rc.getState();
+		AccountStatus as=s2.getAccount(InitTest.HERO);
+		assertEquals(CVMLong.ONE,as.getEnvironmentValue(Symbol.create("a")));
+	}
 
 	@Test
 	public void testMemoryAccounting() throws BadSignatureException {
@@ -325,6 +344,8 @@ public class StateTransitionsTest {
 		assertNull(br.getErrorCode(0),br.getResult(0).toString());
 
 		s = br.getState();
+		AccountStatus as=s.getAccount(InitTest.HERO);
+		assertEquals(CVMLong.ONE,as.getEnvironmentValue(Symbol.create("a")));
 
 		// should have increased memory size for account
 		long newMem=s.getMemorySize();

@@ -20,47 +20,24 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Random;
 import java.util.function.Function;
-import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import convex.core.data.AArrayBlob;
 import convex.core.data.ACell;
-import convex.core.data.ALongBlob;
 import convex.core.data.AObject;
 import convex.core.data.ASequence;
 import convex.core.data.Blob;
 import convex.core.data.Hash;
+import convex.core.data.impl.ALongBlob;
 import convex.core.lang.RT;
 
+/**
+ * Miscellaneous utility functions used in Convex, mostly bit fiddling
+ */
 public class Utils {
 	public static final byte[] EMPTY_BYTES = new byte[0];
 
-	/**
-	 * Converts an array of bytes into an unsigned BigInteger
-	 *
-	 * Assumes big-endian format as per new BigInteger(int, byte[]);
-	 *
-	 * @param data Array of bytes containing an unsigned integer (big-endian)
-	 * @return A new non-negative BigInteger
-	 */
-	public static BigInteger toBigInteger(byte[] data) {
-		return new BigInteger(1, data);
-	}
-
-	/**
-	 * Converts an array of bytes into a signed BigInteger
-	 *
-	 * Assumes two's-complement big-endian binary representation format as per new
-	 * BigInteger(byte[]);
-	 *
-	 * @param data Byte array to convert to BigInteger
-	 * @return A signed BigInteger
-	 */
-	public static BigInteger toSignedBigInteger(byte[] data) {
-		return new BigInteger(data);
-	}
-	
 	/**
 	 * Converts an int to a hex string e.g. "80cafe80"
 	 *
@@ -68,19 +45,19 @@ public class Utils {
 	 * @return Lowercase hex string
 	 */
 	public static String toHexString(int val) {
-		StringBuffer sb = new StringBuffer(8);
+		char[] chars=new char[8];
 		for (int i = 0; i < 8; i++) {
-			sb.append(Utils.toHexChar((val >> ((7 - i) * 4)) & 0xf));
+			chars[i]=(Utils.toHexChar((val >> ((7 - i) * 4)) & 0xf));
 		}
-		return sb.toString();
+		return new String(chars);
 	}
 
 	public static String toHexString(short val) {
-		StringBuffer sb = new StringBuffer(4);
+		char[] chars=new char[4];
 		for (int i = 0; i < 4; i++) {
-			sb.append(Utils.toHexChar((val >> ((3 - i) * 4)) & 0xf));
+			chars[i]=(Utils.toHexChar((val >> ((3 - i) * 4)) & 0xf));
 		}
-		return sb.toString();
+		return new String(chars);
 	}
 
 	/**
@@ -90,10 +67,10 @@ public class Utils {
 	 * @return Lowercase hex string
 	 */
 	public static String toHexString(byte value) {
-		StringBuilder sb = new StringBuilder(2);
-		sb.append(toHexChar((((int) value) & 0xF0) >>> 4));
-		sb.append(toHexChar(((int) value) & 0xF));
-		return sb.toString();
+		char[] chars=new char[2];
+		chars[0]=(toHexChar((((int) value) & 0xF0) >>> 4));
+		chars[1]=(toHexChar(((int) value) & 0xF));
+		return new String(chars);
 	}
 
 
@@ -104,26 +81,11 @@ public class Utils {
 	 * @return Hex string for the given long
 	 */
 	public static String toHexString(long x) {
-		StringBuffer sb = new StringBuffer(16);
-		for (int i = 15; i >= 0; i--) {
-			sb.append(toHexChar(((int) (x >> (4 * i))) & 0xF));
+		char[] chars=new char[16];
+		for (int i = 0; i <16; i++) {
+			chars[i]=(toHexChar(((int) (x >> (4 * (15-i)))) & 0xF));
 		}
-		return sb.toString();
-	}
-
-	/**
-	 * Converts a hex string to a friendly version ( first x chars).
-	 * SECURITY; do not use this output for any comparison.
-	 *
-	 * @param hexString String to show in friendly format.
-     * @param size Number of hex chars to output.
-	 * @return Hex String
-	 */
-	public static String toFriendlyHexString(String hexString, int size) {
-		String cleanHexString = hexString.replaceAll("^0[Xx]", "");
-		String result = cleanHexString.substring(0, size);
-		// + ".." + cleanHexString.substring(cleanHexString.length() - size);
-		return result;
+		return new String(chars);
 	}
 	
 	/**
@@ -144,7 +106,7 @@ public class Utils {
 	
 	/**
 	 * Reads an int from a specified location in a byte array. Assumes 4-byte
-	 * big-endian representation. Assumes zeros beyong end of array
+	 * big-endian representation. Assumes zeros beyond end of array
 	 *
 	 * @param data Byte array from which to read the 4-byte int representation
 	 * @param offset Offset into byte array to read
@@ -258,7 +220,7 @@ public class Utils {
 	 * Converts an int value in the range 0..15 to a hexadecimal character
 	 *
 	 * @param i Value to convert
-	 * @return Hex digit value (lowercase)
+	 * @return Hex digit character (lower case)
 	 */
 	public static char toHexChar(int i) {
 		if (i >= 0) {
@@ -281,19 +243,19 @@ public class Utils {
 	}
 
 	/**
-	 * Converts a hex string to a byte array. Must contain an the expected number of
+	 * Converts a hex string to a byte array. Must contain at least the expected number of
 	 * hex digits, or else null will be returned
 	 *
 	 * @param hex          String containing Hex digits
-	 * @param stringLength number of hex digits in the string to use
-	 * @return byte array with the given hex value, or null if not valud
+	 * @param hexLength   number of hex digits in the string to use (must be even)
+	 * @return byte array with the given hex value, or null if not valid hex
 	 */
-	public static byte[] hexToBytes(String hex, int stringLength) {
-		if (hex.length() != stringLength) {
+	public static byte[] hexToBytes(String hex, int hexLength) {
+		if (hex.length() < hexLength) {
 			return null;
 		}
-		int N = stringLength / 2;
-		if (N * 2 != stringLength) {
+		int N = hexLength / 2;
+		if (N * 2 != hexLength) {
 			return null;
 		}
 		byte[] result = new byte[N];
@@ -322,19 +284,38 @@ public class Utils {
 	}
 
 	/**
-	 * Gets the value of a single hex car e.g. hexVal('c') => 12
+	 * Gets the value of a single hex character e.g. hexVal('c') => 12
 	 *
-	 * @param c Character representing a hex digit
+	 * @param c Character possibly representing a hex digit
 	 * @return int in the range 0..15 inclusive, or -1 if not a hex char
 	 */
 	public static int hexVal(char c) {
 		int v = (int) c;
-		if (v <= 102) {
-			if (v >= 97) return v - 87; // lowercase
-			if ((v >= 65) && (v <= 70)) return v - 55; // uppercase
-			if ((v >= 48) && (v <= 57)) return v - 48; // digit
-		}
+		
+		if ((v<48)||(v>102)) return -1; // out of possible range
+		
+		if (v >= 97) return v - 87; // lowercase 97-102
+		
+		if (v <= 57) return v - 48; // digit 48-57
+		
+		// uppercase, put this last as not likely to be needed on fast path
+		if ((v >= 65) && (v <= 70)) return v - 55; 
+		
 		return -1;
+	}
+	
+	/**
+	 * Gets the value of a single octal character e.g. octalVal('6') => 6
+	 *
+	 * @param c Character possibly representing an octal digit
+	 * @return int in the range 0..7 inclusive, or -1 if not an octal char
+	 */
+	public static int octalVal(char c) {
+		int v = (int) c;
+		
+		if ((v<48)||(v>55)) return -1; // out of possible range
+		
+		return v-48;
 	}
 
 	/**
@@ -423,6 +404,8 @@ public class Utils {
 	 */
 	public static int compareByteArrays(byte[] a, int aOffset, byte[] b, int bOffset, int length) {
 		for (int i = 0; i < length; i++) {
+			// This is essentially the same as Byte.compareUnsigned()
+			// except we want 1 and -1 consistently
 			int ai = 0xFF & a[aOffset + i];
 			int bi = 0xFF & b[bOffset + i];
 			if (ai < bi) return -1;
@@ -453,40 +436,6 @@ public class Utils {
 		}
 		sb.append(s);
 		return sb.toString();
-	}
-
-	/**
-	 * Writes an unsigned big integer to a specific segment of a byte[] array. Pads
-	 * with zeros if necessary to fill the specified length.
-	 *
-	 * @param a Value to write
-	 * @param dest Destination array
-	 * @param offset Offset into destination array
-	 * @param length Length to write
-	 */
-	public static void writeUInt(BigInteger a, byte[] dest, int offset, int length) {
-		if (a.signum() < 0) throw new IllegalArgumentException("Non-negative big integer expected!");
-		if ((offset + length) > dest.length) {
-			throw new IllegalArgumentException(
-					"Insufficient buffer space in byte array, available = " + (dest.length - offset));
-		}
-		byte[] bs = a.toByteArray();
-		int bl = bs.length;
-		if (bl == length) {
-			// expected case, correct number of bytes in unsigned representation
-			System.arraycopy(bs, 0, dest, offset, length);
-		} else if ((bl == (length + 1)) && (bs[0] == 0)) {
-			// OK because this is just an overflow of sign bit
-			// We just need to skip the zero bute that includes the sign
-			System.arraycopy(bs, 1, dest, offset, length);
-		} else if (bl < length) {
-			// rare case, our representation is too short, so need to pad
-			int pad = length - bl;
-			Arrays.fill(dest, offset, offset + pad, (byte) 0);
-			System.arraycopy(bs, 0, dest, offset + pad, bl);
-		} else {
-			throw new IllegalArgumentException("Insufficient buffer size, was " + length + " but needed " + bl);
-		}
 	}
 
 	/**
@@ -571,7 +520,7 @@ public class Utils {
 	 */
 	public static int checkedInt(long a) {
 		int i = (int) a;
-		if (a != i) throw new IllegalArgumentException(Errors.sizeOutOfRange(a));
+		if (a != i) throw new IllegalArgumentException(ErrorMessages.sizeOutOfRange(a));
 		return i;
 	}
 	
@@ -596,7 +545,7 @@ public class Utils {
 	 */
 	public static short checkedShort(long a) {
 		short s = (short) a;
-		if (s != a) throw new IllegalArgumentException(Errors.sizeOutOfRange(a));
+		if (s != a) throw new IllegalArgumentException(ErrorMessages.sizeOutOfRange(a));
 		return s;
 	}
 
@@ -609,7 +558,7 @@ public class Utils {
 	 */
 	public static byte checkedByte(long a) {
 		byte b = (byte) a;
-		if (b != a) throw new IllegalArgumentException(Errors.sizeOutOfRange(a));
+		if (b != a) throw new IllegalArgumentException(ErrorMessages.sizeOutOfRange(a));
 		return b;
 	}
 
@@ -674,6 +623,18 @@ public class Utils {
 		long ux = (x >= 0) ? x : -x - 1; // equivalent unsigned value
 		int bits=64 - Bits.leadingZeros(ux); // bits in unsigned representation
 		return 1+(bits/8); // need space for sign bit, so add a byte whenever full
+	}
+	
+	/**
+	 * Returns the minimal number of bytes to represent the signed twos complement
+	 * value of a BigInteger
+	 *
+	 * @param x Long value
+	 * @return Number of bytes required for representation, in the range 1-8
+	 *         inclusive
+	 */
+	public static int byteLength(BigInteger bi) {
+		return bi.bitLength()/8+1;
 	}
 
 	/**
@@ -878,21 +839,22 @@ public class Utils {
 		}
 	}
 
+	public static int longStringSize(long x) {
+        int d = 1;
+        if (x >= 0) {
+            d = 0;
+            x = -x;
+        }
+        long p = -10;
+        for (int i = 1; i < 19; i++) {
+            if (x > p)
+                return i + d;
+            p = 10 * p;
+        }
+        return 19 + d;
+    }
 
 
-	/**
-	 * Filters the array, returning an array containing only the elements where the
-	 * predicate returns true. May return the same array if all elements are
-	 * included.
-	 *
-	 * @param arr Array to filter
-	 * @param predicate Predicate to test array elements
-	 * @return Filtered array.
-	 */
-	public static <T> T[] filterArray(T[] arr, Predicate<T> predicate) {
-		if (arr.length <= 32) return filterSmallArray(arr, predicate);
-		throw new IllegalArgumentException("Can't Filter large arrays");
-	}
 
 	/**
 	 * Return a list of values, sorted according to the score computed using the
@@ -921,45 +883,6 @@ public class Utils {
 				return Long.signum(comp);
 			}
 		});
-		return result;
-	}
-
-	/**
-	 * Filters the array, returning an array containing only the elements where the
-	 * predicate returns true. May return the same array if all elements are
-	 * included.
-	 *
-	 * Array must have a maximum of 32 elements
-	 *
-	 * @param arr
-	 * @param predicate
-	 * @return
-	 */
-	private static <T> T[] filterSmallArray(T[] arr, Predicate<T> predicate) {
-		int mask = 0;
-		int n = arr.length;
-		for (int i = 0; i < n; i++) {
-			if (predicate.test(arr[i])) mask |= (1 << i);
-		}
-		return filterSmallArray(arr, mask);
-	}
-
-	@SuppressWarnings("unchecked")
-	public static <T> T[] filterSmallArray(T[] arr, int mask) {
-		int n = arr.length;
-		if (n > 32) throw new IllegalArgumentException("Array too long to filter: " + n);
-		int fullMask = (1 << n) - 1;
-		if (mask == fullMask) return arr;
-		int nn = Integer.bitCount(mask);
-		T[] result = (T[]) Array.newInstance(arr.getClass().getComponentType(), nn);
-		if (nn == 0) return result;
-		int ix = 0;
-		for (int i = 0; i < n; i++) {
-			if ((mask & (1 << i)) != 0) {
-				result[ix++] = arr[i];
-			}
-		}
-		assert (ix == nn);
 		return result;
 	}
 
@@ -1353,11 +1276,70 @@ public class Utils {
 	 * @param c Divisor
 	 * @return Result of (a*b)/c
 	 */
-	public static long mulDiv(long a, long b, long c) {
+	static long slowMulDiv(long a, long b, long c) {
 		// TODO: we want a faster version of this
 
 		BigInteger result=BigInteger.valueOf(a).multiply(BigInteger.valueOf(b)).divide(BigInteger.valueOf(c));
 		return checkedLong(result);
+	}
+	
+	/**
+	 * Long computation of (a*b)/c. Arguments and result must be in range 0..Long.MAX_VALUE
+	 * @param a First multiplicand
+	 * @param b Second multiplicand
+	 * @param c Divisor
+	 * @return Result of (a*b)/c
+	 */
+	public static long mulDiv(long a, long b, long c) {
+		if ((a<0)||(b<0)) throw new IllegalArgumentException("Negative multiplicand!");
+		if (c<=0) throw new IllegalArgumentException("Division by non-positive number!");
+		return fastMulDiv(a,b,c);
+	}
+	
+	private static final long LONG_HIGH_BIT=0x8000000000000000L;
+	
+	/**
+	 * Long computation of (a*b)/c. Arguments and result must be in range 0..Long.MAX_VALUE
+	 * 
+	 * @param a First multiplicand
+	 * @param b Second multiplicand
+	 * @param c Divisor
+	 * @return Result of (a*b)/c, or -1 if result overflows long
+	 */
+	static long fastMulDiv(long a, long b, long c) {
+		// 128 bit multiply
+		long m0=a*b;
+		long m1=Math.multiplyHigh(a, b);
+		long acc=0;
+		
+		// we are going to do base 2^63 long division :-)
+		// a * b = ab1 * 2^63 + ab0 
+ 		long ab1 = (m1<<1)|(m0>>>63);
+ 		if (c<=ab1) return -1;   // we know this will overflow
+ 		if (ab1==0) return m0/c; // fast path
+		long ab0 = (m0&~LONG_HIGH_BIT);
+
+		// d = 2^63 / c
+		long dq=-(LONG_HIGH_BIT/c); // note we need to reverse sign, since LONG_HIGH_BIT is negative
+		long dr=Long.remainderUnsigned(LONG_HIGH_BIT, c);  // dr < c
+
+		while (ab1>0) {			
+			// a * b = c*(ab1*dq) + (ab1*dr + ab0)
+			acc+=ab1*dq;
+			
+			// so we just need to divide (ab1*dr + ab0) by c to get the rest
+			m0=ab1*dr;
+			m1=Math.multiplyHigh(ab1, dr);
+			ab1 = (m1<<1)|(m0>>>63);
+			ab0 = (m0&~LONG_HIGH_BIT)+ab0;  // note we add in the previous ab0
+			if (ab0<0) {
+				// overflow carry
+				ab0=(ab0&~LONG_HIGH_BIT);
+				ab1++;
+			}
+		}
+		long result = acc + ab0/c;
+		return result;
 	}
 
 	private static Path homePath=null;

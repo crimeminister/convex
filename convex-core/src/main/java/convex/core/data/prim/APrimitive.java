@@ -23,11 +23,7 @@ public abstract  class APrimitive extends ACell {
 		return true;
 	}
 	
-	@Override public final boolean isCVMValue() {
-		return true;
-	}
-	
-	@Override public final boolean isDataValue() {
+	@Override public boolean isCVMValue() {
 		return true;
 	}
 	
@@ -50,12 +46,11 @@ public abstract  class APrimitive extends ACell {
 	
 	@Override
 	public ACell toCanonical() {
-		// Always canonical, probably?
+		// We expect primitives to be canonical, though implementations may override this
 		return this;
 	}
 
-	
-	// Default primitives have no Refs, must override these if different....
+	// Primitives have no Refs
 	
 	@Override
 	public <R extends ACell> Ref<R> getRef(int i) {
@@ -63,19 +58,19 @@ public abstract  class APrimitive extends ACell {
 	}
 
 	@Override
-	public ACell updateRefs(IRefFunction func) {
+	public final ACell updateRefs(IRefFunction func) {
 		return this;
 	}
 	
 	@Override
-	public int getRefCount() {
-		// No Refs by default
+	public final int getRefCount() {
+		// No Refs - primitives are always a leaf cell!
 		return 0;
 	}
 	
 	@Override
-	public int getBranchCount() {
-		// Never any branches by default
+	public final int getBranchCount() {
+		// Never any branches, even for Big Integer
 		return 0;
 	}
 

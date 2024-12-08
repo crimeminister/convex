@@ -20,8 +20,9 @@ import convex.core.util.Utils;
 public class SetLeaf<T extends ACell> extends AHashSet<T> {
 	/**
 	 * Maximum number of elements in a SetLeaf
+	 * We use the same structure as a MapLeaf
 	 */
-	public static final int MAX_ELEMENTS = 16;
+	public static final int MAX_ELEMENTS = MapLeaf.MAX_ENTRIES;
 
 	private final Ref<T>[] elements;
 
@@ -96,9 +97,10 @@ public class SetLeaf<T extends ACell> extends AHashSet<T> {
 	@Override
 	public Ref<T> getValueRef(ACell k) {
 		// Use cached hash if available
-		Hash h=(k==null)?Hash.NULL_HASH:k.cachedHash();
+		Hash h=Cells.cachedHash(k);
 		if (h!=null) return getRefByHash(h);
 
+		// linear scan if no hash for key?
 		int len = size();
 		for (int i = 0; i < len; i++) {
 			Ref<T> e = elements[i];
@@ -114,10 +116,19 @@ public class SetLeaf<T extends ACell> extends AHashSet<T> {
 
 	@Override
 	protected Ref<T> getRefByHash(Hash hash) {
-		int len = size();
-		for (int i = 0; i < len; i++) {
-			Ref<T> e = elements[i];
-			if (hash.equals(e.getHash())) return e;
+		int start =0;
+		int end = size();
+		while (end>start) { // binary search since we have hash
+			int mid=(end+start)/2;
+			Ref<T> e=elements[mid];
+			Hash eh=e.getHash();
+			int comp=(hash.compareTo(eh));
+			if (comp==0) return e;
+			if (comp<0) {
+				end=mid; // first half
+			} else {
+				start=mid+1; // second half
+			}
 		}
 		return null;
 	}
@@ -142,11 +153,19 @@ public class SetLeaf<T extends ACell> extends AHashSet<T> {
 	 * @param key
 	 * @return
 	 */
-	private int seekKeyRef(Ref<?> key) {
-		Hash h=key.getHash();
-		int len = size();
-		for (int i = 0; i < len; i++) {
-			if (h.compareTo(elements[i].getHash())==0) return i;
+	private int seekKeyRef(Hash h) {
+		int start =0;
+		int end = size();
+		while (end>start) { // binary search since we have hash
+			int mid=(end+start)/2;
+			Hash eh=elements[mid].getHash();
+			int comp=(h.compareTo(eh));
+			if (comp==0) return mid;
+			if (comp<0) {
+				end=mid; // first half
+			} else {
+				start=mid+1; // second half
+			}
 		}
 		return -1;
 	}
@@ -160,8 +179,8 @@ public class SetLeaf<T extends ACell> extends AHashSet<T> {
 	}
 
 	@Override
-	public SetLeaf<T> excludeRef(Ref<?> key) {
-		int i = seekKeyRef(key);
+	public SetLeaf<T> excludeHash(Hash hash) {
+		int i = seekKeyRef(hash);
 		if (i < 0) return this; // not found
 		return excludeAt(i);
 	}
@@ -192,7 +211,7 @@ public class SetLeaf<T extends ACell> extends AHashSet<T> {
 	@Override
 	public int encodeRaw(byte[] bs, int pos) {
 		long n=count();
-		pos = Format.writeVLCLong(bs,pos, n);
+		pos = Format.writeVLQCount(bs,pos, n);
 
 		for (int i = 0; i < n; i++) {
 			pos = elements[i].encode(bs, pos);;
@@ -220,7 +239,7 @@ public class SetLeaf<T extends ACell> extends AHashSet<T> {
 	 */
 	
 	public static <V extends ACell> SetLeaf<V> read(Blob b, int pos, long count) throws BadFormatException {
-		int headerLen=1+Format.getVLCLength(count);
+		int headerLen=1+1; // tag plus VLQ Count length which is always 1
 		
 		int epos=pos+headerLen;
 		if (count == 0) return Sets.empty();
@@ -256,10 +275,6 @@ public class SetLeaf<T extends ACell> extends AHashSet<T> {
 	}
 	
 	@Override public final boolean isCVMValue() {
-		return true;
-	}
-	
-	@Override public final boolean isDataValue() {
 		return true;
 	}
 
@@ -529,12 +544,7 @@ public class SetLeaf<T extends ACell> extends AHashSet<T> {
 	}
 
 	@Override
-	public AHashSet<T> includeRef(Ref<T> ref) {
-		return includeRef(ref,0);
-	}
-
-	@Override
-	protected AHashSet<T> includeRef(Ref<T> e, int shift) {
+	public AHashSet<T> includeRef(Ref<T> e) {
 		int n=elements.length;
 		Hash h=e.getHash();
 		int pos=0;
@@ -558,7 +568,7 @@ public class SetLeaf<T extends ACell> extends AHashSet<T> {
 		} else {
 			// Maximum size exceeded, so need to expand to tree. 
 			// Shift required since this might not be the tree root!
-			return SetTree.create(newEntries, shift);
+			return SetTree.create(newEntries);
 		}
 	}
 
@@ -578,7 +588,7 @@ public class SetLeaf<T extends ACell> extends AHashSet<T> {
 	@Override
 	public AHashSet<T> toCanonical() {
 		if (count<=MAX_ELEMENTS) return this;
-		return SetTree.create(elements, 0);
+		return SetTree.create(elements);
 	}
 
 	@SuppressWarnings("unchecked")
@@ -592,6 +602,12 @@ public class SetLeaf<T extends ACell> extends AHashSet<T> {
 		Ref<T>[] nrefs=new Ref[n];
 		System.arraycopy(elements, (int) start, nrefs, 0, n);
 		return new SetLeaf<T>(nrefs);
+	}
+
+	@Override
+	protected Hash getFirstHash() {
+		if (count==0) return null;
+		return elements[0].getHash();
 	}
 
 

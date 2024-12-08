@@ -12,10 +12,11 @@ import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import convex.core.Belief;
-import convex.core.BeliefMerge;
-import convex.core.Block;
-import convex.core.Order;
+import convex.core.cpos.Belief;
+import convex.core.cpos.BeliefMerge;
+import convex.core.cpos.Block;
+import convex.core.cpos.CPoSConstants;
+import convex.core.cpos.Order;
 import convex.core.crypto.AKeyPair;
 import convex.core.data.ACell;
 import convex.core.data.AccountKey;
@@ -402,7 +403,7 @@ public class BeliefPropagator extends AThreadedComponent {
 
 		Message msg = createBelief(belief, novelty);
 		long messageSize=msg.getMessageData().count();
-		if (messageSize>=Format.MAX_MESSAGE_LENGTH*0.95) {
+		if (messageSize>=CPoSConstants.MAX_MESSAGE_LENGTH*0.95) {
 			log.warn("Long Belief Delta message: "+messageSize);
 		}
 		return msg;
@@ -434,7 +435,7 @@ public class BeliefPropagator extends AThreadedComponent {
 
 		Message msg = createBelief(order, novelty);
 		long messageSize=msg.getMessageData().count();
-		if (messageSize>=Format.MAX_MESSAGE_LENGTH*0.95) {
+		if (messageSize>=CPoSConstants.MAX_MESSAGE_LENGTH*0.95) {
 			log.warn("Long Belief Delta message: "+messageSize);
 		}
 		return msg;

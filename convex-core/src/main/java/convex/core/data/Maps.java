@@ -119,7 +119,7 @@ public class Maps {
 			AVector<?> v=entries.get(i);
 			@SuppressWarnings("unchecked")
 			MapEntry<K,V> e=MapEntry.convertOrNull(v); // Ensure a Map entry
-			result = result.assocEntry(e, shift);
+			result = result.assocEntry(e);
 		}
 		return result;
 	}
@@ -139,10 +139,13 @@ public class Maps {
 	 * @throws BadFormatException If encoding is invalid
 	 */
 	public static <K extends ACell, V extends ACell> AHashMap<K, V> read(Blob b, int pos) throws BadFormatException {
-		long count = Format.readVLCLong(b,pos+1);
+		// A hashmap always starts with a VLQ count after the tag
+		// We use this to distinguish the type of Map cell
+		long count = Format.readVLQCount(b,pos+1);
+		
 		if (count==0) return empty();
 		if (count <= MapLeaf.MAX_ENTRIES) {
-			if (count < 0) throw new BadFormatException("Negative count of map elements!");
+			if (count < 0) throw new BadFormatException("Overflowed count of map elements!");
 			return MapLeaf.read(b, pos, count);
 		} else {
 			return MapTree.read(b, pos, count);
@@ -150,6 +153,10 @@ public class Maps {
 	}
 	
 	public static int MAX_ENCODING_SIZE = Math.max(MapTree.MAX_ENCODING_LENGTH, MapLeaf.MAX_ENCODING_LENGTH);
+
+	public static <K extends ACell, V extends ACell> Hash getFirstHash(AHashMap<K, V> map) {
+		return map.getFirstHash();
+	}
 
 
 

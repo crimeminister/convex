@@ -7,31 +7,33 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
+import convex.core.cvm.ARecordGeneric;
+import convex.core.cvm.Address;
+import convex.core.cvm.CVMTag;
+import convex.core.cvm.Context;
+import convex.core.cvm.Keywords;
+import convex.core.cvm.RecordFormat;
+import convex.core.cvm.exception.AExceptional;
+import convex.core.cvm.exception.ErrorValue;
 import convex.core.data.ACell;
 import convex.core.data.AHashMap;
 import convex.core.data.AMap;
-import convex.core.data.ARecordGeneric;
 import convex.core.data.AString;
 import convex.core.data.AVector;
-import convex.core.data.Address;
 import convex.core.data.Blob;
-import convex.core.data.Format;
+import convex.core.data.Cells;
 import convex.core.data.Keyword;
-import convex.core.data.Keywords;
 import convex.core.data.Maps;
+import convex.core.data.StringShort;
 import convex.core.data.Strings;
-import convex.core.data.Tag;
 import convex.core.data.Vectors;
 import convex.core.data.prim.CVMLong;
+import convex.core.data.util.BlobBuilder;
 import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.InvalidDataException;
 import convex.core.exceptions.MissingDataException;
 import convex.core.exceptions.ResultException;
-import convex.core.lang.Context;
 import convex.core.lang.RT;
-import convex.core.lang.RecordFormat;
-import convex.core.lang.exception.AExceptional;
-import convex.core.lang.exception.ErrorValue;
 import convex.core.util.Utils;
 
 /**
@@ -65,7 +67,7 @@ public final class Result extends ARecordGeneric {
 	private static final AVector<AVector<ACell>> EMPTY_LOG = null;
 	
 	private Result(AVector<ACell> values) {
-		super(RESULT_FORMAT, values);
+		super(CVMTag.RESULT,RESULT_FORMAT, values);
 	}
 	
 	/**
@@ -85,8 +87,8 @@ public final class Result extends ARecordGeneric {
 	 * @param info Additional info
 	 * @return Result instance
 	 */
-	public static Result create(CVMLong id, ACell value, ACell errorCode, AHashMap<Keyword,ACell> info) {
-		return buildFromVector(Vectors.of(id,value,errorCode,EMPTY_LOG,info));
+	public static Result create(ACell id, ACell value, ACell errorCode, AHashMap<Keyword,ACell> info) {
+		return buildFromVector(Vectors.create(id,value,errorCode,EMPTY_LOG,info));
 	}
 	
 	/**
@@ -98,7 +100,7 @@ public final class Result extends ARecordGeneric {
 	 * @param info Additional info
 	 * @return Result instance
 	 */
-	public static Result create(CVMLong id, ACell value, ACell errorCode, AVector<AVector<ACell>> log,AHashMap<Keyword,ACell> info) {
+	public static Result create(ACell id, ACell value, ACell errorCode, AVector<AVector<ACell>> log,AHashMap<Keyword,ACell> info) {
 		return buildFromVector(Vectors.of(id,value,errorCode,log,info));
 	}
 	
@@ -109,7 +111,7 @@ public final class Result extends ARecordGeneric {
 	 * @param errorCode Error Code (may be null for success)
 	 * @return Result instance
 	 */
-	public static Result create(CVMLong id, ACell value, ACell errorCode) {
+	public static Result create(ACell id, ACell value, ACell errorCode) {
 		return create(id,value,errorCode,null);
 	}
 
@@ -119,7 +121,7 @@ public final class Result extends ARecordGeneric {
 	 * @param value Result Value
 	 * @return Result instance
 	 */
-	public static Result create(CVMLong id, ACell value) {
+	public static Result create(ACell id, ACell value) {
 		return create(id,value,null,null);
 	}
 	
@@ -281,13 +283,6 @@ public final class Result extends ARecordGeneric {
 		return null;
 	}
 	
-	@Override
-	public int encode(byte[] bs, int pos) {
-		bs[pos++]=Tag.RESULT;
-		pos=values.encodeRaw(bs,pos);
-		return pos;
-	}
-	
 	/**
 	 * Reads a Result from a Blob encoding. Assumes tag byte already checked.
 	 * 
@@ -300,14 +295,12 @@ public final class Result extends ARecordGeneric {
 		int epos=pos; 
 		// include tag location since we are reading raw Vector (will ignore tag)
 		AVector<ACell> v=Vectors.read(b,epos);
-		epos+=Format.getEncodingLength(v);
+		epos+=Cells.getEncodingLength(v);
 		
 		// we can't check values yet because might be missing data
 		
-		Blob enc=v.getEncoding();
 		Result r=buildFromVector(v);
-		v.attachEncoding(null); // This is an invalid encoding for vector, see above
-		r.attachEncoding(enc);
+		r.attachEncoding(b.slice(pos, epos));
 		return r;
 	}
 
@@ -385,16 +378,6 @@ public final class Result extends ARecordGeneric {
 	 */
 	public Result withID(ACell id) {
 		return withValues(values.assoc(ID_POS, id));
-	}
-
-	@Override
-	public byte getTag() {
-		return Tag.RESULT;
-	}
-
-	@Override
-	public RecordFormat getFormat() {
-		return RESULT_FORMAT;
 	}
 
 	/**
@@ -475,6 +458,34 @@ public final class Result extends ARecordGeneric {
 		
 		return hm;
 	}
+	
+	private static final StringShort RESULT_TAG=StringShort.create("#Result");
+	
+	@Override
+	public boolean print(BlobBuilder sb, long limit) {
+		sb.append(RESULT_TAG);
+		sb.append(' ');
+		sb.append('{');
+		long n=count();
+		
+		RecordFormat format=getFormat();
+		ACell[] vs=getValuesArray();
+		boolean printed=false;
+		for (long i=0; i<n; i++) {
+			Keyword k=format.getKey(i);
+			ACell v=vs[(int)i];
+			
+			if (k.equals(Keywords.RESULT)||(v!=null)) {
+				if (printed) sb.append(',');
+				if (!RT.print(sb,k,limit)) return false;
+				sb.append(' ');
+				if (!RT.print(sb,v,limit)) return false;
+				printed=true;
+			}
+		}
+		sb.append('}');
+		return sb.check(limit);
+	}
 
 	/**
 	 * Construct a result from a cell of data
@@ -487,7 +498,8 @@ public final class Result extends ARecordGeneric {
 			return (Result) data;
 		} else if (data instanceof AMap) {
 			AMap<Keyword,ACell> m=RT.ensureMap(data);
-			return create(RT.ensureLong(m.get(Keywords.ID)),m.get(Keywords.RESULT),m.get(Keywords.ERROR),RT.ensureVector(m.get(Keywords.LOG)),RT.ensureMap(m.get(Keywords.INFO)));
+			ACell info=m.get(Keywords.INFO);
+			return create(RT.ensureLong(m.get(Keywords.ID)),m.get(Keywords.RESULT),m.get(Keywords.ERROR),RT.ensureVector(m.get(Keywords.LOG)),(info==null)?null:RT.ensureMap(info));
 		}
 		throw new IllegalArgumentException("Unrecognised data of type: "+Utils.getClassName(data));
 	}
@@ -519,5 +531,7 @@ public final class Result extends ARecordGeneric {
 		
 		return Result.create(id, value, errorCode);
 	}
+
+
 
 }

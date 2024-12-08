@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.function.Consumer;
 
 import org.eclipse.jetty.server.ServerConnector;
 import org.slf4j.Logger;
@@ -15,7 +16,7 @@ import convex.api.ConvexLocal;
 import convex.core.crypto.AKeyPair;
 import convex.core.crypto.CertUtils;
 import convex.core.data.Keyword;
-import convex.core.data.Keywords;
+import convex.core.cvm.Keywords;
 import convex.core.util.Utils;
 import convex.peer.API;
 import convex.peer.ConfigException;
@@ -31,10 +32,12 @@ import io.javalin.config.JavalinConfig;
 import io.javalin.http.staticfiles.Location;
 import io.javalin.openapi.JsonSchemaLoader;
 import io.javalin.openapi.JsonSchemaResource;
+import io.javalin.openapi.OpenApiInfo;
+import io.javalin.openapi.plugin.DefinitionConfiguration;
 import io.javalin.openapi.plugin.OpenApiPlugin;
 import io.javalin.openapi.plugin.redoc.ReDocPlugin;
 import io.javalin.openapi.plugin.swagger.SwaggerPlugin;
-import io.javalin.util.JavalinBindException;
+import io.javalin.util.JavalinException;
 
 public class RESTServer implements Closeable {
 	protected static final Logger log = LoggerFactory.getLogger(RESTServer.class.getName());
@@ -48,18 +51,19 @@ public class RESTServer implements Closeable {
 		this.convex = ConvexLocal.create(server, server.getPeerController(), server.getKeyPair());
 	}
 	
-	private Javalin buildApp() {
+	private Javalin buildApp(boolean useSSL) {
 		SslPlugin sslPlugin = getSSLPlugin(server.getConfig());
 		Javalin app = Javalin.create(config -> {
-			config.staticFiles.enableWebjars();
 			config.bundledPlugins.enableCors(cors -> {
 				cors.addRule(corsConfig -> {
+					// ?? corsConfig.allowCredentials=true;
+					
 					// replacement for enableCorsForAllOrigins()
 					corsConfig.anyHost();
 				});
 			});
 			
-			if (sslPlugin!=null) {
+			if (useSSL&&(sslPlugin!=null)) {
 				config.registerPlugin(sslPlugin);
 			}
 			
@@ -83,6 +87,26 @@ public class RESTServer implements Closeable {
 			String message = "Unexpected error: " + e;
 			ctx.result(message);
 			ctx.status(500);
+		});
+		
+		app.options("/*", ctx-> {
+			ctx.status(204); // No context#
+			ctx.removeHeader("Content-type");
+			ctx.header("access-control-allow-headers", "content-type");
+			ctx.header("access-control-allow-methods", "GET,HEAD,PUT,PATCH,POST,DELETE");
+			ctx.header("access-control-allow-origin", "*");
+			ctx.header("vary","Origin, Access-Control-Request-Headers");
+		});
+		
+		// Header to every response
+		app.afterMatched(ctx->{
+			// Reflect CORS origin
+			String origin = ctx.req().getHeader("Origin");
+			if (origin!=null) {
+				ctx.header("access-control-allow-origin", "*");
+			} else {
+				ctx.header("access-control-allow-origin", "*");
+			}
 		});
 
 		addAPIRoutes(app);	
@@ -124,14 +148,15 @@ public class RESTServer implements Closeable {
 		String docsPath="openapi-plugin/openapi-default.json";
 		
 		config.registerPlugin(new OpenApiPlugin(pluginConfig -> {
-			
             pluginConfig
             .withDocumentationPath(docsPath)
             .withDefinitionConfiguration((version, definition) -> {
-                definition.withInfo(info -> {
-					info.setTitle("Convex REST API");
-					info.setVersion("0.7.0");
-                });
+            	DefinitionConfiguration def=definition;
+                def=def.withInfo((Consumer <OpenApiInfo>)
+                		info -> {
+							info.setTitle("Convex REST API");
+							info.setVersion("0.7.0");
+		                });
             });
 		}));
 
@@ -214,15 +239,15 @@ public class RESTServer implements Closeable {
 	public synchronized void start(Integer port) {
 		close();
 		try {
-			javalin=buildApp();
+			javalin=buildApp(true);
 			start(javalin,port);
-		} catch (JavalinBindException e) {
+		} catch (JavalinException e) {
 			if (port!=null) throw e; // only try again if port unspecified
 			log.warn("Specified port "+port+"already in use, chosing another at random");
 			close();
 			
 			port=0; // use random port
-			javalin=buildApp();
+			javalin=buildApp(false);
 			start(javalin,port);
 		}
 	}

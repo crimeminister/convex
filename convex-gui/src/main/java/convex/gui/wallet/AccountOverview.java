@@ -7,7 +7,7 @@ import javax.swing.JPanel;
 
 import convex.api.Convex;
 import convex.core.data.AccountKey;
-import convex.core.data.Address;
+import convex.core.cvm.Address;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.ResultException;
 import convex.core.lang.RT;
@@ -52,8 +52,8 @@ public class AccountOverview extends JPanel {
 		// headings
 		add(new JLabel("Name"));
 		add(new JLabel("Address"));
-		add(new JLabel("Key"));
-		add(new JLabel("Convex Coins"),"wrap");
+		add(new JLabel("Identicon"));
+		add(new JLabel("Convex Coin Balance"),"wrap");
 		//add(new JLabel("Identicon"),"wrap");
 		
 		Font bigfont=font.deriveFont(40f);

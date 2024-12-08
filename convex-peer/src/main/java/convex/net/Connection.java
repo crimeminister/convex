@@ -23,11 +23,13 @@ import org.slf4j.LoggerFactory;
 
 import convex.core.Constants;
 import convex.core.Result;
+import convex.core.cvm.Address;
+import convex.core.cvm.transactions.ATransaction;
 import convex.core.data.ACell;
-import convex.core.data.AccountKey;
 import convex.core.data.AVector;
-import convex.core.data.Address;
+import convex.core.data.AccountKey;
 import convex.core.data.Blob;
+import convex.core.data.Cells;
 import convex.core.data.Format;
 import convex.core.data.Hash;
 import convex.core.data.IRefFunction;
@@ -38,7 +40,6 @@ import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
 import convex.core.store.AStore;
 import convex.core.store.Stores;
-import convex.core.transactions.ATransaction;
 import convex.core.util.Counters;
 import convex.core.util.Utils;
 import convex.core.util.Shutdown;
@@ -406,7 +407,7 @@ public class Connection {
 		Blob enc = Format.encodeMultiCell(payload,true);
 		if (log.isTraceEnabled()) {
 			log.trace("Sending message: " + type + " :: " + payload + " to " + getRemoteAddress() + " format: "
-					+ Format.encodedBlob(payload).toHexString());
+					+ Cells.encode(payload).toHexString());
 		}
 		boolean sent = sendBuffer(type, enc);
 		return sent;

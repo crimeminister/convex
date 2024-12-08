@@ -8,68 +8,79 @@ import java.util.HashSet;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
-import convex.core.Belief;
-import convex.core.Block;
-import convex.core.BlockResult;
-import convex.core.Order;
-import convex.core.Receipt;
 import convex.core.Result;
-import convex.core.State;
+import convex.core.cpos.Belief;
+import convex.core.cpos.Block;
+import convex.core.cpos.BlockResult;
+import convex.core.cpos.CPoSConstants;
+import convex.core.cpos.Order;
+import convex.core.cvm.ACVMRecord;
+import convex.core.cvm.AccountStatus;
+import convex.core.cvm.Address;
+import convex.core.cvm.CVMTag;
+import convex.core.cvm.Ops;
+import convex.core.cvm.PeerStatus;
+import convex.core.cvm.State;
+import convex.core.cvm.Syntax;
+import convex.core.cvm.ops.Cond;
+import convex.core.cvm.ops.Def;
+import convex.core.cvm.ops.Do;
+import convex.core.cvm.ops.Let;
+import convex.core.cvm.ops.Local;
+import convex.core.cvm.ops.Lookup;
+import convex.core.cvm.ops.Special;
+import convex.core.cvm.transactions.Call;
+import convex.core.cvm.transactions.Invoke;
+import convex.core.cvm.transactions.Multi;
+import convex.core.cvm.transactions.Transfer;
+import convex.core.data.prim.AByteFlag;
 import convex.core.data.prim.ANumeric;
 import convex.core.data.prim.CVMBigInteger;
-import convex.core.data.prim.CVMBool;
 import convex.core.data.prim.CVMChar;
 import convex.core.data.prim.CVMDouble;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.MissingDataException;
-import convex.core.lang.AFn;
-import convex.core.lang.AOp;
+import convex.core.exceptions.Panic;
 import convex.core.lang.Core;
-import convex.core.lang.Ops;
 import convex.core.lang.RT;
 import convex.core.lang.impl.Fn;
-import convex.core.lang.impl.MultiFn;
 import convex.core.store.AStore;
 import convex.core.store.Stores;
-import convex.core.transactions.Call;
-import convex.core.transactions.Invoke;
-import convex.core.transactions.Multi;
-import convex.core.transactions.Transfer;
 import convex.core.util.Bits;
+import convex.core.util.ErrorMessages;
 import convex.core.util.Trees;
 import convex.core.util.Utils;
 
-import convex.core.exceptions.Panic;
-
 /**
- * Static utility class for message format encoding
+ * Static utility class for CAD3 encoding format
  *
- * "Standards are always out of date. That's what makes them standards." - Alan
- * Bennett
+ * "Standards are always out of date. That's what makes them standards." - Alan Bennett
  */
 public class Format {
 
 	/**
-	 * 8191 byte system-wide limit on the legal length of a data object encoding.
+	 * 16383 byte system-wide limit on the legal length of a data object encoding.
 	 * 
 	 * Technical reasons for this choice:
 	 * <ul>
-	 * <li>This is the max length that can be VLC encoded in a 2 byte message header. This simplifies message encoding and decoding.</li>
+	 * <li>This is the maximum length that can be VLQ encoded in 2 bytes. This simplifies message encoding and decoding.</li>
 	 * <li>It is big enough to include a 4096-byte Blob</li>
+	 * <li>It is big enough to include a Record with 63 directly referenced fields</li>
+	 * <li>It is small enough to guarantee fitting in a UDP message</li>
 	 * </ul>
 	 */
-	public static final int LIMIT_ENCODING_LENGTH = 0x1FFF; 
+	public static final int LIMIT_ENCODING_LENGTH = 0x3FFF; 
 	
 	/**
-	 * Maximum length for a VLC encoded Long
+	 * Maximum length for a VLQ encoded Long
 	 */
-	public static final int MAX_VLC_LONG_LENGTH = 10; // 70 bits
+	public static final int MAX_VLQ_LONG_LENGTH = 10; // 70 bits
 	
 	/**
-	 * Maximum length for a VLC encoded Count
+	 * Maximum length for a VLQ encoded Count
 	 */
-	public static final int MAX_VLC_COUNT_LENGTH = 9; // 63 bits
+	public static final int MAX_VLQ_COUNT_LENGTH = 9; // 63 bits
 	
 	/**
 	 * Maximum size in bytes of an embedded value, including tag
@@ -87,67 +98,63 @@ public class Format {
 	public static final int MAX_REF_LENGTH = Math.max(Ref.INDIRECT_ENCODING_LENGTH, MAX_EMBEDDED_LENGTH);
 
 	/**
-	 * Maximum allowed encoded message length in bytes
-	 */
-	public static final long MAX_MESSAGE_LENGTH = 20000000;
-
-	/**
 	 * Memory size of a fully embedded value (zero)
 	 */
 	public static final long FULL_EMBEDDED_MEMORY_SIZE = 0L;
 
 	/**
-	 * Gets the length in bytes of VLC encoding for the given long value
-	 * @param x Long value to encode
-	 * @return Length of VLC encoding
+	 * Maximum number of Refs for any single Cell
 	 */
-	public static int getVLCLength(long x) {
-		if ((x < 64) && (x >= -64)) {
-			return 1;
-		}
+	public static final int MAX_REF_COUNT = 63;
+
+	/**
+	 * Gets the length in bytes of VLQ encoding for the given long value
+	 * @param x Long value to encode
+	 * @return Length of VLQ encoding in bytes
+	 */
+	public static int getVLQLongLength(long x) {
+		if ((x<64)&&(x>=-64)) return 1;
 		int bitLength = Utils.bitLength(x);
 		int blen = (bitLength + 6) / 7;
 		return blen;
 	}
 	
 	/**
-	 * Gets the length in bytes of VLC count encoding for the given long value
+	 * Gets the length in bytes of VLQ count encoding for the given long value
 	 * @param x Long value to encode
-	 * @return Length of VLC encoding
+	 * @return Length of VLQ encoding, or 0 if value is negative (overflow case)
 	 */
-	public static int getVLCCountLength(long x) {
-		if (x<0) throw new IllegalArgumentException("Negative Count");
-		if (x < 128) {
-			return 1;
-		}
+	public static int getVLQCountLength(long x) {
+		if (x<0) return 0;
+		if (x<128) return 1;
 		int bitLength = Utils.bitLength(x)-1; // high zero not required
 		int blen = (bitLength + 6) / 7;
 		return blen;
 	}
 
 	/**
-	 * Puts a VLC encoded long into the specified bytebuffer (with no tag)
+	 * Puts a VLQ encoded count into the specified bytebuffer (with no tag)
 	 * 
 	 * Format: 
 	 * <ul>
 	 * <li>MSB of each byte 0=last octet, 1=more octets</li>
 	 * <li>Following MSB, 7 bits of integer representation for each octet</li>
-	 * <li>Second highest bit of first byte is interpreted as the sign</li> 
 	 * </ul>
 	 * @param bb ByteBuffer to write to
-	 * @param x Value to VLC encode
+	 * @param x Value to VLQ encode
 	 * @return Updated ByteBuffer
 	 */
-	public static ByteBuffer writeVLCLong(ByteBuffer bb, long x) {
-		if ((x < 64) && (x >= -64)) {
-			// single byte, cleared high bit
-			byte single = (byte) (x & 0x7F);
+	public static ByteBuffer writeVLQCount(ByteBuffer bb, long x) {
+		if (x<128) {
+			if (x<0) throw new IllegalArgumentException("Negative count!");
+			// single byte
+			byte single = (byte) (x);
 			return bb.put(single);
 		}
-		int bitLength = Utils.bitLength(x);
-		int blen = (bitLength + 6) / 7;
+		int bitLength = 64-Bits.leadingZeros(x);
+		int blen = (bitLength + 6) / 7; // 8 bits overflows to 2 bytes etc.
 		for (int i = blen - 1; i >= 1; i--) {
-			byte single = (byte) (0x80 | (x >> (7 * i))); // 7 bits with high bit set
+			byte single = (byte) (0x80 | (x >>> (7 * i))); // 7 bits
 			bb = bb.put(single);
 		}
 		byte end = (byte) (x & 0x7F); // last 7 bits of long, high bit zero
@@ -167,9 +174,9 @@ public class Format {
 	 * @param bs Byte array to write to
 	 * @param pos Initial position in byte array
 	 * @param x Long value to write
-	 * @return end position in byte array after writing VLC long
+	 * @return end position in byte array after writing VLQ long
 	 */
-	public static int writeVLCLong(byte[] bs, int pos, long x) {
+	public static int writeVLQLong(byte[] bs, int pos, long x) {
 		if ((x < 64) && (x >= -64)) {
 			// single byte, cleared high bit
 			byte single = (byte) (x & 0x7F);
@@ -200,10 +207,10 @@ public class Format {
 	 * @param bs Byte array to write to
 	 * @param pos Initial position in byte array
 	 * @param x Long value to write
-	 * @return end position in byte array after writing VLC long
+	 * @return end position in byte array after writing VLQ long
 	 */
-	public static int writeVLCCount(byte[] bs, int pos, long x) {
-		if (x<0) throw new IllegalArgumentException("VLC Count cannot be negative but got: "+x);
+	public static int writeVLQCount(byte[] bs, int pos, long x) {
+		if (x<0) throw new IllegalArgumentException("VLQ Count cannot be negative but got: "+x);
 		if (x < 128) {
 			// single byte, cleared high bit
 			byte single = (byte) (x & 0x7F);
@@ -223,34 +230,34 @@ public class Format {
 	}
 
 	/**
-	 * Sign extend 7th bit (sign in a VLC byte) of a byte to all bits in a long
+	 * Sign extend 7th bit (sign in a VLQ byte) of a byte to all bits in a long
 	 * 
 	 * i.e. sign extend excluding the continuation bit:
-	 * where VLC Byte = csxxxxxx 
+	 * where VLQ Byte = csxxxxxx 
 	 * 
 	 * @param b Byte to extend
 	 * @return The sign-extended byte as a long
 	 */
-	public static long vlcSignExtend(byte b) {
+	static long signExtendVLQ(byte b) {
 		return (((long) b) << 57) >> 57;
 	}
 	
 	/**
-	 * Checks if VLC continues from given byte, i.e. if high bit is set
+	 * Checks if VLQ continues from given byte, i.e. if high bit is set
 	 * @param octet
-	 * @return True if VLC coding continues, false otherwise
+	 * @return True if VLQ coding continues, false otherwise
 	 */
-	protected static boolean vlcContinuesFrom(byte octet) {
+	static boolean vlqContinuesFrom(byte octet) {
 		return (octet & 0x80) != 0;
 	}
 	
-	public static long readVLCLong(AArrayBlob blob, int pos) throws BadFormatException {
+	public static long readVLQLong(AArrayBlob blob, int pos) throws BadFormatException {
 		byte[] data=blob.getInternalArray();
-		return readVLCLong(data,pos+blob.getInternalOffset());
+		return readVLQLong(data,pos+blob.getInternalOffset());
 	}
 
 	/**
-	 * Reads a VLC encoded long as a long from the given location in a byte
+	 * Reads a VLQ encoded long as a long from the given location in a byte
 	 * array. Assumes no tag
 	 * @param data Byte array
 	 * @param pos Position from which to read in byte array
@@ -258,13 +265,13 @@ public class Format {
 	 * @throws BadFormatException If format is invalid, or reading beyond end of
 	 *                            array
 	 */
-	public static long readVLCLong(byte[] data, int pos) throws BadFormatException {
+	public static long readVLQLong(byte[] data, int pos) throws BadFormatException {
 		byte octet = data[pos++];
-		long result = vlcSignExtend(octet); // sign extend 7th bit to 64th bit
+		long result = signExtendVLQ(octet); // sign extend 7th bit to 64th bit
 		int bits = 7;
-		while (vlcContinuesFrom(octet)) {
-			if (pos >= data.length) throw new BadFormatException("VLC encoding beyond end of array");
-			if (bits > 64) throw new BadFormatException("VLC encoding too long for long value");
+		while (vlqContinuesFrom(octet)) {
+			if (pos >= data.length) throw new BadFormatException("VLQ encoding beyond end of array");
+			if (bits > 64) throw new BadFormatException("VLQ encoding too long for long value");
 			octet = data[pos++];
 			// continue while high bit of byte set
 			result = (result << 7) | (octet & 0x7F); // shift and set next 7 lowest bits
@@ -274,7 +281,7 @@ public class Format {
 	}
 	
 	/**
-	 * Reads a VLC encoded count (non-negative integer) as a long from the given location in a byte
+	 * Reads a VLQ encoded count (non-negative integer) as a long from the given location in a byte
 	 * array. Assumes no tag
 	 * @param data Byte array
 	 * @param pos Position from which to read in byte array
@@ -282,91 +289,88 @@ public class Format {
 	 * @throws BadFormatException If format is invalid, or reading beyond end of
 	 *                            array
 	 */
-	public static long readVLCCount(byte[] data, int pos) throws BadFormatException {
+	public static long readVLQCount(byte[] data, int pos) throws BadFormatException {
 		byte octet = data[pos++];
-		if (octet==0x80) throw new BadFormatException("Superfluous leading zero on VLC count");
+		if (octet==0x80) throw new BadFormatException("Superfluous leading zero on VLQ count");
 		long result = octet&0x7f;
 		int bits = 7;
-		while (vlcContinuesFrom(octet)) {
+		while (vlqContinuesFrom(octet)) {
 			if (pos >= data.length) {
-				throw new BadFormatException("VLC encoding beyond end of array");
+				throw new BadFormatException("VLQ encoding beyond end of array");
 			}
-			if (bits > 64) throw new BadFormatException("VLC encoding too long for long value");
+			if (bits > 64) throw new BadFormatException("VLQ encoding too long for long value");
 			octet = data[pos++];
 			// continue while high bit of byte set
 			result = (result << 7) | (octet & 0x7F); // shift and set next 7 lowest bits
 			bits += 7;
 		}
-		if (result<0) throw new BadFormatException("VLC Count netative overflow");
+		if (bits>63) throw new BadFormatException("VLQ Count overflow");
 		return result;
 	}
 	
-	public static long readVLCCount(AArrayBlob blob, int pos) throws BadFormatException {
+	public static long readVLQCount(AArrayBlob blob, int pos) throws BadFormatException {
 		byte[] data=blob.getInternalArray();
-		return readVLCCount(data,pos+blob.getInternalOffset());
+		return readVLQCount(data,pos+blob.getInternalOffset());
 	}
 
 
 	/**
-	 * Peeks for a VLC encoded message length at the start of a ByteBuffer, which
-	 * must contain at least 1 byte, maximum 2.
+	 * Peeks for a VLQ encoded message length at the start of a ByteBuffer, which
+	 * must contain at least 1 byte
 	 * 
 	 * Does not move the buffer position.
 	 * 
 	 * @param bb ByteBuffer containing a message length
 	 * @return The message length, or negative if insufficient bytes
 	 * @throws BadFormatException If the ByteBuffer does not start with a valid
-	 *                            message length
+	 *                            message length, or length exceeds Integer.MAX_VALUE
 	 */
 	public static int peekMessageLength(ByteBuffer bb) throws BadFormatException {
 		int remaining=bb.limit();
 		if (remaining==0) return -1;
 		
-		int len = bb.get(0);
+		long len = bb.get(0);
 
-		// Zero message length not allowed
-		if (len == 0) {
-			throw new BadFormatException(
-					"Format.peekMessageLength: Zero message length:" + Utils.readBufferData(bb));
-		}
-		
-		if ((len & 0x40) != 0) {
-			// sign bit from top byte looks wrong!
-			String hex = Utils.toHexString((byte) len);
-			throw new BadFormatException(
-					"Format.peekMessageLength: Expected positive VLC message length, got first byte [" + hex + "]");
-		}
-		
 		// Quick check for 1 byte message length
 		if ((len & 0x80) == 0) {
-			// 1 byte header (without high bit set)
-			return len & 0x3F;
+			// Zero message length not allowed
+			if (len == 0) {
+				throw new BadFormatException(
+						"Format.peekMessageLength: Zero message length:" + Utils.readBufferData(bb));
+			}
+
+			// 1 byte length (without high bit set)
+			return (int)(len & 0x7F);
 		}
 		
-		// Clear high bit
+		// Clear high bits
 		len &=0x7f;
 
-		for (int i=1; i<Format.MAX_VLC_LONG_LENGTH; i++) {
+		if (len==0) throw new BadFormatException("Format.peekMessageLength: Excess leading zeros");
+
+		for (int i=1; i<Format.MAX_VLQ_COUNT_LENGTH; i++) {
 			if (i>=remaining) return -1; // we are expecting more bytes, but none available yet....
 			int lsb = bb.get(i);
-			len = (len << 7) + (lsb&0x7f);
+			len = (len << 7) | (lsb&0x7f);
 			if ((lsb & 0x80) == 0) {
-				return len;
+				break;
 			}
 		}
 
-		throw new BadFormatException("Format.peekMessageLength: Too many bytes in length encoding");
+		int result=(int)len;
+		if (result!=len) throw new BadFormatException("Format.peekMessageLength: Message too long: "+len);
+		return result;
 	}
 
 	/**
-	 * Writes a message length as a VLC encoded long
+	 * Writes a message length as a VLQ encoded long
 	 * 
 	 * @param bb  ByteBuffer with capacity available for writing
 	 * @param len Length of message to write
 	 * @return The ByteBuffer after writing the message length
 	 */
 	public static ByteBuffer writeMessageLength(ByteBuffer bb, int len) {
-		return writeVLCLong(bb, len);
+		return writeVLQCount(bb, len);
 	}
 	
 	/**
@@ -404,12 +408,12 @@ public class Format {
 	public static int writeRawUTF8String(byte[] bs, int pos, String s) {
 		if (s.length() == 0) {
 			// zero length, no string bytes
-			return writeVLCLong(bs,pos,0);
+			return writeVLQLong(bs,pos,0);
 		} 
 		
 		byte[] sBytes = Utils.toByteArray(s);
 		int n=sBytes.length;
-		pos = writeVLCLong(bs,pos, sBytes.length);
+		pos = writeVLQLong(bs,pos, sBytes.length);
 		System.arraycopy(sBytes, 0, bs, pos, n);
 		return pos+n;
 	}
@@ -439,7 +443,7 @@ public class Format {
 	
 	/**
 	 * Reads UTF-8 String data from a Blob. Assumes any tag has already been read
-	 * @param blob Blob data to read from
+	 * @param blob Blob data to read from. Must be immutable.
 	 * @param pos Position of first UTF-8 byte
 	 * @param len Number of UTF-8 bytes to read
 	 * @return String from ByteBuffer
@@ -449,16 +453,8 @@ public class Format {
 		if (len == 0) return Strings.empty();
 		if (blob.count()<pos+len) throw new BadFormatException("Insufficient bytes in blob to read UTF-8 bytes");
 
-		byte[] bs = new byte[len];
-		System.arraycopy(blob.getInternalArray(), blob.getInternalOffset()+pos, bs, 0, len);
-
-		AString s = Strings.create(Blob.wrap(bs));
+		AString s = Strings.create(blob.slice(pos,pos+len));
 		return s;
-	}
-
-	public static ByteBuffer writeLength(ByteBuffer bb, int i) {
-		bb = writeVLCLong(bb, i);
-		return bb;
 	}
 	
 	/**
@@ -469,7 +465,7 @@ public class Format {
 	 * @param <T> Type of referenced value
 	 * @param b Blob containing a ref to read
 	 * @param pos Position to read Ref from (should point to tag)
-	 * @return Ref as read from ByteBuffer
+	 * @return Ref as read from Blob at the specified position
 	 * @throws BadFormatException If the data is badly formatted, or a non-embedded
 	 *                            value is found where it should be a Ref.
 	 */
@@ -479,10 +475,10 @@ public class Format {
 		
 		if (tag==Tag.NULL) return Ref.nil();
 		
-		// Looks like an embedded cell, so try to read this
+		// We now expect a non-null embedded cell
 		T cell= Format.read(tag,b,pos);
-		if (!Format.isEmbedded(cell)) throw new BadFormatException("Non-embedded Cell found instead of ref: type = " +RT.getType(cell));
-		return Ref.get(cell);
+		if (!cell.isEmbedded()) throw new BadFormatException("Non-embedded cell found instead of ref: type = " +RT.getType(cell));
+		return cell.getRef();
 	}
 	
 	@SuppressWarnings("unchecked")
@@ -491,7 +487,7 @@ public class Format {
 
 		if (tag == Tag.MAP) return (T) Maps.read(b,pos);
 
-		if (tag == Tag.SYNTAX) return (T) Syntax.read(b,pos);
+		if (tag == CVMTag.SYNTAX) return (T) Syntax.read(b,pos);
 		
 		if (tag == Tag.SET) return (T) Sets.read(b,pos);
 
@@ -503,22 +499,49 @@ public class Format {
 	}
 
 	private static ACell readCode(byte tag, Blob b, int pos) throws BadFormatException {
-		if (tag == Tag.CORE_DEF) return Core.read(b, pos);
+		try {
+			if (tag == CVMTag.OP_CODED) return Ops.readCodedOp(tag,b, pos); 
+			
+			if (tag == CVMTag.OP_LOOKUP) return Lookup.read(b,pos);
+			
+			if (tag == CVMTag.OP_DEF) {
+				return Def.read(b, pos);
+			}
+			
+			if (tag == CVMTag.OP_LET) {
+				return Let.read(b,pos,false);
+			}
+		    
+			if (tag == CVMTag.OP_LOOP) {
+				return Let.read(b,pos,true);
+			}
+		} catch (Exception e) {
+			// something went wrong, fall through to reading a generic coded value
+		}
 		
-		if (tag == Tag.FN_MULTI) {
-			AFn<?> fn = MultiFn.read(b,pos);
-			return fn;
+		return CodedValue.read(tag,b,pos);
+	}
+	
+	private static ACell readExtension(byte tag, Blob blob, int offset) throws BadFormatException {
+		// We expect a VLQ Count following the tag
+		long code=readVLQCount(blob,offset+1);
+		
+		if (tag == CVMTag.CORE_DEF) return Core.fromCode(code);
+
+		if ((tag == CVMTag.OP_SPECIAL)&&(code<Special.NUM_SPECIALS)) {
+			Special<?> spec= Special.create((int)code);
+			if (spec!=null) {
+				return spec;
+			}
+		}
+		
+		if (tag == CVMTag.OP_LOCAL) {
+			Local<?> loc=Local.create(code);
+			return loc;
 		}
 
-		if (tag == Tag.FN) {
-			AFn<?> fn = Fn.read(b,pos);
-			return fn;
-		}
-		
-		if (tag == Tag.PEER_STATUS) return PeerStatus.read(b,pos);
-		if (tag == Tag.ACCOUNT_STATUS) return AccountStatus.read(b,pos); 
 
-		throw new BadFormatException("Can't read Op with tag byte: " + Utils.toHexString(tag));
+		return ExtensionValue.create(tag, code);
 	}
 
 	/**
@@ -532,7 +555,7 @@ public class Format {
 	public static <T extends ACell> T read(Blob blob) throws BadFormatException {
 		long n=blob.count();
 		if (n<1) throw new BadFormatException("Attempt to decode from empty Blob");
-		byte tag = blob.byteAt(0);
+		byte tag = blob.byteAtUnchecked(0);
 		T result= read(tag,blob,0);
 		if (result==null) {
 			if (n!=1) throw new BadFormatException("Decode of nil value but blob size = "+n);
@@ -558,13 +581,15 @@ public class Format {
 	}
 	
 	/**
-	 * Helper method to read a value encoded as a hex string
+	 * Helper method to read a CVM value encoded as a hex string
 	 * @param <T> Type of value to read
 	 * @param hexString A valid hex String
 	 * @return Value read
 	 * @throws BadFormatException If encoding is invalid
 	 */
 	public static <T extends ACell> T read(String hexString) throws BadFormatException {
+		Blob enc=Blob.fromHex(hexString);
+		if (enc==null) throw new BadFormatException("Invalid hex string");
 		return read(Blob.fromHex(hexString));
 	}
 	
@@ -578,12 +603,10 @@ public class Format {
 	 * @throws BadFormatException If encoding is invalid for the given tag
 	 */
 	@SuppressWarnings("unchecked")
-	private static <T extends ACell> T read(byte tag, Blob blob, int offset) throws BadFormatException {
+	static <T extends ACell> T read(byte tag, Blob blob, int offset) throws BadFormatException {
 
 		// Fast paths for common one-byte instances. TODO: might switch have better performance if compiled correctly into a table?
 		if (tag==Tag.NULL) return null;
-		if (tag==Tag.TRUE) return (T) CVMBool.TRUE;
-		if (tag==Tag.FALSE) return (T) CVMBool.FALSE;
 		if (tag==Tag.INTEGER) return (T) CVMLong.ZERO; 
 
 		try {
@@ -592,9 +615,9 @@ public class Format {
 			
 			if (high == 0x30) return (T) readBasicObject(tag,blob,offset);
 			
-			if (tag == Tag.ADDRESS) return (T) Address.read(blob,offset);
+			if (tag == CVMTag.ADDRESS) return (T) Address.read(blob,offset);
 			
-			if (high == 0xE0) return (T) readOp(tag,blob,offset);
+			if (high == 0xB0) return (T) AByteFlag.read(tag);
 			
 			if (high == 0xC0) return (T) readCode(tag,blob,offset);
 
@@ -602,58 +625,53 @@ public class Format {
 			
 			if (high == 0x90) return (T) readSignedData(tag,blob, offset); 
 
-			if (high == 0xD0) return (T) readTransaction(tag, blob, offset);
+			if (high == 0xD0) return (T) readDenseRecord(tag, blob, offset);
 
-			if (high == 0xA0) return (T) readRecord(tag,blob,offset);
+			if (high == 0xE0) return (T) readExtension(tag, blob, offset);
+			
+ 			if (high == 0xA0) return (T) readRecord(tag,blob,offset);
 		} catch (BadFormatException e) {
 			throw e;
 		} catch (IndexOutOfBoundsException e) {
-			throw new BadFormatException("Read out of blob bounds when decoding with tag 0x"+Utils.toHexString(tag));
+			throw new BadFormatException("Read out of bounds when decoding with tag 0x"+Utils.toHexString(tag),e);
 		} catch (MissingDataException e) {
 			throw e;
 		} catch (Exception e) {
 			throw new BadFormatException("Unexpected Exception when decoding ("+tag+"): "+e.getMessage(), e);
 		}
-		throw new BadFormatException(badTagMessage(tag));
+		throw new BadFormatException(ErrorMessages.badTagMessage(tag));
 	}
 
-	private static <T extends ACell> AOp<T> readOp(byte tag, Blob blob, int offset) throws BadFormatException {
-		return Ops.read(blob, offset, (byte) (tag&0x0f));
-	}
 
 	private static <T extends ACell> SignedData<T> readSignedData(byte tag,Blob blob, int offset) throws BadFormatException {
 		if (tag==Tag.SIGNED_DATA) return SignedData.read(blob,offset,true);	
 		if (tag==Tag.SIGNED_DATA_SHORT) return SignedData.read(blob,offset,false);	
-		throw new BadFormatException(badTagMessage(tag));
-	}
-
-	private static String badTagMessage(byte tag) {
-		return "Unrecognised tag byte 0x"+Utils.toHexString(tag);
+		throw new BadFormatException(ErrorMessages.badTagMessage(tag));
 	}
 
 	private static ANumeric readNumeric(byte tag, Blob blob, int offset) throws BadFormatException {
-		// TODO Auto-generated method stub
 		if (tag<0x19) return CVMLong.read(tag,blob,offset);
 		if (tag == 0x19) return CVMBigInteger.read(blob,offset);
-		// Double is special, we enforce a canonical NaN
 		if (tag == Tag.DOUBLE) return CVMDouble.read(tag,blob,offset);
 		
-		throw new BadFormatException(badTagMessage(tag));
+		throw new BadFormatException(ErrorMessages.badTagMessage(tag));
 	}
 
 	private static ACell readBasicObject(byte tag, Blob blob, int offset)  throws BadFormatException{
-		if (tag == Tag.SYMBOL) return Symbol.read(blob,offset);
-		if (tag == Tag.KEYWORD) return Keyword.read(blob,offset);
-		if (tag == Tag.BLOB) return Blobs.read(blob,offset);
-		if (tag == Tag.STRING) return Strings.read(blob,offset);
+		switch (tag) {
+			case Tag.SYMBOL: return Symbol.read(blob,offset);
+			case Tag.KEYWORD: return Keyword.read(blob,offset);
+			case Tag.BLOB: return Blobs.read(blob,offset);
+			case Tag.STRING: return Strings.read(blob,offset);
+		} 
 		
-		if ((tag&Tag.CHAR)==Tag.CHAR) {
+		if ((tag&Tag.CHAR_MASK)==Tag.CHAR_BASE) {
 			int len=CVMChar.byteCountFromTag(tag);
 			if (len>4) throw new BadFormatException("Can't read char type with length: " + len);
 			return CVMChar.read(len, blob,offset); // skip tag byte
 		}
 
-		throw new BadFormatException(badTagMessage(tag));
+		throw new BadFormatException(ErrorMessages.badTagMessage(tag));
 	}
 
 	
@@ -665,85 +683,76 @@ public class Format {
 	 * @return New decoded instance
 	 * @throws BadFormatException In the event of any encoding error
 	 */
-	@SuppressWarnings("unchecked")
-	private static <T extends ACell> T readRecord(byte tag, Blob b, int pos) throws BadFormatException {
-		if (tag == Tag.BLOCK) {
-			return (T) Block.read(b,pos);
-		}
-		if (tag == Tag.STATE) {
-			return (T) State.read(b,pos);
-		}
-		if (tag == Tag.ORDER) {
-			return (T) Order.read(b,pos);
-		}
-		if (tag == Tag.BELIEF) {
-			return (T) Belief.read(b,pos);
-		}
-		
-		if (tag == Tag.RESULT) {
-			return (T) Result.read(b,pos);
-		}
-		
-		if (tag == Tag.BLOCK_RESULT) {
-			return (T) BlockResult.read(b,pos);
-		}
-
-		throw new BadFormatException(badTagMessage(tag));
+	private static <T extends ACVMRecord> T readRecord(byte tag, Blob b, int pos) throws BadFormatException {
+		throw new BadFormatException(ErrorMessages.badTagMessage(tag));
 	}
 
 	@SuppressWarnings("unchecked")
-	private static <T extends ACell> T readTransaction(byte tag, Blob b, int pos) throws BadFormatException {
-		if ((byte)(tag & Tag.RECEIPT_MASK) == Tag.RECEIPT) {
-			return (T) Receipt.read(tag,b,pos);
+	private static <T extends ACell> T readDenseRecord(byte tag, Blob b, int pos) throws BadFormatException {
+		try {
+			if (tag == CVMTag.INVOKE) {
+				return (T) Invoke.read(b,pos);
+			} else if (tag == CVMTag.TRANSFER) {
+				return (T) Transfer.read(b,pos);
+			} else if (tag == CVMTag.CALL) {
+				return (T) Call.read(b,pos);
+			} else if (tag == CVMTag.MULTI) {
+				return (T) Multi.read(b,pos);
+			}
+			
+			if (tag == CVMTag.FN) {
+				return (T) Fn.read(b,pos);
+			}
+			
+			if (tag == CVMTag.STATE) {
+				return (T) State.read(b,pos);
+			}
+			
+			if (tag == CVMTag.BELIEF) {
+				return (T) Belief.read(b,pos);
+			}
+			
+			if (tag == CVMTag.BLOCK) {
+				return (T) Block.read(b,pos);
+			}
+			
+			if (tag == CVMTag.RESULT) {
+				return (T) Result.read(b,pos);
+			}
+			
+			if (tag == CVMTag.ORDER) {
+				return (T) Order.read(b,pos);
+			}
+			
+			if (tag == CVMTag.BLOCK_RESULT) {
+				return (T) BlockResult.read(b,pos);
+			}
+			
+			if (tag == CVMTag.OP_DO) {
+				return (T) Do.read(b,pos);
+			}
+			
+			if (tag == CVMTag.OP_COND) {
+				return (T) Cond.read(b,pos);
+			}
+
+			if (tag == CVMTag.OP_INVOKE) {
+				 // Note name clash with transaction type
+				return (T) convex.core.cvm.ops.Invoke.read(b,pos);
+			}
+			
+			if (tag == CVMTag.PEER_STATUS) return (T) PeerStatus.read(b,pos);
+			if (tag == CVMTag.ACCOUNT_STATUS) return (T) AccountStatus.read(b,pos); 
+		} catch (Exception e) {
+			// something failed, might be generic DenseRecord
 		}
-
-		if (tag == Tag.INVOKE) {
-			return (T) Invoke.read(b,pos);
-		} else if (tag == Tag.TRANSFER) {
-			return (T) Transfer.read(b,pos);
-		} else if (tag == Tag.CALL) {
-			return (T) Call.read(b,pos);
-		} else if (tag == Tag.MULTI) {
-			return (T) Multi.read(b,pos);
-		}
-		throw new BadFormatException(badTagMessage(tag));
+		
+		// Might be a generic Dense Record
+		DenseRecord dr=DenseRecord.read(tag,b,pos);
+		if (dr==null) throw new BadFormatException(ErrorMessages.badTagMessage(tag));
+		return (T) dr;
 	}
 
-	/**
-	 * Returns true if the object is a canonical data object. Canonical data objects
-	 * can be used as first class decentralised data objects.
-	 * 
-	 * @param o Value to test
-	 * @return true if object is canonical, false otherwise.
-	 */
-	public static boolean isCanonical(ACell o) {
-		if (o==null) return true;
-		return o.isCanonical();
-	}
-
-	/**
-	 * Determines if an object should be embedded directly in the encoding rather
-	 * than referenced with a Ref / hash. Defined to be true for most small objects.
-	 * 
-	 * @param cell Value to test
-	 * @return true if object is embedded, false otherwise
-	 */
-	public static boolean isEmbedded(ACell cell) {
-		if (cell == null) return true;
-		return cell.isEmbedded();
-	}
-
-	/**
-	 * Gets the encoded Blob for an object in canonical message format
-	 * 
-	 * @param o The object to encode
-	 * @return Encoded data as a blob
-	 */
-	public static Blob encodedBlob(ACell o) {
-		if (o==null) return Blob.NULL_ENCODING;
-		return o.getEncoding();
-	}
-	
 	/**
 	 * Writes hex digits from digit position start, total length.
 	 * 
@@ -757,8 +766,8 @@ public class Format {
 	 * @return position after writing
 	 */
 	public static int  writeHexDigits(byte[] bs, int pos, ABlob src, long start, long length) {
-		pos = Format.writeVLCLong(bs,pos, start);
-		pos = Format.writeVLCLong(bs,pos, length);
+		pos = Format.writeVLQLong(bs,pos, start);
+		pos = Format.writeVLQLong(bs,pos, length);
 		int nBytes = Utils.checkedInt((length + 1) >> 1);
 		byte[] bs2 = new byte[nBytes];
 		for (int i = 0; i < nBytes; i++) {
@@ -769,24 +778,6 @@ public class Format {
 		}
 		System.arraycopy(bs2, 0, bs, pos, nBytes);
 		return pos+nBytes;
-	}
-
-	/**
-	 * Gets a hex String representing an object's encoding
-	 * @param cell Any cell
-	 * @return Hex String
-	 */
-	public static String encodedString(ACell cell) {
-		return encodedBlob(cell).toHexString();
-	}
-	
-	/**
-	 * Gets a hex String representing an object's encoding. Used in testing only.
-	 * @param o Any object, will be cast to appropriate CVM type
-	 * @return Hex String
-	 */
-	public static String encodedString(Object o) {
-		return encodedString(RT.cvm(o));
 	}
 
 	/**
@@ -807,7 +798,7 @@ public class Format {
 	 */
 	public static ACell[] decodeCells(Blob data) throws BadFormatException {
 		long ml=data.count();
-		if (ml>Format.MAX_MESSAGE_LENGTH) throw new BadFormatException("Message too long: "+ml);
+		if (ml>CPoSConstants.MAX_MESSAGE_LENGTH) throw new BadFormatException("Message too long: "+ml);
 		if (ml==0) return Cells.EMPTY_ARRAY;
 		
 		ArrayList<ACell> cells=new ArrayList<>();
@@ -816,8 +807,8 @@ public class Format {
 		int pos=first.getEncodingLength();
 		AStore store=Stores.current();
 		while (pos<ml) {
-			long encLength=Format.readVLCCount(data.getInternalArray(), data.getInternalOffset()+pos);
-			pos+=Format.getVLCCountLength(encLength);
+			long encLength=Format.readVLQCount(data.getInternalArray(), data.getInternalOffset()+pos);
+			pos+=Format.getVLQCountLength(encLength);
 			Blob enc=data.slice(pos, pos+encLength);
 			ACell result=store.decode(enc);
 			// ACell result=Format.read(enc);
@@ -828,7 +819,7 @@ public class Format {
 	}
 	
 	/**
-	 * Reads a cell from a Blob of data, allowing for non-embedded children following the first cell
+	 * Reads a cell from a Blob of data, allowing for non-embedded branches following the first cell
 	 * @param data Data to decode
 	 * @return Cell instance
 	 * @throws BadFormatException If encoding format is invalid
@@ -836,12 +827,14 @@ public class Format {
 	@SuppressWarnings("unchecked")
 	public static <T extends ACell> T decodeMultiCell(Blob data) throws BadFormatException {
 		long ml=data.count();
-		if (ml>Format.MAX_MESSAGE_LENGTH) throw new BadFormatException("Message too long: "+ml);
 		if (ml<1) throw new BadFormatException("Attempt to decode from empty Blob");
 		
 		// read first cell
 		T result= Format.read(data,0);
-		if (result==null) return null; // null value OK at top level
+		if (result==null) {
+			if (ml!=1) throw new BadFormatException("Extra bytes after nil message");
+			return null; // null value OK at top level
+		}
 		
 		int rl=Utils.checkedInt(result.getEncodingLength());
 		if (rl==ml) return result; // Fast path if already complete
@@ -854,8 +847,9 @@ public class Format {
 		ArrayList<ACell> stack=new ArrayList<>();
 
 		IRefFunction func=new IRefFunction() {
+			@SuppressWarnings("rawtypes")
 			@Override
-			public Ref<?> apply(Ref<?> r) {
+			public Ref apply(Ref r) {
 				if (r.isEmbedded()) {
 					ACell cc=r.getValue();
 					if (cc==null) return r;
@@ -924,19 +918,20 @@ public class Format {
 			int ix=0;
 			AStore store=Stores.current();
 			while( ix<dataLength) {
-				long encLength=Format.readVLCCount(data,ix);
-				ix+=Format.getVLCCountLength(encLength);
+				long encLength=Format.readVLQCount(data,ix);
+				ix+=Format.getVLQCountLength(encLength);
 				
 				Blob enc=data.slice(ix, ix+encLength);
+				if (enc==null) throw new BadFormatException("Incomplete encoding");
 				Hash h=enc.getContentHash();
 				
 				// Check store for Ref - avoids duplicate objects in many cases
 				ACell c=store.decode(enc);
 				
 				if (c==null) {
-					throw new BadFormatException("Null child encoding in Message");
+					throw new BadFormatException("Null child encoding");
 				}
-				if (c.isEmbedded()) throw new BadFormatException("Embedded Cell provided in Message");
+				if (c.isEmbedded()) throw new BadFormatException("Embedded Cell as child");
 				
 				acc.put(h, c);
 				ix+=encLength;
@@ -956,7 +951,7 @@ public class Format {
 	 * @return Blob encoding
 	 */
 	public static Blob encodeMultiCell(ACell a, boolean everything) {
-		Blob topCellEncoding=Format.encodedBlob(a);
+		Blob topCellEncoding=Cells.encode(a);
 		if (a.getRefCount()==0) return topCellEncoding;
 
 		// Add any non-embedded child cells to stack
@@ -974,12 +969,12 @@ public class Format {
 			if (!refs.contains(cr)) {
 				ACell c=cr.getValue();
 				int encLength=c.getEncodingLength();
-				int lengthFieldSize=Format.getVLCCountLength(encLength);
+				int lengthFieldSize=Format.getVLQCountLength(encLength);
 				
 				int cellLength=lengthFieldSize+encLength;
 				
 				int newLength=ml[0]+cellLength;
-				if (newLength>Format.MAX_MESSAGE_LENGTH) return;
+				if (newLength>CPoSConstants.MAX_MESSAGE_LENGTH) return;
 				ml[0]=newLength;
 				refs.add(cr);
 				if (everything) Cells.visitBranchRefs(c, addToStackFunc);
@@ -993,11 +988,11 @@ public class Format {
 		int ix=topCellEncoding.size();
 		for (Ref<?> r: refs) {
 			ACell c=r.getValue();
-			Blob enc=Format.encodedBlob(c);
+			Blob enc=Cells.encode(c);
 			int encLength=enc.size();
 			
 			// Write count then Blob encoding
-			ix=Format.writeVLCCount(msg, ix, encLength);
+			ix=Format.writeVLQCount(msg, ix, encLength);
 			ix=enc.getBytes(msg, ix);
 		}
 		if (ix!=messageLength) throw new IllegalArgumentException("Bad message length expected "+ml[0]+" but was: "+ix);
@@ -1015,18 +1010,18 @@ public class Format {
 	public static Blob encodeCells(java.util.List<ACell> cells) {
 		int ml=0;
 		for (ACell a:cells) {
-			Blob enc=Format.encodedBlob(a); // can be null in some cases, e.g. in DATA responses signalling missing data
+			Blob enc=Cells.encode(a); // can be null in some cases, e.g. in DATA responses signalling missing data
 			int elen=enc.size();
-			if (ml>0) ml+=Format.getVLCCountLength(elen);
+			if (ml>0) ml+=Format.getVLQCountLength(elen);
 			ml+=elen;
 		}
 		
 		byte[] msg=new byte[ml];
 		int ix=0;
 		for (ACell a:cells) {
-			Blob enc=Format.encodedBlob(a); // can be null in some cases, e.g. in DATA responses signalling missing data;
+			Blob enc=Cells.encode(a); // can be null in some cases, e.g. in DATA responses signalling missing data;
 			int elen=enc.size();
-			if (ix>0) ix=Format.writeVLCCount(msg,ix,elen);
+			if (ix>0) ix=Format.writeVLQCount(msg,ix,elen);
 			ix=enc.getBytes(msg, ix);
 		}
 		if (ix!=ml) throw new Panic("Bad message length expected "+ml+" but was: "+ix);
@@ -1047,7 +1042,7 @@ public class Format {
 			
 			if (i<(n-1)) {
 				// include length field
-				ml+=Format.getVLCCountLength(clen);
+				ml+=Format.getVLQCountLength(clen);
 			}
 		}
 		
@@ -1059,7 +1054,7 @@ public class Format {
 			int elen=enc.size();
 			
 			if (i<(n-1)) {
-				ix=Format.writeVLCCount(msg, ix, elen);
+				ix=Format.writeVLQCount(msg, ix, elen);
 			}
 			
 			ix=enc.getBytes(msg,ix);
@@ -1067,11 +1062,6 @@ public class Format {
 		if (ix!=ml) throw new Panic("Bad message length expected "+ml+" but was: "+ix);
 		
 		return Blob.wrap(msg);
-	}
-
-	public static int getEncodingLength(ACell value) {
-		if (value==null) return 1;
-		return value.getEncodingLength();
 	}
 
 	/**

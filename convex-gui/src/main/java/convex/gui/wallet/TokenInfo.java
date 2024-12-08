@@ -6,7 +6,7 @@ import java.util.concurrent.CompletableFuture;
 import convex.api.Convex;
 import convex.core.Result;
 import convex.core.data.ACell;
-import convex.core.data.Address;
+import convex.core.cvm.Address;
 import convex.core.data.Cells;
 import convex.core.data.Keyword;
 import convex.core.data.Vectors;
@@ -15,6 +15,9 @@ import convex.core.data.prim.CVMLong;
 import convex.core.lang.RT;
 import convex.core.util.Utils;
 
+/**
+ * Class representing a tradable / transferrable fungible token
+ */
 public class TokenInfo {
 	private ACell id;
 	private int decimals;

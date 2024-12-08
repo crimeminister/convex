@@ -148,7 +148,12 @@ public abstract class ABlob extends ABlobLike<CVMLong>  {
 		return Hash.wrap(digest.digest());
 	}
 
-	protected abstract void updateDigest(MessageDigest digest);
+	/**
+	 * Updates a MessageDigest with the contents of this Blob
+	 * 
+	 * @param digest MessageDigest instance
+	 */
+	public abstract void updateDigest(MessageDigest digest);
 
 	/**
 	 * Gets the byte at the specified position 
@@ -163,8 +168,6 @@ public abstract class ABlob extends ABlobLike<CVMLong>  {
 		}
 		return byteAtUnchecked(i);
 	}
-	
-
 
 	/**
 	 * Append an additional Blob to this, creating a new Blob as needed.
@@ -292,6 +295,7 @@ public abstract class ABlob extends ABlobLike<CVMLong>  {
 	public int hashCode() {
 		// note: We use a salted hash of the last bytes for blobs. 
 		// SECURITY: This is decent for small blobs, DoS risk for user generated large blobs. Be careful putting large keys in Java HashMaps.....
+		// TODO: consider salted psuedorandom selection of bytes to include in hash?
 		return Bits.hash32(longValue());
 	}
 
@@ -325,19 +329,19 @@ public abstract class ABlob extends ABlobLike<CVMLong>  {
 	 * @param dest Destination byte buffer
 	 * @return Number of bytes read
 	 */
-	public int read(long offset, ByteBuffer dest) {
+	public int toByteBuffer(long offset, ByteBuffer dest) {
 		long n=Math.min(count()-offset, dest.remaining());
-		return read(offset,n,dest);
+		return toByteBuffer(offset,n,dest);
 	}
 	
 	/**
 	 * Gets bytes from this Blob into a ByteBuffer
 	 * @param offset Offset into this Blob to read from
-	 * @param count Number of bytes to read. Must be in bounds
+	 * @param count Number of bytes to read.
 	 * @param dest Destination byte buffer
 	 * @return Number of bytes read
 	 */
-	public abstract int read(long offset, long count, ByteBuffer dest);
+	public abstract int toByteBuffer(long offset, long count, ByteBuffer dest);
 
 	/**
 	 * Replaces a slice of this Blob, returning a new Blob

@@ -10,9 +10,13 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
-import convex.core.State;
+import convex.core.cvm.AOp;
+import convex.core.cvm.Context;
+import convex.core.cvm.Juice;
+import convex.core.cvm.State;
 import convex.core.data.ACell;
 import convex.core.data.Blob;
+import convex.core.data.Cells;
 import convex.core.data.Format;
 import convex.core.data.Keyword;
 import convex.core.data.Lists;
@@ -100,9 +104,9 @@ public class ParamTestJuice {
 	@Test
 	public void testOpRoundTrip() throws BadFormatException {
 		AOp<?> op = compile(source);
-		Blob b = Format.encodedBlob(op);
+		Blob b = Cells.encode(op);
 		AOp<?> op2 = Format.read(b);
-		Blob b2 = Format.encodedBlob(op2);
+		Blob b2 = Cells.encode(op2);
 		assertEquals(b, b2);
 	}
 

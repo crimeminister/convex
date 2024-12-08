@@ -2,17 +2,25 @@ package convex.core;
 
 import static convex.test.Assertions.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import org.junit.jupiter.api.Test;
 
+import convex.core.cpos.Belief;
+import convex.core.cpos.Block;
+import convex.core.cpos.CPoSConstants;
+import convex.core.cpos.Order;
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.Address;
+import convex.core.cvm.Peer;
+import convex.core.cvm.PeerStatus;
+import convex.core.cvm.State;
+import convex.core.cvm.transactions.Invoke;
 import convex.core.data.AccountKey;
-import convex.core.data.Address;
 import convex.core.data.Index;
-import convex.core.data.PeerStatus;
 import convex.core.data.RecordTest;
 import convex.core.data.SignedData;
 import convex.core.data.prim.CVMLong;
@@ -20,7 +28,6 @@ import convex.core.exceptions.BadSignatureException;
 import convex.core.init.InitTest;
 import convex.core.lang.RT;
 import convex.core.lang.Reader;
-import convex.core.transactions.Invoke;
 import convex.test.Samples;
 
 public class PeerTest {
@@ -107,6 +114,9 @@ public class PeerTest {
 		p=p.updateBelief(b);
 		assertEquals(ST,p.getConsensusState());
 		p=p.updateState();
+		Result r=p.getResult(0, 0);
+		assertFalse(r.isError());
+		assertEquals(CVMLong.create(13),r.getValue());
 		assertEquals(CVMLong.create(13),p.executeQuery(Reader.read("foo"), addr).getResult());
 
 		Block b2=Block.of(0, kp.signData(Invoke.create(addr, 1,"(def bar 17)")));
@@ -119,7 +129,7 @@ public class PeerTest {
 		assertUndeclaredError(p.executeQuery(Reader.read("bar"), addr).context);
 		
 		// Beyond this point, we need to assume fork recovery is enabled
-		assumeTrue(Constants.ENABLE_FORK_RECOVERY);
+		assumeTrue(CPoSConstants.ENABLE_FORK_RECOVERY);
 		
 		p=p.updateState();
 		assertEquals(CVMLong.create(17),p.executeQuery(Reader.read("bar"), addr).getResult());

@@ -5,9 +5,11 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiFunction;
 
 import convex.core.Constants;
+import convex.core.cvm.AFn;
+import convex.core.cvm.Address;
+import convex.core.cvm.transactions.ATransaction;
 import convex.core.data.ABlob;
 import convex.core.data.ABlobLike;
 import convex.core.data.ACell;
@@ -23,11 +25,11 @@ import convex.core.data.AString;
 import convex.core.data.ASymbolic;
 import convex.core.data.AVector;
 import convex.core.data.AccountKey;
-import convex.core.data.Address;
 import convex.core.data.Blobs;
 import convex.core.data.Cells;
 import convex.core.data.Hash;
 import convex.core.data.IAssociative;
+import convex.core.data.Index;
 import convex.core.data.Keyword;
 import convex.core.data.Lists;
 import convex.core.data.MapEntry;
@@ -52,7 +54,6 @@ import convex.core.lang.impl.KeywordFn;
 import convex.core.lang.impl.MapFn;
 import convex.core.lang.impl.SeqFn;
 import convex.core.lang.impl.SetFn;
-import convex.core.transactions.ATransaction;
 import convex.core.util.Utils;
 
 /**
@@ -548,9 +549,11 @@ public class RT {
 	 * @return Double value, or null if not convertible
 	 */
 	public static CVMDouble castDouble(ACell a) {
-		if (a instanceof CVMDouble)
-			return (CVMDouble) a;
-
+		if (a instanceof CVMDouble) {
+			// Note coercion on non-CVM IEEE754 NaNs
+			return ((CVMDouble) a).toDouble();
+		}
+		
 		AInteger l = ensureInteger(a);
 		if (l == null)
 			return null;
@@ -587,6 +590,7 @@ public class RT {
 		}
 
 		if (a instanceof APrimitive) {
+			if (a instanceof CVMBool) return null; // disallow boolean -> long cast
 			return CVMLong.create(((APrimitive) a).longValue());
 		}
 		
@@ -634,16 +638,11 @@ public class RT {
 			return n.toInteger();
 		}
 
-		if (a instanceof APrimitive) {
-			return CVMLong.create(((APrimitive) a).longValue());
-		}
-
 		if (a instanceof ABlob) {
-			long lv = ((ABlob) a).longValue();
-			return CVMLong.create(lv);
+			return AInteger.create((ABlob) a);
 		}
 
-		return null;
+		return castLong(a);
 	}
 
 	/**
@@ -1377,7 +1376,7 @@ public class RT {
 			AVector<?> v = (AVector<?>) x;
 			if (v.count() != 2)
 				return null;
-			me = MapEntry.createRef(v.getRef(0), v.getRef(1));
+			me = MapEntry.fromRefs(v.getRef(0), v.getRef(1));
 		} else {
 			return null;
 		}
@@ -1563,12 +1562,7 @@ public class RT {
 		if (!(a instanceof AMap))
 			return null;
 		AMap<ACell, R> m = (AMap<ACell, R>) a;
-		return m.reduceValues(new BiFunction<AVector<R>, R, AVector<R>>() {
-			@Override
-			public AVector<R> apply(AVector<R> t, R u) {
-				return t.conj(u);
-			}
-		}, Vectors.empty());
+		return m.values();
 	}
 
 	/**
@@ -1616,6 +1610,13 @@ public class RT {
 			return Maps.empty();
 		if (a instanceof AHashMap)
 			return (AHashMap<K, V>) a;
+		return null;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static <K extends ABlobLike<?>, V extends ACell> Index<K, V> ensureIndex(ACell a) {
+		if (a instanceof Index)
+			return (Index<K, V>) a;
 		return null;
 	}
 
@@ -1875,6 +1876,25 @@ public class RT {
 		if (maybeTx instanceof ATransaction) return (ATransaction)maybeTx;
 		return null;
 	}
+
+	public static boolean printCAD3(BlobBuilder sb, long limit, ACell cell) {
+		sb.append((byte)'#');
+		sb.append((byte)'[');
+		sb.appendCAD3Hex(Cells.getEncoding(cell));
+		sb.append((byte)']');
+		return sb.check(limit);
+	}
+
+	public static long[] toLongArray(AVector<?> v) {
+		int n=v.size();
+		long[] result=new long[n];
+		for (int i=0; i<n; i++) {
+			result[i]=RT.ensureLong(v.get(i)).longValue();
+		}
+		return result;
+	}
+
+
 
 
 }
