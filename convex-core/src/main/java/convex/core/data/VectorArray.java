@@ -1,5 +1,6 @@
 package convex.core.data;
 
+import java.util.Arrays;
 import java.util.ListIterator;
 import java.util.NoSuchElementException;
 import java.util.function.BiFunction;
@@ -32,6 +33,12 @@ public class VectorArray<T extends ACell> extends ASpecialVector<T> {
 	
 	public static <T extends ACell> VectorArray<T> wrap(ACell[] arr) {
 		return new VectorArray<T>(arr,0,arr.length);
+	}
+	
+	public static <T extends ACell> VectorArray<T> wrap(ACell[] elements, long start, long end) {
+		long n=end-start;
+		if (n<0) throw new IllegalArgumentException("end before start index");
+		return new VectorArray<T>(elements,start,n);
 	}
 
 	public static <T extends ACell> VectorArray<T> of(Object ... os) {
@@ -295,8 +302,18 @@ public class VectorArray<T extends ACell> extends ASpecialVector<T> {
 		return getCanonical().getRef(i);
 	}
 
-
-
+	@Override
+	public AVector<T> dissocAt(long i) {
+		int n=(int)count;
+		if ((i<0)||(i>=n)) return null;
+		if (i==0) return slice(1,count);
+		if (i==n-1) return slice(0,i);
+		
+		ACell[] cells=Arrays.copyOf(data, n-1);
+		System.arraycopy(data, (int)(i+1), cells, (int)i, (int)(n-i-1));
+		
+		return wrap(cells);
+	}
 
 
 }

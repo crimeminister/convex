@@ -7,6 +7,7 @@ import com.pholser.junit.quickcheck.random.SourceOfRandomness;
 import convex.core.cvm.AccountStatus;
 import convex.core.cvm.PeerStatus;
 import convex.core.cvm.State;
+import convex.core.cvm.transactions.ATransaction;
 import convex.core.data.ARecord;
 import convex.core.lang.TestState;
 
@@ -36,8 +37,14 @@ public class RecordGen extends Generator<ARecord> {
 		case 2: {
 			return TestState.STATE;
 			}
+		case 3: {
+			ATransaction tx=Gen.TRANSACTION.generate(r,status);
+			return tx;
+			}
+		case 4: return State.EMPTY;
+
 		default:{
-			return State.EMPTY;
+			return Gen.DENSE_RECORD.generate(r, status);
 			}
 		}
 	}

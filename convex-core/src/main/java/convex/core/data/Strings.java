@@ -8,6 +8,7 @@ import java.nio.charset.CharsetDecoder;
 import java.nio.charset.CharsetEncoder;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.util.Comparator;
 
 import convex.core.Constants;
 import convex.core.data.prim.CVMBool;
@@ -63,6 +64,14 @@ public class Strings {
 	public static final StringShort PRINT_EXCEEDED = StringShort.create(Constants.PRINT_EXCEEDED_STRING);
 
 	public static final StringShort LONG_MIN_VALUE = StringShort.create("-9223372036854775808");
+
+	public static final StringShort SENT = StringShort.create("Sent");
+
+	public static final StringShort FULL_BUFFER = StringShort.create("Buffer full");
+
+	public static final Comparator<AString> lengthComparator = (a,b)->{
+		return Long.signum(a.count()-b.count());
+	};
 
 
 	/**
@@ -127,9 +136,13 @@ public class Strings {
 		return create(o.toString());
 	}
 
-	
 	public static <T extends AString> T intern(T value) {
 		return Cells.intern(value);
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static <T extends AString> T intern(String value) {
+		return (T) intern(create(value));
 	}
 	
 	public static AString create(CVMChar c) {

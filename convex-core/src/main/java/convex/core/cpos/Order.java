@@ -37,18 +37,20 @@ public class Order extends ARecordGeneric {
 	private static final int IX_TIMESTAMP = 0;
 	private static final int IX_CONSENSUS = 1;
 	private static final int IX_BLOCKS = 2;
+	
+	private static final long NUM_FIELDS=FORMAT.count();
 
+	/**
+	 * Timestamp of this Order, i.e. the timestamp of the peer at the time it was created
+	 */
+	private final long timestamp;
+	
 	/**
 	 * Array of consensus points for each consensus level. The first element (block count)
 	 * is ignored.
 	 */
 	private final long [] consensusPoints;
 	
-	/**
-	 * Timestamp of this Order, i.e. the timestamp of the peer at the time it was created
-	 */
-	private final long timestamp;
-
 	private static final long[] EMPTY_CONSENSUS_ARRAY = new long[CPoSConstants.CONSENSUS_LEVELS];
 
 	@SuppressWarnings("unchecked")
@@ -58,7 +60,7 @@ public class Order extends ARecordGeneric {
 		this.consensusPoints = RT.toLongArray((AVector<ACell>)values.get(IX_CONSENSUS));
 	}
 	
-	private Order(AVector<SignedData<Block>> blocks, long[] consensusPoints, long timestamp) {
+	private Order(long timestamp, long[] consensusPoints, AVector<SignedData<Block>> blocks) {
 		super(CVMTag.ORDER,FORMAT,Vectors.create(CVMLong.create(timestamp),Vectors.createLongs(consensusPoints),blocks));
 		this.timestamp = timestamp;
 		this.consensusPoints=consensusPoints;
@@ -77,7 +79,7 @@ public class Order extends ARecordGeneric {
 		consensusPoints[1] = proposalPoint;
 		consensusPoints[2] = consensusPoint;
 
-		return new Order(blocks, consensusPoints,timestamp);
+		return new Order(timestamp, consensusPoints,blocks);
 	}
 
 	/**
@@ -99,7 +101,7 @@ public class Order extends ARecordGeneric {
 	 * @return New Order instance
 	 */
 	public static Order create() {
-		return new Order(Vectors.empty(), EMPTY_CONSENSUS_ARRAY,0);
+		return new Order(0, EMPTY_CONSENSUS_ARRAY,Vectors.empty());
 	}
 
 	/**
@@ -112,6 +114,7 @@ public class Order extends ARecordGeneric {
 	 */
 	public static Order read(Blob b, int pos) throws BadFormatException {
 		AVector<ACell> values = Vectors.read(b, pos);
+		if (values.count()!=NUM_FIELDS) throw new BadFormatException("Wrong number of Order fields");
 		long epos=pos+values.getEncodingLength();
 		
 		Order result=new Order(values);
@@ -253,6 +256,12 @@ public class Order extends ARecordGeneric {
 		if (consensusPoints[level]==newPosition) return this;
 		long[] cps=consensusPoints.clone();
 		cps[level]=newPosition;
+		switch (level) {
+			case 0: throw new IllegalArgumentException("Can't change number of blocks");
+			default: if (cps[level-1]<newPosition) {
+				throw new IllegalArgumentException("Can't set consensus level byond previous level");
+			}
+		}
 		return new Order(values.assoc(IX_CONSENSUS,Vectors.createLongs(cps)));
 	}
 	
@@ -288,7 +297,29 @@ public class Order extends ARecordGeneric {
 
 	@Override
 	public void validateCell() throws InvalidDataException {
+		super.validateCell();
+		if (!values.getRef(IX_CONSENSUS).isEmbedded()) {
+			throw new InvalidDataException("Consensus values should be embedded",this);
+		}
 
+	}
+	
+	@Override
+	public void validateStructure() throws InvalidDataException {
+		super.validateStructure();
+		long [] cps=getConsensusPoints();
+		if (cps[0]!=getBlockCount()) {
+			throw new InvalidDataException("Mimatch of block count with conesnsus points",this);
+		}
+		int n=cps.length;
+		if (cps[n-1]<0) {
+			throw new InvalidDataException("Negative final consensus point",this);
+		}
+		for (int i=1; i<n; i++) {
+			if (cps[i]>cps[i-1]) {
+				throw new InvalidDataException("Consensus points not in expected order: "+cps,this);
+			}
+		}
 	}
 
 	@Override

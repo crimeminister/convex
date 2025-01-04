@@ -1263,14 +1263,11 @@ public class Core {
 
 			Address address=RT.ensureAddress(args[0]);
 			if (address == null) return context.withCastError(args[0], Types.ADDRESS);
-
-			AccountStatus as=context.getAccountStatus(address);
-			if (as==null) return context.withResult(Juice.LOOKUP, null);
 			
-			Index<Address,ACell> holdings=as.getHoldings();
+			Index<Address,ACell> holdings=context.getHoldings();
 
 			// we get the target accounts holdings for the currently executing account
-			ACell result=(holdings==null)?null:holdings.get(context.getAddress());
+			ACell result=(holdings==null)?null:holdings.get(address);
 
 			return context.withResult(Juice.LOOKUP, result);
 		}
@@ -2012,7 +2009,14 @@ public class Core {
 		public  Context invoke(Context context, ACell[] args) {
 			if (args.length != 1) return context.withArityError(exactArityMessage(1, args.length));
 			APrimitive result = RT.abs(args[0]);
-			if (result == null) return context.withCastError(RT.findNonNumeric(args),args, Types.NUMBER);
+			if (result == null) {
+				int badVal=RT.findNonNumeric(args);
+				if (badVal<0) {
+					// this can happen for the minimum big integer value only
+					return context.withError(ErrorMessages.INVALID_NUMERIC);
+				}
+				return context.withCastError(badVal,args, Types.NUMBER);
+			}
 			return context.withResult(Juice.ARITHMETIC, result);
 		}
 	});
@@ -3012,14 +3016,12 @@ public class Core {
  	 * Read a Core definition from an encoding
  	 * @param b Blob containing encoding
  	 * @param pos Position to read Core code function
- 	 * @return Singleton cell representing the Core value
- 	 * @throws BadFormatException In case of encoding error
+ 	 * @return Singleton cell representing the Core value, or null if not defined
  	 */
 	public static ACell fromCode(long code) throws BadFormatException {
-		if (code <0 || code>=CODE_MAP.length) throw new BadFormatException("Core code out of range: "+code);
+		if (code <0 || code>=CODE_MAP.length) return null;
 		
 		ACell o = CODE_MAP[(int)code];
-		if (o == null) throw new BadFormatException("Core code definition not found: " + code);
 		return o;
 	}
 	

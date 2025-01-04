@@ -3,12 +3,15 @@ package convex.core.data;
 import java.io.IOException;
 import java.lang.reflect.Array;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.function.Consumer;
 
 import convex.core.Result;
 import convex.core.data.impl.DummyCell;
 import convex.core.exceptions.InvalidDataException;
 import convex.core.exceptions.ParseException;
+import convex.core.exceptions.TODOException;
+import convex.core.lang.RT;
 import convex.core.store.AStore;
 import convex.core.store.Stores;
 import convex.core.util.Utils;
@@ -30,6 +33,19 @@ public class Cells {
 	public static final int MAX_BRANCH_COUNT = 68;
 
 	public static final ACell DUMMY = new DummyCell();
+
+	public static final ACell NIL = null;
+	
+	public static final Comparator<ACell> countComparator = (a,b)->{
+		Long ca=RT.count(a);
+		Long cb=RT.count(b);
+		
+		// Uncountable values considered "smaller" than any countable value
+		if (ca==null) return (cb==null)?0:-1;
+		if (cb==null) return 1;
+		
+		return Long.signum(ca-cb);
+	};
 
 	/**
 	 * Equality method allowing for nulls
@@ -331,7 +347,23 @@ public class Cells {
 		if (cell==null) return; // OK, this is the null value
 		Ref<?> ref=cell.getRef();
 		if (ref.isValidated()) return;
-		cell.validateCell();
+		try {
+			cell.validateCell();
+			cell.validateStructure();
+			// Cells.markValidated(cell);
+		} catch (Exception e) {
+			throw new InvalidDataException("Invalid due to failure "+e.getMessage(),cell);
+		}
+	}
+
+	/**
+	 * Marks a cell as being validated
+	 * @param cell
+	 */
+	public static void markValidated(ACell cell) {
+		
+		cell.getRef().mergeFlags(Ref.VALIDATED);
+		throw new TODOException("Probably not safe?");
 	}
 
 	/**
@@ -382,6 +414,11 @@ public class Cells {
 	public static int getEncodingLength(ACell value) {
 		if (value==null) return 1;
 		return value.getEncodingLength();
+	}
+
+	public static void validateCell(ACell a) throws InvalidDataException {
+		if (a==null) return;
+		a.validateCell();
 	}
 
 

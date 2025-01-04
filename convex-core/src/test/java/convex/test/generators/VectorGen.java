@@ -1,6 +1,9 @@
 package convex.test.generators;
 
-import com.pholser.junit.quickcheck.generator.ComponentizedGenerator;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
 import com.pholser.junit.quickcheck.generator.GenerationStatus;
 import com.pholser.junit.quickcheck.random.SourceOfRandomness;
 
@@ -15,7 +18,7 @@ import convex.test.Samples;
  *
  */
 @SuppressWarnings("rawtypes")
-public class VectorGen extends ComponentizedGenerator<AVector> {
+public class VectorGen extends AGenerator<AVector> {
 	public VectorGen() {
 		super(AVector.class);
 	}
@@ -77,8 +80,24 @@ public class VectorGen extends ComponentizedGenerator<AVector> {
 		}
 		}
 	}
-	
-    @Override public int numberOfNeededComponents() {
-        return 1;
-    }
+
+	@SuppressWarnings("unchecked")
+	@Override
+	public List<AVector> doShrink(SourceOfRandomness r, AVector v) {
+		long n=v.count();
+		if (n==0) return (List<AVector>)Collections.EMPTY_LIST;
+		if (n==1) return Collections.singletonList(Vectors.empty());
+		ArrayList<AVector> al=new ArrayList<>();
+		
+		long split=r.nextLong(1, n-1);
+		al.add(v.slice(0, split));
+		al.add(v.slice(split, n));
+		
+		Collections.sort(al,Vectors.lengthComparator);
+		
+		for (int i=0; i<n; i++) {
+			al.add(v.dissocAt(i));
+		}
+		return al;
+	}
 }

@@ -769,6 +769,29 @@ public class CoreTest extends ACVMTest {
 		assertEquals(2,log.count()); // should be two entries now
 		assertEquals(v0,log.get(0).get(Log.P_VALUES));
 		assertEquals(v1,log.get(1).get(Log.P_VALUES));
+			
+		{
+			// logs work inside deploys
+			Context ctx=step("(deploy '(log :foo))");
+			Address addr=ctx.getResult();
+			assertEquals(eval("["+addr+" nil *location* [:foo]]"),ctx.lastLog());
+		}
+		
+		{
+			// logs get rolled back
+			Context ctx=step(context(),"(log :foo)");
+			ctx=step(ctx,"(query (log bar))"); // should get rolled back
+			assertEquals(eval("[*address* nil *location* [:foo]]"),ctx.lastLog());
+		}
+		
+		{
+			// logs work inside calls
+			Context ctx=context();
+			ctx=exec(ctx,"(def addr (deploy '(defn foo ^:callable [] (log :foo))))");
+			Address addr=ctx.getResult();
+			ctx=exec(ctx,"(call addr (foo))");
+			assertEquals(eval("["+addr+" nil *location* [:foo]]"),ctx.lastLog());
+		}
 	}
 
 
@@ -1246,6 +1269,9 @@ public class CoreTest extends ACVMTest {
 		// cast errors for bad indexes
 		assertCastError(step("(nth [] :foo)"));
 		assertCastError(step("(nth [] nil)"));
+		
+		assertNull(eval("(nth [1 nil] 1)"));
+
 
 		// cast errors for non-countable objects
 		assertCastError(step("(nth 12 13)"));
@@ -2003,6 +2029,10 @@ public class CoreTest extends ACVMTest {
 		assertEquals(Vectors.empty(), eval("(do (def a []) (dotimes [i 0] (def a (conj a i))) a)"));
 		assertEquals(Vectors.empty(), eval("(do (def a []) (dotimes [i -1.5] (def a (conj a i))) a)"));
 		assertEquals(Vectors.empty(), eval("(do (def a []) (dotimes [i -1.5]) a)"));
+
+		// Always returns nil
+		assertNull(eval("(dotimes [i 10] i)"));
+		assertNull(eval("(dotimes [i 0] i)"));
 
 		assertCastError(step("(dotimes [1 10])"));
 		assertCastError(step("(dotimes [i :foo])"));
@@ -2999,6 +3029,16 @@ public class CoreTest extends ACVMTest {
 		assertFalse(evalB(ctx, "(call ctr (bar))")); // call from hero only
 
 		assertEquals(Sets.of(Symbols.FOO,Symbols.BAR),ctx.getAccountStatus(actor).getCallableFunctions());
+	}
+	
+	@Test
+	public void testCallSelfWithOffer() {
+		Context ctx = step("(defn foo ^{:callable true} [] (accept *offer*))");
+		long bal=ctx.getBalance();
+		
+		assertEquals(10000,evalL(ctx, "(call *address* 10000 (foo))")); // self-call
+		assertEquals(bal,evalL(ctx, "(do (call *address* 10000 (foo)) *balance*)")); // self-call
+
 	}
 	
 	@Test 
@@ -4930,7 +4970,7 @@ public class CoreTest extends ACVMTest {
 	@Test
 	public void testScheduleExecution() throws BadSignatureException {
 		long expectedTS = INITIAL.getTimestamp().longValue() + 1000;
-		Context ctx = step("(schedule (+ *timestamp* 1000) (def a 2))");
+		Context ctx = exec(context(),"(schedule (+ *timestamp* 1000) (def a 2))");
 		assertCVMEquals(expectedTS, ctx.getResult());
 		State s = ctx.getState();
 		Index<ABlob, AVector<ACell>> sched = s.getSchedule();
@@ -5128,6 +5168,17 @@ public class CoreTest extends ACVMTest {
 		assertCastError(step(ctx, "(callable? caddr nil)"));
 		assertCastError(step(ctx, "(callable? caddr 1)"));
 	}
+	
+	@Test
+	public void testScope() {
+		assertEquals(Keywords.FOO,eval("(scope [#17 :foo])"));
+		assertNull(eval("(scope #11)"));
+		assertNull(eval("(scope [#11 nil])"));
+		assertNull(eval("(scope true)"));
+		
+		assertArityError(step("(scope)"));
+		assertArityError(step("(scope)"));
+	}
 
 	@Test
 	public void testDec() {
@@ -5237,8 +5288,8 @@ public class CoreTest extends ACVMTest {
 		// OK to set holding for a real owner account
 	    assertEquals(100L,evalL(ctx,"(set-holding VILLAIN 100)"));
 
-		// error to set holding for a non-existent owner account
-		assertNobodyError(step(ctx,"(set-holding NOONE 200)"));
+		// OK to set holding for a non-existent owner account
+		assertCVMEquals(200,eval(ctx,"(set-holding NOONE 200)"));
 
 		// trying to set holding for the wrong type
 		assertCastError(step(ctx,"(set-holding :foo 300)"));
@@ -5247,15 +5298,23 @@ public class CoreTest extends ACVMTest {
 			Context c2 = step(ctx,"(set-holding VILLAIN 123)");
 			assertEquals(123L,evalL(c2,"(get-holding VILLAIN)"));
 
-			assertTrue(c2.getAccountStatus(VILLAIN).getHoldings().containsKey(HERO));
-			assertCVMEquals(123L,c2.getAccountStatus(VILLAIN).getHolding(HERO));
+			assertFalse(c2.getAccountStatus(VILLAIN).getHoldings().containsKey(HERO));
+			assertCVMEquals(123L,c2.getAccountStatus(HERO).getHolding(VILLAIN));
 		}
 
 		{ // test null assign
 			Context c2 = exec(ctx,"(set-holding VILLAIN nil)");
 			assertNull(eval(c2,"(get-holding VILLAIN)"));
 			AccountStatus vas=c2.getAccountStatus(VILLAIN);
-			assertNull(vas.getHoldings(HERO));
+			assertNull(vas.getHolding(HERO));
+		}
+		
+		{ // test setting back to nil
+			Context c2 = exec(ctx,"(set-holding VILLAIN 1)");
+			assertTrue(evalB(c2,"(= *holdings* (index VILLAIN 1))"));
+			c2 = exec(ctx,"(set-holding VILLAIN nil)");
+			assertTrue(evalB(c2,"(= *holdings* (index))"));
+			assertNull(eval(c2,"(get-holding VILLAIN)"));
 		}
 	}
 

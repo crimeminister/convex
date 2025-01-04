@@ -2,12 +2,10 @@ package convex.peer;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
-import java.io.IOException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,11 +38,10 @@ import convex.core.data.Vectors;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.MissingDataException;
-import convex.core.lang.RT;
 import convex.core.lang.Reader;
+import convex.core.message.Message;
 import convex.core.util.LoadMonitor;
 import convex.core.util.Utils;
-import convex.net.Message;
 
 /**
  * Server component for handling client transactions and producing Blocks
@@ -54,12 +51,12 @@ import convex.net.Message;
  */
 public class TransactionHandler extends AThreadedComponent {
 	
-	static final Logger log = LoggerFactory.getLogger(BeliefPropagator.class.getName());
+	static final Logger log = LoggerFactory.getLogger(TransactionHandler.class.getName());
 	
 	/**
 	 * Default minimum delay between proposing own transactions as a peer
 	 */
-	private static final long OWN_BLOCK_DELAY=2000;
+	private static final long OWN_BLOCK_DELAY=10000;
 
 	/**
 	 * Default minimum delay between proposing a block as a peer
@@ -110,6 +107,32 @@ public class TransactionHandler extends AThreadedComponent {
 		interests.put(signedTransactionHash, m);
 	}
 	
+	private static final Result ERR_NOT_LIVE=Result.error(ErrorCodes.STATE, Strings.create("Server is not live")).withSource(SourceCodes.PEER);
+	private static final Result ERR_NOT_REGISTERED=Result.error(ErrorCodes.STATE, Strings.create("Peer not registered in global state")).withSource(SourceCodes.PEER);
+	private static final Result ERR_NOT_STAKED=Result.error(ErrorCodes.STATE, Strings.create("Peer not sufficiently staked to publish transactions")).withSource(SourceCodes.PEER);
+	
+	private Result checkPeerState() {
+		try {
+			if (!server.isLive()) {
+				return ERR_NOT_LIVE;
+			}
+			Peer p=server.getPeer();
+			State s=p.getConsensusState();
+			PeerStatus ps=s.getPeers().get(p.getPeerKey());
+			if (ps==null) {
+				return ERR_NOT_REGISTERED;
+			}
+			if (ps.getBalance()<CPoSConstants.MINIMUM_EFFECTIVE_STAKE) {
+				return ERR_NOT_STAKED;
+			}
+
+			return null;
+		} catch (Exception e) {
+			return Result.error(ErrorCodes.STATE, Strings.create("Peer problem: "+e.getMessage())).withSource(SourceCodes.PEER);
+		}
+	}
+
+	
 	private void processMessages() throws InterruptedException {
 		Result problem=checkPeerState();
 		for (Message msg: messages) {
@@ -121,41 +144,22 @@ public class TransactionHandler extends AThreadedComponent {
 		}
 	}
 	
-	private Result checkPeerState() {
-		try {
-			if (!server.isLive()) {
-				return Result.error(ErrorCodes.STATE, Strings.create("Server is not live")).withSource(SourceCodes.PEER);
-			}
-			Peer p=server.getPeer();
-			State s=server.getPeer().getConsensusState();
-			PeerStatus ps=s.getPeers().get(p.getPeerKey());
-			if (ps==null) {
-				return Result.error(ErrorCodes.STATE, Strings.create("Peer not registered in global state")).withSource(SourceCodes.PEER);
-			}
-			return null;
-		} catch (Exception e) {
-			return Result.error(ErrorCodes.STATE, Strings.create("Peer problem: "+e.getMessage())).withSource(SourceCodes.PEER);
-		}
-	}
-
 	protected void processMessage(Message m) throws InterruptedException {
 		try {
 			this.receivedTransactionCount++;
+			// log.info("Got TX message: "+m);
 			
-			// Transaction is a vector [id , signed-object]
+			// Transaction is a vector [:TX, id , signed-tx]
 			AVector<ACell> v = m.getPayload();
 			@SuppressWarnings("unchecked")
-			SignedData<ATransaction> sd = (SignedData<ATransaction>) v.get(1);
+			SignedData<ATransaction> sd = (SignedData<ATransaction>) v.get(2);
 			
 			// Check our transaction is valid and we want to process it
-			Result error=checkTransaction(sd);
+			Result error=server.getPeer().checkTransaction(sd);
 			if (error!=null) {
 				m.returnResult(error.withSource(SourceCodes.PEER));
 				return;
 			}
-
-			// Persist the signed transaction. Might throw MissingDataException?
-			sd=Cells.persist(sd);
 	
 			// Put on Server's transaction queue. We are OK to block here
 			LoadMonitor.down();
@@ -165,7 +169,7 @@ public class TransactionHandler extends AThreadedComponent {
 			this.clientTransactionCount++;
 			
 			registerInterest(sd.getHash(), m);		
-		} catch (BadFormatException | IOException e) {
+		} catch (BadFormatException e) {
 			log.warn("Unhandled exception in transaction handler",e);
 			m.closeConnection();
 		} catch (MissingDataException e) {
@@ -174,44 +178,7 @@ public class TransactionHandler extends AThreadedComponent {
 		}
 	}
 	
-	private Result checkTransaction(SignedData<ATransaction> sd) {
 
-		// TODO: throttle?
-		ATransaction tx=RT.ensureTransaction(sd.getValue());
-		
-		// System.out.println("transact: "+v);
-		if (tx==null) {
-			return Result.error(ErrorCodes.FORMAT,Strings.BAD_FORMAT);
-		}
-		
-		State s=server.getPeer().getConsensusState();
-		AccountStatus as=s.getAccount(tx.getOrigin());
-		if (as==null) {
-			return Result.error(ErrorCodes.NOBODY, Strings.NO_SUCH_ACCOUNT);
-		}
-		
-		if (tx.getSequence()<=as.getSequence()) {
-			return Result.error(ErrorCodes.SEQUENCE, Strings.OLD_SEQUENCE);
-		}
-		
-		AccountKey expectedKey=as.getAccountKey();
-		if (expectedKey==null) {
-			return Result.error(ErrorCodes.STATE, Strings.NO_TX_FOR_ACTOR);
-		}
-		
-		AccountKey pubKey=sd.getAccountKey();
-		if (!expectedKey.equals(pubKey)) {
-			return Result.error(ErrorCodes.SIGNATURE, Strings.WRONG_KEY );
-		}
-		
-		if (!sd.checkSignature()) {
-			// SECURITY: Client tried to send a badly signed transaction!
-			return Result.error(ErrorCodes.SIGNATURE, Strings.BAD_SIGNATURE);
-		}
-
-		// All checks passed OK!
-		return null;
-	}
 	
 	/**
 	 * Sets a request observer, which will be called whenever the Peer
@@ -259,8 +226,8 @@ public class TransactionHandler extends AThreadedComponent {
 			Hash h = t.getHash();
 			Message m = interests.get(h);
 			if (m != null) {
-				ACell id = m.getID();
-				log.trace("Returning transaction result ID {}", id);
+				// ACell id = m.getID();
+				// log.info("Returning transaction result ID {}", id);
 				Result res = null;
 				
 				try {
@@ -300,14 +267,16 @@ public class TransactionHandler extends AThreadedComponent {
 	}
 	
 	/**
-	 * Checks for pending transactions, and if found propose them as a new Block.
+	 * Gets the next Blocks for publication, or null if nothing to publish
+	 * Checks for pending transactions, and if found propose them as new Block(s).
 	 *
 	 * @return New signed Block, or null if nothing to publish yet
 	 */
-	protected SignedData<Block> maybeGenerateBlock(Peer peer) {
+	protected SignedData<Block>[] maybeGenerateBlocks() {
+		Peer peer=server.getPeer();
 		long timestamp=Utils.getCurrentTimestamp();
 
-		if (!readyToPublish(peer)) return null;
+		if (!peer.isReadyToPublish()) return null;
 		
 		long minBlockTime=getMinBlockTime();
 		
@@ -317,37 +286,43 @@ public class TransactionHandler extends AThreadedComponent {
 		maybeGetOwnTransactions(peer);
 			
 		// possibly have client transactions to publish
-		transactionQueue.drainTo(newTransactions,Constants.MAX_TRANSACTIONS_PER_BLOCK);
+		transactionQueue.drainTo(newTransactions);
 
-		int n = newTransactions.size();
-		if (n == 0) return null;
+		if (newTransactions.isEmpty()) return null;
 		
-		// TODO: smaller block if too many transactions?
-		Block block = Block.create(timestamp, (List<SignedData<ATransaction>>) newTransactions);
+		int ntrans=newTransactions.size();
+		int bsize=Constants.MAX_TRANSACTIONS_PER_BLOCK;
+		int nblocks=((ntrans-1)/bsize)+1;
+		
+		@SuppressWarnings("unchecked")
+		SignedData<Block>[] signedBlocks=new SignedData[nblocks];
+		
+		for (int i=0; i<nblocks; i++) {
+		
+			int start=i*bsize;
+			int end=Math.min(ntrans, (i+1)*bsize);
+			Block block = Block.create(timestamp, newTransactions.subList(start, end));
+			SignedData<Block> signedBlock=peer.getKeyPair().signData(block);
+			
+			try {
+				signedBlock=Cells.persist(signedBlock);
+			} catch (Exception e) {
+				log.warn("Exception preparing new block",e);
+				return null;
+			}
+			signedBlocks[i]=signedBlock;		
+		}
 		newTransactions.clear();
-		lastBlockPublishedTime=Utils.getCurrentTimestamp();
-		SignedData<Block> signedBlock=peer.getKeyPair().signData(block);
-		return signedBlock;
-	}
-	
-	/**
-	 * Gets the next Block for publication, or null if not yet ready
-	 * @return New Block, or null if not yet produced
-	 */
-	public SignedData<Block> maybeGetBlock() {
-		return maybeGenerateBlock(server.getPeer());
-	}
-	
-	/**
-	 * Checks if the Peer is ready to publish a Block
-	 * @param peer Current Peer instance
-	 * @return true if ready to publish, false otherwise
-	 */
-	private boolean readyToPublish(Peer peer) {
-		return true;
+		lastBlockPublishedTime=timestamp;
+		return signedBlocks;
 	}
 
 	Long minBlockTime=null;
+	
+	/** 
+	 * Get the minimum time between proposing blocks. Default 10ms. 
+	 * @return
+	 */
 	private long getMinBlockTime() {
 		if (minBlockTime==null) {
 			HashMap<Keyword, Object> config = server.getConfig();
@@ -388,36 +363,34 @@ public class TransactionHandler extends AThreadedComponent {
 
 		// NOTE: beyond this point we only execute stuff when AUTO_MANAGE is set
 		if (!Utils.bool(server.getConfig().get(Keywords.AUTO_MANAGE))) return;
+		
+		// No point publishing if low staked etc.
+		if (!p.isReadyToPublish()) return;
 
 		State s=p.getConsensusState();
 		AccountKey peerKey=p.getPeerKey();
 		PeerStatus ps=s.getPeer(peerKey);
 		if (ps==null) return; // No peer record in consensus state?
-		
-		// No point setting this if low staked
-		if (ps.getPeerStake()<CPoSConstants.MINIMUM_EFFECTIVE_STAKE) return;
-		
+
+
 		AString chn=ps.getHostname();
 		String currentHostname=(chn==null)?null:chn.toString();
 		String desiredHostname=server.getHostname(); // Intended hostname
 		
 		// Try to set hostname if not correctly set
 		trySetHostname:
-		if (!Utils.equals(desiredHostname, currentHostname)) {
-			log.info("Trying to update own hostname from: {} to {}",currentHostname,desiredHostname);
+		if ((desiredHostname!=null)&&!Utils.equals(desiredHostname, currentHostname)) {
 			Address address=ps.getController();
 			if (address==null) break trySetHostname;
 			AccountStatus as=s.getAccount(address);
 			if (as==null) break trySetHostname;
 			// if we haven't got the controller key, just skip this
 			if (!Cells.equals(peerKey, as.getAccountKey())) break trySetHostname;
+			
+			log.info("Trying to update own hostname from: {} to {}",currentHostname,desiredHostname);
 
 			String code;
-			if (desiredHostname==null) {
-				code = String.format("(set-peer-data %s {:url nil})", peerKey);
-			} else {
-				code = String.format("(set-peer-data %s {:url \"%s\"})", peerKey, desiredHostname);
-			}
+			code = String.format("(set-peer-data %s {:url \"%s\"})", peerKey, desiredHostname);
 			ACell message = Reader.read(code);
 			ATransaction transaction = Invoke.create(address, as.getSequence()+1, message);
 			newTransactions.add(p.getKeyPair().signData(transaction));
@@ -453,9 +426,16 @@ public class TransactionHandler extends AThreadedComponent {
 			LoadMonitor.up();
 			if (m==null) return;
 			
+			LoadMonitor.down();
+			// Brief pause in case more transactions are coming in
+			Thread.sleep(1);
+			LoadMonitor.up();
+
+			
 			// We have at least one transaction to handle, drain queue to get the rest
 			messages.add(m);
 			txMessageQueue.drainTo(messages);
+			// log.info("Transaction Messages received: "+messages.size());
 			
 			// Process transaction messages
 			// This might block if we aren't generating blocks fast enough

@@ -51,8 +51,17 @@ public class AccountStatus extends ARecordGeneric {
 	
 	protected static final Index<Address, ACell> EMPTY_HOLDINGS = Index.none();
 
-
 	private static final RecordFormat FORMAT = RecordFormat.of(ACCOUNT_KEYS);
+	
+	private static final long IX_SEQUENCE=FORMAT.indexFor(Keywords.SEQUENCE);
+	private static final long IX_KEY=FORMAT.indexFor(Keywords.KEY);
+	private static final long IX_BALANCE=FORMAT.indexFor(Keywords.BALANCE);
+	private static final long IX_ALLOWANCE=FORMAT.indexFor(Keywords.ALLOWANCE);
+	private static final long IX_HOLDINGS=FORMAT.indexFor(Keywords.HOLDINGS);
+	private static final long IX_CONTROLLER=FORMAT.indexFor(Keywords.CONTROLLER);
+	private static final long IX_ENVIRONMENT=FORMAT.indexFor(Keywords.ENVIRONMENT);
+	private static final long IX_METADATA=FORMAT.indexFor(Keywords.METADATA);
+	private static final long IX_PARENT=FORMAT.indexFor(Keywords.PARENT);
 
 	private AccountStatus(long sequence, AccountKey publicKey, long balance,
 			long memory, 
@@ -72,13 +81,13 @@ public class AccountStatus extends ARecordGeneric {
 		this.parent=parent;
 	}
 	
-	public AccountStatus(AVector<ACell> values) {
+	private AccountStatus(AVector<ACell> values) {
 		super(CVMTag.ACCOUNT_STATUS,FORMAT,values);
-		this.sequence = RT.ensureLong(values.get(0)).longValue();
-		this.publicKey = RT.ensureAccountKey(values.get(1));
-		this.balance = RT.ensureLong(values.get(2)).longValue();;
-		this.memory = RT.ensureLong(values.get(3)).longValue();;
-		this.parent = RT.ensureAddress(values.get(8));
+		this.sequence = RT.ensureLong(values.get(IX_SEQUENCE)).longValue();
+		this.publicKey = RT.ensureAccountKey(values.get(IX_KEY));
+		this.balance = RT.ensureLong(values.get(IX_BALANCE)).longValue();;
+		this.memory = RT.ensureLong(values.get(IX_ALLOWANCE)).longValue();;
+		this.parent = RT.ensureAddress(values.get(IX_PARENT));
 	}
 
 	/**
@@ -90,6 +99,12 @@ public class AccountStatus extends ARecordGeneric {
 	 * @return New AccountStatus
 	 */
 	public static AccountStatus create(long sequence, long balance, AccountKey key) {
+		if (sequence<0) throw new IllegalArgumentException("negative sequence");
+		if (balance<0) throw new IllegalArgumentException("negative balance");
+		return new AccountStatus(sequence, key, balance, 0L,null,null,null,null,null);
+	}
+	
+	public static AccountStatus createUnsafe(long sequence, long balance, AccountKey key) {
 		return new AccountStatus(sequence, key, balance, 0L,null,null,null,null,null);
 	}
 
@@ -162,50 +177,50 @@ public class AccountStatus extends ARecordGeneric {
 
 	public AccountStatus withAccountKey(AccountKey newKey) {
 		if (newKey==publicKey) return this;
-		return new AccountStatus(values.assoc(1,newKey));
+		return new AccountStatus(values.assoc(IX_KEY,newKey));
 	}
 	
 	public AccountStatus withBalance(long newBalance) {
 		if (balance==newBalance) return this;
-		return new AccountStatus(values.assoc(2,CVMLong.create(newBalance)));
+		return new AccountStatus(values.assoc(IX_BALANCE,CVMLong.create(newBalance)));
 	}
 
 	public AccountStatus withMemory(long newMemory) {
 		if (memory==newMemory) return this;
-		return new AccountStatus(values.assoc(3,CVMLong.create(newMemory)));
+		return new AccountStatus(values.assoc(IX_ALLOWANCE,CVMLong.create(newMemory)));
 	}
 	
 	public AccountStatus withBalances(long newBalance, long newAllowance) {
 		if ((balance==newBalance)&&(memory==newAllowance)) return this;
 		AVector<ACell> nv=values;
-		nv=nv.assoc(2, CVMLong.create(newBalance));
-		nv=nv.assoc(3, CVMLong.create(newAllowance));
+		nv=nv.assoc(IX_BALANCE, CVMLong.create(newBalance));
+		nv=nv.assoc(IX_ALLOWANCE, CVMLong.create(newAllowance));
 		return new AccountStatus(nv);
 	}
 
 	private AccountStatus withHoldings(Index<Address, ACell> newHoldings) {
 		if (getHoldings()==newHoldings) return this;
-		return new AccountStatus(values.assoc(4, newHoldings));
+		return new AccountStatus(values.assoc(IX_HOLDINGS, newHoldings));
 	}
 	
 	public AccountStatus withController(ACell newController) {
 		if (getController()==newController) return this;
-		return new AccountStatus(values.assoc(5, newController));
+		return new AccountStatus(values.assoc(IX_CONTROLLER, newController));
 	}
 
 	public AccountStatus withEnvironment(AHashMap<Symbol, ACell> newEnvironment) {
 		if (getEnvironment()==newEnvironment) return this;
-		return new AccountStatus(values.assoc(6, newEnvironment));
+		return new AccountStatus(values.assoc(IX_ENVIRONMENT, newEnvironment));
 	}
 	
 	public AccountStatus withMetadata(AHashMap<Symbol, AHashMap<ACell, ACell>> newMeta) {
 		if (getMetadata()==newMeta) return this;
-		return new AccountStatus(values.assoc(7, newMeta));
+		return new AccountStatus(values.assoc(IX_METADATA, newMeta));
 	}
 	
 	public AccountStatus withParent(Address newParent) {
 		if (parent==newParent) return this;
-		return new AccountStatus(values.assoc(8,newParent));
+		return new AccountStatus(values.assoc(IX_PARENT,newParent));
 	}
 	
 	@Override 
@@ -231,6 +246,7 @@ public class AccountStatus extends ARecordGeneric {
 
 	@Override
 	public void validateCell() throws InvalidDataException {
+		if (sequence<0) throw new InvalidDataException("Neagitive sequence: "+sequence,this);
 		if (!Coin.isValidAmount(balance)) throw new InvalidDataException("Illegal balance: "+balance,this);
 	}
 
@@ -249,14 +265,12 @@ public class AccountStatus extends ARecordGeneric {
 		return (R) value;
 	}
 
-
-	
 	public ACell getHolding(Address addr) {
 		Index<Address, ACell> hodls=getHoldings();
 		if (hodls==null) return null;
 		return hodls.get(addr);
 	}
-	
+
 	public AccountStatus withHolding(Address addr,ACell value) {
 		Index<Address, ACell> hodls=getHoldings();
 		if (hodls==null) {
@@ -269,7 +283,6 @@ public class AccountStatus extends ARecordGeneric {
 		}
 		return withHoldings(hodls);
 	}
-	
 
 	@Override
 	public ACell get(Keyword key) {
@@ -277,7 +290,7 @@ public class AccountStatus extends ARecordGeneric {
 		if (Keywords.KEY.equals(key)) return publicKey;
 		if (Keywords.BALANCE.equals(key)) return CVMLong.create(balance);
 		if (Keywords.ALLOWANCE.equals(key)) return CVMLong.create(memory);
-		if (Keywords.HOLDINGS.equals(key)) return getHoldings();
+		if (Keywords.HOLDINGS.equals(key)) return values.get(IX_HOLDINGS);
 		if (Keywords.CONTROLLER.equals(key)) return getController();
 		if (Keywords.ENVIRONMENT.equals(key)) return getEnvironment();
 		if (Keywords.METADATA.equals(key)) return getMetadata();
@@ -310,8 +323,8 @@ public class AccountStatus extends ARecordGeneric {
 	 */
 	public AccountStatus addBalanceAndSequence(long delta) {
 		AVector<ACell> nv=values;
-		nv=nv.assoc(0,CVMLong.create(sequence+1));
-		nv=nv.assoc(2,CVMLong.create(balance+delta));
+		nv=nv.assoc(IX_SEQUENCE,CVMLong.create(sequence+1));
+		nv=nv.assoc(IX_BALANCE,CVMLong.create(balance+delta));
 		return new AccountStatus(nv);
 	}
 
@@ -332,14 +345,15 @@ public class AccountStatus extends ARecordGeneric {
 	}
 	
 	/**
-	 * Gets the holdings for this account. Will always be a non-null map.
+	 * Gets the holdings for this account.
 	 * @return Holdings map for this account
 	 */
 	public Index<Address, ACell> getHoldings() {
 		if (holdings==null) {
-			holdings=RT.ensureIndex(values.get(4));
+			holdings=RT.ensureIndex(values.get(IX_HOLDINGS));
 			// if (holdings==null) holdings=EMPTY_HOLDINGS;
 		}
+		if (holdings==null) return EMPTY_HOLDINGS;
 		return holdings;
 	}
 	
@@ -348,7 +362,7 @@ public class AccountStatus extends ARecordGeneric {
 	 * @return Controller Address, or null if there is no controller
 	 */
 	public ACell getController() {
-		if (controller==null) controller=values.get(5);
+		if (controller==null) controller=values.get(IX_CONTROLLER);
 		return controller;
 	}
 	
@@ -359,7 +373,7 @@ public class AccountStatus extends ARecordGeneric {
 	@SuppressWarnings("unchecked")
 	public AHashMap<Symbol, ACell> getEnvironment() {
 		if (environment==null) {
-			environment=(AHashMap<Symbol, ACell>)values.get(6);
+			environment=(AHashMap<Symbol, ACell>)values.get(IX_ENVIRONMENT);
 		}
 		return environment;
 	}
@@ -371,7 +385,7 @@ public class AccountStatus extends ARecordGeneric {
 	@SuppressWarnings("unchecked")
 	public AHashMap<Symbol,AHashMap<ACell,ACell>> getMetadata() {
 		if (metadata==null) {
-			metadata=(AHashMap<Symbol,AHashMap<ACell,ACell>>)(values.get(7));
+			metadata=(AHashMap<Symbol,AHashMap<ACell,ACell>>)(values.get(IX_METADATA));
 		}
 		return metadata;
 	}
@@ -441,11 +455,7 @@ public class AccountStatus extends ARecordGeneric {
 		return entry;
 	}
 	
-	public ACell getHoldings(Address addr) {
-		Index<Address, ACell> hodls = getHoldings();
-		if (hodls==null) return null;
-		return hodls.get(addr);
-	}
+
 
 
 }

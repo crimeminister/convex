@@ -25,10 +25,12 @@ import convex.core.data.Keyword;
 import convex.core.data.Maps;
 import convex.core.data.Ref;
 import convex.core.data.SignedData;
+import convex.core.data.Strings;
 import convex.core.data.Vectors;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.InvalidDataException;
 import convex.core.init.Init;
+import convex.core.lang.RT;
 import convex.core.store.AStore;
 import convex.core.store.Stores;
 import convex.core.util.Utils;
@@ -333,7 +335,8 @@ public class Peer {
 	 * @return The Context containing the transaction results.
 	 */
 	public ResultContext executeDetached(ATransaction transaction) {
-		ResultContext ctx=getConsensusState().applyTransaction(transaction);
+		State s=getConsensusState();
+		ResultContext ctx=getConsensusState().applyTransaction(transaction,TransactionContext.create(s));
 		return ctx;
 	}
 
@@ -426,9 +429,8 @@ public class Peer {
 		Order newOrder=newBelief.getOrder(peerKey);
 		long ncp=newOrder.getConsensusPoint(CPoSConstants.CONSENSUS_LEVEL_FINALITY);
 		if (ocp>ncp) {
-			// This probably shouldn't happen, but just in case.....
-			System.err.println("Receding consensus? Old CP="+ocp +", New CP="+ncp);
-			
+			// TODO: check cases where this can occur
+			// System.err.println("Receding consensus? Old CP="+ocp +", New CP="+ncp);	
 		}
 		Peer p= updateBelief(newBelief);
 		if (p==this) return this;
@@ -594,6 +596,7 @@ public class Peer {
 	public Peer proposeBlock(Block block) {
 		
 		SignedData<Block> signedBlock=sign(block);
+		@SuppressWarnings("unchecked")
 		Belief newBelief=belief.proposeBlock(keyPair, signedBlock);
 		
 		Peer result=this;
@@ -606,6 +609,45 @@ public class Peer {
 		result=result.updateBelief(newBelief);
 		// result=result.updateState();
 		return result;
+	}
+	
+	public Result checkTransaction(SignedData<ATransaction> sd) {
+
+		// TODO: throttle?
+		ATransaction tx=RT.ensureTransaction(sd.getValue());
+		
+		// System.out.println("transact: "+v);
+		if (tx==null) {
+			return Result.error(ErrorCodes.FORMAT,Strings.BAD_FORMAT);
+		}
+		
+		State s=getConsensusState();
+		AccountStatus as=s.getAccount(tx.getOrigin());
+		if (as==null) {
+			return Result.error(ErrorCodes.NOBODY, Strings.NO_SUCH_ACCOUNT);
+		}
+		
+		if (tx.getSequence()<=as.getSequence()) {
+			return Result.error(ErrorCodes.SEQUENCE, Strings.OLD_SEQUENCE);
+		}
+		
+		AccountKey expectedKey=as.getAccountKey();
+		if (expectedKey==null) {
+			return Result.error(ErrorCodes.STATE, Strings.NO_TX_FOR_ACTOR);
+		}
+		
+		AccountKey pubKey=sd.getAccountKey();
+		if (!expectedKey.equals(pubKey)) {
+			return Result.error(ErrorCodes.SIGNATURE, Strings.WRONG_KEY );
+		}
+		
+		if (!sd.checkSignature()) {
+			// SECURITY: Client tried to send a badly signed transaction!
+			return Result.error(ErrorCodes.SIGNATURE, Strings.BAD_SIGNATURE);
+		}
+
+		// All checks passed OK!
+		return null;
 	}
 
 	/**
@@ -661,5 +703,27 @@ public class Peer {
 	 */
 	public State getGenesisState() {
 		return genesis;
+	}
+
+	/**
+	 * Checks if the Peer is ready to publish a Block. Requires sufficient stake
+	 * @return true if ready to publish, false otherwise
+	 */
+	public boolean isReadyToPublish() {
+		// If we are the only peer, always allow publishing
+		if (state.getPeers().count()<=1) return true;
+		
+		PeerStatus ps=state.getPeer(peerKey);
+		if (ps==null) return false;
+		if (ps.getBalance()<CPoSConstants.MINIMUM_EFFECTIVE_STAKE) return false; 
+		return true;
+	}
+
+	/**
+	 * Gets the genesis state hash for this peer
+	 * @return
+	 */
+	public Hash getGenesisHash() {
+		return getGenesisState().getHash();
 	}
 }

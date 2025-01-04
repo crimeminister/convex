@@ -4,6 +4,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -60,6 +61,13 @@ public abstract class AVector<T extends ACell> extends ASequence<T> {
 	 */
 	@Override
 	public abstract T get(long i);
+	
+	/**
+	 * Remove an element at the specified position in a vector. WARNING: likely to be O(n)
+	 * @param i
+	 * @return Shortened Vector, or null if position was invalid
+	 */
+	public abstract AVector<T> dissocAt(long i);
 
 	/**
 	 * Appends a ListVector chunk to this vector. This vector must contain a whole
@@ -116,7 +124,7 @@ public abstract class AVector<T extends ACell> extends ASequence<T> {
 	}
 
 	@Override
-	public T get(int index) {
+	public final T get(int index) {
 		return get((long) index);
 	}
 
@@ -136,6 +144,14 @@ public abstract class AVector<T extends ACell> extends ASequence<T> {
 			result = result.concat(seq);
 		}
 		return result;
+	}
+	
+	@SuppressWarnings("unchecked")
+	@Override
+	protected <R> void copyToArray(R[] arr, int offset) {
+		for (int i=0; i<count; i++) {
+			arr[offset+i]=(R) get(i);
+		}
 	}
 
 	@Override
@@ -292,4 +308,10 @@ public abstract class AVector<T extends ACell> extends ASequence<T> {
 	 * @return Element Ref
 	 */
 	protected abstract Ref<T> getElementRefUnsafe(long i);
+
+	/**
+	 * Visits all canonical child vectors recursively in bottom up order
+	 * @param visitor
+	 */
+	protected abstract void visitAllChildren(Consumer<AVector<T>> visitor);
 }

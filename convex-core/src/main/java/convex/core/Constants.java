@@ -19,7 +19,7 @@ public class Constants {
 	/**
 	 * Initial timestamp for new States
 	 */
-	public static final long INITIAL_TIMESTAMP = Instant.parse("2020-12-06T05:08:13.0864Z").toEpochMilli();
+	public static final long INITIAL_TIMESTAMP = Instant.parse("2024-12-24T16:00:00.0000Z").toEpochMilli();
 	// public static final long INITIAL_TIMESTAMP = Instant.parse("2024-12-06T05:08:13.0864Z").toEpochMilli();
 
 	/**
@@ -38,15 +38,15 @@ public class Constants {
 	public static final long INITIAL_MEMORY_PRICE = 1000000L;
 
 	/**
-	 * Memory Pool of growth increment 1mb
+	 * Memory Pool of growth increment 40kb / hour i.e. approx. 1mb per day
 	 */
-	public static final long MEMORY_POOL_GROWTH = 1000000L;
+	public static final long MEMORY_POOL_GROWTH = 40000L;
 
 	/**
-	 * Memory Pool of growth interval (once per day). This means regular price drops
+	 * Memory Pool of growth interval (once per hour). This means regular price drops
 	 * in memory pool
 	 */
-	public static final long MEMORY_POOL_GROWTH_INTERVAL = 1000L * 24 * 3600;
+	public static final long MEMORY_POOL_GROWTH_INTERVAL = 1000L * 3600;
 
 	/**
 	 * Max juice allowable during execution of a single transaction.
@@ -97,7 +97,7 @@ public class Constants {
 	public static final AVector<ACell> INITIAL_GLOBALS = Vectors.of(
 			Constants.INITIAL_TIMESTAMP, Constants.INITIAL_FEES,
 			Constants.INITIAL_JUICE_PRICE, Constants.INITIAL_MEMORY_POOL,
-			Constants.INITIAL_MEMORY_POOL * Constants.INITIAL_MEMORY_PRICE);
+			Constants.INITIAL_MEMORY_POOL * Constants.INITIAL_MEMORY_PRICE, -1L);
 
 	/**
 	 * Maximum length of a symbolic name in bytes (keywords and symbols)
@@ -161,7 +161,7 @@ public class Constants {
 	 * Flag to omit filling in stack traces on validation exceptions. This helps
 	 * performance against DoS attacks
 	 */
-	public static final boolean OMIT_VALIDATION_STACKTRACES = true;
+	public static final boolean OMIT_VALIDATION_STACKTRACES = false;
 
 	public static final int PBE_ITERATIONS = 100000;
 	

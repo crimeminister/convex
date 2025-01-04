@@ -526,7 +526,10 @@ public class Format {
 		// We expect a VLQ Count following the tag
 		long code=readVLQCount(blob,offset+1);
 		
-		if (tag == CVMTag.CORE_DEF) return Core.fromCode(code);
+		if (tag == CVMTag.CORE_DEF) {
+			ACell cc=Core.fromCode(code);
+			if (cc!=null) return cc;
+		}
 
 		if ((tag == CVMTag.OP_SPECIAL)&&(code<Special.NUM_SPECIALS)) {
 			Special<?> spec= Special.create((int)code);
@@ -639,7 +642,7 @@ public class Format {
 		} catch (Exception e) {
 			throw new BadFormatException("Unexpected Exception when decoding ("+tag+"): "+e.getMessage(), e);
 		}
-		throw new BadFormatException(ErrorMessages.badTagMessage(tag));
+		throw new BadFormatException(ErrorMessages.badTagMessage(tag,blob,offset));
 	}
 
 
@@ -922,7 +925,9 @@ public class Format {
 				ix+=Format.getVLQCountLength(encLength);
 				
 				Blob enc=data.slice(ix, ix+encLength);
-				if (enc==null) throw new BadFormatException("Incomplete encoding");
+				if (enc==null) {
+					throw new BadFormatException("Incomplete encoding");
+				}
 				Hash h=enc.getContentHash();
 				
 				// Check store for Ref - avoids duplicate objects in many cases
@@ -947,12 +952,13 @@ public class Format {
 	 * cell first, following cells in arbitrary order.
 	 * 
 	 * @param a Cell to Encode
-	 * @param everything If true, traverse the entire Cell tree
+	 * @param everything If true, attempt to traverse the entire Cell tree
 	 * @return Blob encoding
 	 */
 	public static Blob encodeMultiCell(ACell a, boolean everything) {
-		Blob topCellEncoding=Cells.encode(a);
-		if (a.getRefCount()==0) return topCellEncoding;
+		if (a==null) return Blob.NULL_ENCODING;
+		if (a.getRefCount()==0) return a.getEncoding();
+		
 
 		// Add any non-embedded child cells to stack
 		ArrayList<Ref<?>> cells=new ArrayList<Ref<?>>();
@@ -960,12 +966,19 @@ public class Format {
 		Cells.visitBranchRefs(a, addToStackFunc);
 		if (cells.isEmpty()) {
 			// single cell only
-			return topCellEncoding;
+			return a.getEncoding();
 		}
+		return encodeMultiCell(a,cells,everything);
+	}
 
+	private static Blob encodeMultiCell(ACell topCell, ArrayList<Ref<?>> branches, boolean everything) {
+		Blob topCellEncoding=Cells.encode(topCell);
+		Consumer<Ref<?>> addToStackFunc=r->{branches.add(r);};
+		
+		// Visit refs in stack to add to message, accumulating message size required
 		int[] ml=new int[] {topCellEncoding.size()}; // Array mutation trick for accumulator. Ugly but works....
 		HashSet<Ref<?>> refs=new HashSet<>();
-		Trees.visitStack(cells, cr->{
+		Trees.visitStack(branches, cr->{
 			if (!refs.contains(cr)) {
 				ACell c=cr.getValue();
 				int encLength=c.getEncodingLength();
@@ -974,7 +987,10 @@ public class Format {
 				int cellLength=lengthFieldSize+encLength;
 				
 				int newLength=ml[0]+cellLength;
-				if (newLength>CPoSConstants.MAX_MESSAGE_LENGTH) return;
+				if (newLength>CPoSConstants.MAX_MESSAGE_LENGTH) {
+					System.err.println("Exceeded max message length when encoding");
+					return;
+				}
 				ml[0]=newLength;
 				refs.add(cr);
 				if (everything) Cells.visitBranchRefs(c, addToStackFunc);
@@ -998,6 +1014,41 @@ public class Format {
 		if (ix!=messageLength) throw new IllegalArgumentException("Bad message length expected "+ml[0]+" but was: "+ix);
 		
 		return Blob.wrap(msg);
+	}
+	
+	/**
+	 * Encode a Vector of cells down to the encodings of each vector element
+	 * @param v
+	 * @return
+	 */
+	public static Blob encodeDataResult(Result result) {
+		AVector<?> v=RT.ensureVector(result.getValue());
+		if (v==null) throw new IllegalArgumentException("Data result must contain a vector value");
+		
+		ArrayList<Ref<?>> cells=new ArrayList<Ref<?>>();
+		
+		// Add the top level vector as a branch iff it is not embedded in the Result
+		if (!v.isEmbedded()) {
+			cells.add(v.getRef());
+		}
+		
+		v.visitAllChildren(vc->{
+			Ref<?> r=vc.getRef();
+			if (!r.isEmbedded()) {
+				// only add non-embedded children
+				cells.add(r);
+			};
+		}
+		);
+		v.visitElementRefs(r->{
+			if (!r.isEmbedded()) {
+				// only add non-embedded children
+				cells.add(r);
+			};
+		});
+		
+		// Note false to prevent traversing all extra branches
+		return encodeMultiCell(result,cells,false);
 	}
 	
 	
@@ -1104,6 +1155,8 @@ public class Format {
 		if (value>0) return 8-((Bits.leadingZeros(value)-1)/8);
 		return 8-((Bits.leadingOnes(value)-1)/8);
 	}
+
+
 
 
 
