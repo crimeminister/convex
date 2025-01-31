@@ -108,7 +108,7 @@ public class Peer {
 	 */
 	private final AVector<BlockResult> blockResults;
 
-	private Peer(AKeyPair kp, Belief belief, Order consensusOrder, long pos, State state, State genesis, long history, AVector<BlockResult> results,
+	private Peer(AKeyPair kp, Belief belief, Order consensusOrder, long statePos, State state, State genesis, long history, AVector<BlockResult> results,
 			long timeStamp) {
 		this.keyPair = kp;
 		this.peerKey = kp.getAccountKey();
@@ -118,14 +118,14 @@ public class Peer {
 		this.timestamp = timeStamp;
 		
 		this.consensusOrder=consensusOrder;
-		this.statePosition=pos;
+		this.statePosition=statePos;
 		
 		this.historyPosition=history;
 		this.blockResults = results;
 	}
 
 	/**
-	 * Constructs a Peer instance from persisted PEer Data
+	 * Constructs a Peer instance from persisted Peer Data
 	 * @param keyPair Key Pair for Peer
 	 * @param peerData Peer data map
 	 * @return New Peer instance
@@ -134,12 +134,16 @@ public class Peer {
 	public static Peer fromData(AKeyPair keyPair,AMap<Keyword, ACell> peerData)  {
 		Belief belief=(Belief) peerData.get(Keywords.BELIEF);
 		AVector<BlockResult> results=(AVector<BlockResult>) peerData.get(Keywords.RESULTS);
-		State state=(State) peerData.get(Keywords.STATE);
 		State genesis=(State) peerData.get(Keywords.GENESIS);
+		State state=(State) peerData.get(Keywords.STATE);
 		long pos=((CVMLong) peerData.get(Keywords.POSITION)).longValue();
 		Order co=((Order) peerData.get(Keywords.ORDER));
 		long hpos=((CVMLong) peerData.get(Keywords.HISTORY)).longValue();
 		long timestamp=((CVMLong) peerData.get(Keywords.TIMESTAMP)).longValue();
+		// This gets inferred from keypair, caller might want to check it is correct though!
+		// AccountKey key=AccountKey.parse(peerData.get(Keywords.KEY));
+		
+		
 		return new Peer(keyPair,belief,co,pos,state,genesis,hpos,results,timestamp);
 	}
 
@@ -155,6 +159,7 @@ public class Peer {
 			Keywords.RESULTS,blockResults,
 			Keywords.POSITION,CVMLong.create(statePosition),
 			Keywords.STATE,state,
+			Keywords.KEY,peerKey,
 			Keywords.GENESIS,genesis,
 			Keywords.TIMESTAMP,timestamp
 		);
@@ -228,16 +233,6 @@ public class Peer {
 		if (peerData==null) return null;
 		Peer peer=Peer.fromData(keyPair,peerData);
 		return peer;
-	}
-	
-	/**
-	 * Like {@link #getPeerData(AStore, ACell)} but uses a null root key.
-	 * @param store store from which to load Peer data
-	 * @return Peer data map
-	 * @throws IOException In case of IOException
-	 */
-	public static AMap<Keyword, ACell> getPeerData(AStore store) throws IOException {
-		return getPeerData(store, null);
 	}
 
 	/**

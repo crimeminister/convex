@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeoutException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,7 +52,7 @@ public class API {
 	 * <li>:state (optional, State) - Genesis state. Defaults to a fresh genesis state for the Peer if neither :source nor :state is specified
 	 * <li>:restore (optional, Boolean) - Boolean Flag to restore from existing store. Default to true
 	 * <li>:persist (optional, Boolean) - Boolean flag to determine if peer state should be persisted in store at server close. Default true.
-	 * <li>:url (optional, String) - public URL for server. If provided, peer will set its public on-chain address based on this, and the bind-address to 0.0.0.0.
+	 * <li>:url (optional, String) - public URL for server. If provided, peer will set its public on-chain address based on this.
 	 * <li>:auto-manage (optional Boolean) - set to true for peer to auto-manage own account. Defaults to true.
      * <li>:bind-address (optional String) - IP address of the ethernet device to bind too.
 	 * </ul>
@@ -176,16 +177,20 @@ public class API {
 
 		genesisServer.setHostname("localhost:"+genesisServer.getPort());
 
-		for (int i = 1; i < count; i++) {
-			Server server=serverList.get(i);
-
-			// Join each additional Server to the Peer #0
-			ConnectionManager cm=server.getConnectionManager();
-			cm.connectToPeer(genesisServer.getHostAddress());
-
-			// Join server #0 to this server
-			genesisServer.getConnectionManager().connectToPeer(server.getHostAddress());
-			server.setHostname("localhost:"+server.getPort());
+		try {
+			for (int i = 1; i < count; i++) {
+				Server server=serverList.get(i);
+	
+				// Join each additional Server to the Peer #0
+				ConnectionManager cm=server.getConnectionManager();
+				cm.connectToPeer(genesisServer.getHostAddress());
+	
+				// Join server #0 to this server
+				genesisServer.getConnectionManager().connectToPeer(server.getHostAddress());
+				server.setHostname("localhost:"+server.getPort());
+			}
+		} catch (IOException|TimeoutException e) {
+			throw new LaunchException("Error setting up peer connections",e);
 		}
 
 		return serverList;
@@ -194,10 +199,10 @@ public class API {
 	/**
 	 * Gets the list of peers registered in the given Etch Store
 	 * @param store Store from which to read peers
-	 * @return null if peer list not present
+	 * @return A new ArrayList of keys, or null if peer list not present
 	 * @throws IOException in case of IO error reading peers from store
 	 */
-	public static List<AccountKey> listPeers(AStore store) throws IOException {
+	public static ArrayList<AccountKey> listPeers(AStore store) throws IOException {
 		AMap<ACell,ACell> data=store.getRootData();
 		ArrayList<AccountKey> results=new ArrayList<>();
 		if (data==null) return results;
