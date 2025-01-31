@@ -1,0 +1,52 @@
+`convex.lab.distributor
+
+;; Import the convex.trust library, so we can use CAD22 trust monitors
+(import convex.trust :as trust)
+
+;; Allocator, has ability to allocate coins for distribution
+(def allocator *caller*)
+
+;; Distributor, can distribute from allocated coins only (small bucket)
+(def distributor *caller*)
+
+;; The amount of coins available for distribution currently
+(declare available-coins)
+(def available-coins 0)
+
+;; Set the amount of available coins. Only a trusted allocator can do this
+(defn ^:callable set-available [amount]
+  (if (not (trust/trusted? allocator *caller* :set-available amount))
+	(fail :TRUST "Not authorised as allocator"))
+  
+  (if (< amount 0) 
+	(fail :ARGUMENT "Negative amount!"))
+  
+  (set! available-coins (int amount)))
+
+;; Distribute coins. Only a trusted distributor can do this
+(defn ^:callable distribute [receiver amount]
+  (if (not (int? amount))
+	(fail :ARGUMENT "amount must be an integer"))
+  
+  (if (not (trust/trusted? distributor *caller* :distribute amount))
+	(fail :TRUST "Not authorised to distribute")) 
+  
+  (if (> amount available-coins)
+    (fail :FUNDS "Insufficient available coins"))
+  
+  ;; Every check passed, so:
+  ;; 1. reduce available coins (Effect)
+  ;; 2. Make an external transfer (interaction)
+  (do 
+    (set! available-coins (- available-coins amount))
+    (transfer receiver amount)))
+
+(defn ^:callable receive-coin [_ _ _]
+  (accept *offer*))
+
+(defn ^:callable withdraw [amount]
+  (if (not (trust/trusted? allocator *caller* :withdraw amount))
+    (fail :TRUST "Not authorised to withdraw"))
+  
+  ;; Transfer the withdrawn amount back to the caller
+  (transfer *caller* amount))

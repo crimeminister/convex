@@ -11,6 +11,7 @@ module convex.core {
 	exports convex.core.cvm.transactions;
 	exports convex.core.util;
 	exports convex.core.exceptions;
+	exports convex.core.message;
 	exports convex.core.data.prim;
 	exports convex.core.text;
 	exports convex.core.lang.reader;
@@ -27,4 +28,5 @@ module convex.core {
 	requires org.bouncycastle.util;
 	requires org.slf4j;
 	requires java.base;
+	requires java.desktop;
 }

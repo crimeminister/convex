@@ -1,8 +1,10 @@
 package convex.java;
 
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeoutException;
 
 import org.apache.hc.client5.http.async.methods.SimpleHttpRequest;
 import org.apache.hc.client5.http.async.methods.SimpleHttpResponse;
@@ -30,9 +32,9 @@ import convex.core.exceptions.ParseException;
 import convex.core.exceptions.TODOException;
 import convex.core.lang.RT;
 import convex.core.lang.Reader;
+import convex.core.message.Message;
 import convex.core.store.AStore;
 import convex.core.util.Utils;
-import convex.net.Message;
 
 public class ConvexHTTP extends convex.api.Convex {
 	
@@ -150,7 +152,7 @@ public class ConvexHTTP extends convex.api.Convex {
 	}
 	
 	@Override
-	public CompletableFuture<Result> message(Blob message) {
+	public CompletableFuture<Result> messageRaw(Blob message) {
 		throw new TODOException();
 	}
 	
@@ -180,6 +182,11 @@ public class ConvexHTTP extends convex.api.Convex {
 			}
 		}
 		return new InetSocketAddress(uri.getHost(),port);
+	}
+
+	@Override
+	public void reconnect() throws IOException, TimeoutException, InterruptedException {
+		// Nothing to do?	
 	}
 
 }

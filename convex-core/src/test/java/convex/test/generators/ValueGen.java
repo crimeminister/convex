@@ -1,23 +1,21 @@
 package convex.test.generators;
 
 import com.pholser.junit.quickcheck.generator.GenerationStatus;
-import com.pholser.junit.quickcheck.generator.Generator;
 import com.pholser.junit.quickcheck.random.SourceOfRandomness;
 
-import convex.core.cvm.Syntax;
 import convex.core.data.ACell;
 
 /**
  * Generator for arbitrary CVM values
  */
-public class ValueGen extends Generator<ACell> {
+public class ValueGen extends AGenerator<ACell> {
 	public ValueGen() {
 		super(ACell.class);
 	}
 
 	@Override
 	public ACell generate(SourceOfRandomness r, GenerationStatus status) {
-		int type = r.nextInt(15);
+		int type = r.nextInt(20);
 		switch (type) {
 		case 0:
 			return null;
@@ -48,10 +46,16 @@ public class ValueGen extends Generator<ACell> {
 		case 13:
 			return Gen.RECORD.generate(r, status);
 		case 14:
-			return Syntax.create(generate(r, status));
+			return Gen.SYNTAX.generate(r, status);
+		case 15:
+			return Gen.EXTENSION_VALUE.generate(r, status);
+		case 16:
+			return Gen.CHAR.generate(r, status);
+		case 17:
+			return Gen.CODED_VALUE.generate(r, status);
 
 		default:
-			throw new Error("Unexpected type: " + type);
+			return Gen.LONG.generate(r, status);
 		}
 	}
 }

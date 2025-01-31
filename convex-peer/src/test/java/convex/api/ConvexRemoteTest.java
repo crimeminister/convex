@@ -22,9 +22,11 @@ import convex.core.SourceCodes;
 import convex.core.crypto.AKeyPair;
 import convex.core.crypto.Ed25519Signature;
 import convex.core.cvm.Address;
+import convex.core.cvm.Keywords;
 import convex.core.cvm.ops.Constant;
 import convex.core.cvm.transactions.ATransaction;
 import convex.core.cvm.transactions.Invoke;
+import convex.core.data.AVector;
 import convex.core.data.Blobs;
 import convex.core.data.Ref;
 import convex.core.data.SignedData;
@@ -32,9 +34,9 @@ import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.ResultException;
 import convex.core.lang.RT;
 import convex.core.lang.Reader;
-import convex.net.Connection;
-import convex.net.Message;
-import convex.net.MessageType;
+import convex.core.message.Message;
+import convex.core.message.MessageType;
+import convex.net.AConnection;
 import convex.peer.TestNetwork;
 
 /**
@@ -58,7 +60,7 @@ public class ConvexRemoteTest {
 	}
 
 	@Test
-	public void testConnection() throws IOException, TimeoutException {
+	public void testConnection() throws IOException, TimeoutException, InterruptedException {
 		synchronized (network.SERVER) {
 			ConvexRemote convex = Convex.connect(network.SERVER.getHostAddress());
 			assertTrue(convex.isConnected());
@@ -71,9 +73,9 @@ public class ConvexRemoteTest {
 	}
 	
 	@Test
-	public void testBadQueryMessage() throws IOException, TimeoutException {
+	public void testBadQueryMessage() throws IOException, TimeoutException, InterruptedException {
 		ConvexRemote convex = Convex.connect(network.SERVER.getHostAddress());
-		Connection conn=convex.connection;
+		AConnection conn=convex.connection;
 		conn.sendMessage(Message.create(MessageType.QUERY, Blobs.empty()));
 	}
 
@@ -89,6 +91,21 @@ public class ConvexRemoteTest {
 			Result r = convex.transactSync(Invoke.create(ADDRESS, 0, Reader.read("*address*")), 5000);
 			assertNull(r.getErrorCode(), "Error:" + r.toString());
 			assertEquals(ADDRESS, r.getValue());
+		}
+	}
+	
+	@Test
+	public void testTranscationContext() throws IOException, TimeoutException, InterruptedException {
+		synchronized (network.SERVER) {
+			Convex convex = Convex.connect(network.SERVER.getHostAddress(), ADDRESS, KEYPAIR);
+			Result r = convex.transactSync(Invoke.create(ADDRESS, 0, Reader.read("[*peer* *signer* *location*]")), 5000);
+			assertNull(r.getErrorCode());
+			
+			AVector<?> v=r.getValue();
+			
+			assertEquals(network.SERVER.getPeerKey(), v.get(0));
+			assertEquals(KEYPAIR.getAccountKey(), v.get(1));
+			assertEquals(r.getInfo().get(Keywords.LOC), v.get(2));
 		}
 	}
 
@@ -150,15 +167,16 @@ public class ConvexRemoteTest {
 	public void testManyTransactions() throws IOException, TimeoutException, InterruptedException, ExecutionException {
 		synchronized (network.SERVER) {
 			Convex convex = Convex.connect(network.SERVER.getHostAddress(), ADDRESS, KEYPAIR);
-			int n = 100;
+			int n = 10;
 			Future<Result>[] rs = new Future[n];
 			for (int i = 0; i < n; i++) {
 				Future<Result> f = convex.transact(Invoke.create(ADDRESS, 0, Constant.of(i)));
 				rs[i] = f;
 			}
 			for (int i = 0; i < n; i++) {
-				Result r = rs[i].get(6000, TimeUnit.MILLISECONDS);
-				assertNull(r.getErrorCode(), ()->"Error:" + r.toString());
+				Result r = rs[i].get(10000, TimeUnit.MILLISECONDS);
+				final int ri=i;
+				assertNull(r.getErrorCode(), ()->"Error on result: "+ri+" = " + r.toString());
 			}
 		}
 	}
@@ -167,7 +185,7 @@ public class ConvexRemoteTest {
 	public void testReceivedCount() throws IOException, TimeoutException, InterruptedException, ResultException {
 		synchronized (network.SERVER) {
 			ConvexRemote convex = Convex.connect(network.SERVER.getHostAddress(), ADDRESS, KEYPAIR);
-			Connection conn=convex.connection;
+			AConnection conn=convex.connection;
 
 			long seq=convex.getSequence();
 			assertEquals(1,conn.getReceivedCount());

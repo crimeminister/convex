@@ -9,15 +9,19 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import convex.api.Convex;
 import convex.core.crypto.AKeyPair;
 import convex.core.crypto.wallet.AWalletEntry;
-import convex.core.cvm.ops.Special;
-import convex.core.data.AccountKey;
 import convex.core.cvm.Address;
 import convex.core.cvm.Symbols;
+import convex.core.cvm.ops.Special;
+import convex.core.data.AccountKey;
 import convex.core.exceptions.ResultException;
 import convex.gui.components.BalanceLabel;
+import convex.gui.components.ConnectPanel;
 import convex.gui.components.DropdownMenu;
 import convex.gui.keys.KeyRingPanel;
 import convex.gui.keys.UnlockWalletDialog;
@@ -29,6 +33,9 @@ import net.miginfocom.swing.MigLayout;
  */
 @SuppressWarnings("serial")
 public class AccountChooserPanel extends JPanel {
+	
+	private static final Logger log = LoggerFactory.getLogger(AccountChooserPanel.class.getName());
+
 
 	private JComboBox<String> modeCombo;
 	public final AddressCombo addressCombo;
@@ -37,6 +44,9 @@ public class AccountChooserPanel extends JPanel {
 	private BalanceLabel balanceLabel;
 	
 	protected Convex convex;
+	
+    AWalletEntry previousSelection = null;
+
 
 	public AccountChooserPanel(Convex convex) {
 		this.convex=convex;
@@ -63,13 +73,11 @@ public class AccountChooserPanel extends JPanel {
 			keyCombo=KeyPairCombo.forConvex(convex);
 			keyCombo.setToolTipText("Select a key pair from your Keyring. This will be used to sign transactions.");
 			keyCombo.addItemListener(e->{
-				if (e.getStateChange()==ItemEvent.DESELECTED) {
-					// key pair was deselected and/or set to null
-					setKeyPair(null);
-					return;
-				};
 				AWalletEntry we=(AWalletEntry)e.getItem();
-				if (we!=keyCombo.getWalletEntry()) {
+				if (e.getStateChange()==ItemEvent.DESELECTED) {
+					previousSelection=we;
+					return;
+				} else {
 					setKeyPair(we);
 				}
 			});
@@ -119,6 +127,27 @@ public class AccountChooserPanel extends JPanel {
 				convex.clearSequence();
 			});
 			popupMenu.add(setSeqButton);
+			
+			JMenuItem reconnectButton = new JMenuItem("Reconnect",Toolkit.menuIcon(0xe157));
+			reconnectButton.addActionListener(e -> {
+				try {
+					convex.reconnect();
+				} catch (Exception ex) {
+					log.info("Reconnect failed",ex);
+				}
+			});
+			popupMenu.add(reconnectButton);
+			
+			JMenuItem connInfoButton = new JMenuItem("Connection Info...",Toolkit.menuIcon(0xe157));
+			connInfoButton.addActionListener(e -> {
+				try {
+					ConnectPanel.showConnectionInfo(this, convex);
+				} catch (Exception ex) {
+					log.info("Reconnect failed",ex);
+				}
+			});
+			popupMenu.add(connInfoButton);
+
 
 
 			DropdownMenu dm = new DropdownMenu(popupMenu,Toolkit.SMALL_ICON_SIZE);
@@ -169,6 +198,13 @@ public class AccountChooserPanel extends JPanel {
 	}
 	
 	public void setKeyPair(AWalletEntry we) {
+		// In case we are re-entering
+		if (we!=keyCombo.getWalletEntry()) {
+			keyCombo.setSelectedItem(we);
+			return;
+		}
+		
+		System.err.println("Setting wallet entry:" +we);
 		if (we==null) {
 			convex.setKeyPair(null);
 		} else {
@@ -176,18 +212,16 @@ public class AccountChooserPanel extends JPanel {
 			if (we.isLocked()) {
 				boolean unlock=UnlockWalletDialog.offerUnlock(this, we);
 				if (!unlock) {
-					convex.setKeyPair(null);
-					keyCombo.setSelectedItem(null);
+					keyCombo.setSelectedItem(previousSelection);
 					return;
+				} else {
+					kp=we.getKeyPair();
+					we.lock();					
 				}
-
-				kp=we.getKeyPair();
-				we.lock();
 			} else {
 				kp=we.getKeyPair();
 			}
 			convex.setKeyPair(kp);
-			keyCombo.setSelectedItem(kp);
 		}
 	}
 	

@@ -1,10 +1,8 @@
 package convex.gui.components;
 
 import java.awt.Color;
-import java.io.IOException;
-import java.net.ConnectException;
+import java.awt.Component;
 import java.net.InetSocketAddress;
-import java.util.concurrent.TimeoutException;
 
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -15,9 +13,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import convex.api.Convex;
+import convex.api.ConvexRemote;
 import convex.core.crypto.wallet.AWalletEntry;
 import convex.core.cvm.Address;
 import convex.core.init.Init;
+import convex.core.lang.RT;
 import convex.gui.components.account.AddressCombo;
 import convex.gui.keys.KeyRingPanel;
 import convex.gui.keys.UnlockWalletDialog;
@@ -84,7 +84,7 @@ public class ConnectPanel extends JPanel {
 	    		String target=pan.hostField.getText();
 	    		InetSocketAddress sa=IPUtils.toInetSocketAddress(target);
 	    		log.info("Attempting connect to: "+sa);
-	    		Convex convex=Convex.connect(sa);
+	    		Convex convex=ConvexRemote.connectNetty(sa);
 	    		convex.setAddress(addr);
 	    		
 	    		HostCombo.registerGoodConnection(target);
@@ -103,16 +103,34 @@ public class ConnectPanel extends JPanel {
 	    			}
 	    		}
 	    		return convex;
-	    	} catch (ConnectException e) {
-				log.info("Failed to connect");
+	    	}  catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+				e.printStackTrace();
+			} catch (Exception e) {
+				log.info("Failed to connect",e);
 	    		Toast.display(parent, e.getMessage(), Color.RED);
-	    	} catch (TimeoutException | IOException e) {
-	    		Toast.display(parent, e.getMessage(), Color.RED);
-	    		e.printStackTrace();
-	    	}
+	    	} 
 	    } else {
 	    	log.info("Connect cancelled by user");
 	    }
 		return null;
+	}
+
+	public static void showConnectionInfo(Component parent,Convex convex) {
+		StringBuilder sb=new StringBuilder();
+		if (convex instanceof ConvexRemote) {
+			sb.append("Remote host: " + convex.getHostAddress() + "\n");
+		}
+		try {
+			sb.append("Sequence:    " + convex.getSequence() + "\n");
+		} catch (Exception e1) {
+			log.info("Failed to get sequence number");
+		}
+		sb.append("Account:     " + RT.print(convex.getAddress()) + "\n");
+		sb.append("Public Key:  " + RT.toString(convex.getAccountKey()) + "\n");
+		sb.append("Connected:   " + convex.isConnected()+"\n");
+
+		String infoString = sb.toString();
+		JOptionPane.showMessageDialog(parent, infoString);
 	}
 }

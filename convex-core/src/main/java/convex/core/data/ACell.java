@@ -35,7 +35,7 @@ public abstract class ACell extends AObject implements IWriteable, IValidated {
 	}
 	
 	/**
-	 * Validates the local structure and invariants of this cell. Called by validate() super implementation.
+	 * Validates the local structure and invariants of this cell.
 	 * 
 	 * Should validate directly contained data, but should not validate all other structure of this cell. 
 	 * 
@@ -43,7 +43,19 @@ public abstract class ACell extends AObject implements IWriteable, IValidated {
 	 * 
 	 * @throws InvalidDataException  If the Cell is invalid
 	 */
-	public abstract void validateCell() throws InvalidDataException;
+	protected abstract void validateCell() throws InvalidDataException;
+	
+	/**
+	 * Validates the structure and invariants of this cell.
+	 * 
+	 * May visit child refs. Should complete in O(1) time.
+	 * 
+	 * @throws InvalidDataException  If the Cell is invalid
+	 */
+	public void validateStructure() throws InvalidDataException {
+		// nothing by default
+	}
+
 	
 	/**
 	 * Hash of data Encoding of this cell, equivalent to the Value ID. Calling this method
@@ -195,7 +207,11 @@ public abstract class ACell extends AObject implements IWriteable, IValidated {
 	 */
 	@Override
 	public String toString() {
-		return print().toString();
+		try {
+			return print().toString();
+		} catch (Exception e) {
+			return Utils.getClassName(e)+ " Print failed: "+e.getMessage();
+		}
 	}
 	
 	/**
@@ -387,7 +403,7 @@ public abstract class ACell extends AObject implements IWriteable, IValidated {
 	}
 	
 	/**
-	 * Gets the number of Branches referenced from this Cell. This number is
+	 * Gets the number of non-embedded Branches referenced from this Cell. This number is
 	 * final / immutable for any given instance and is defined by the Cell encoding rules.
 	 * 
 	 * @return The number of Branches from this Cell
@@ -410,8 +426,7 @@ public abstract class ACell extends AObject implements IWriteable, IValidated {
 	}
 	
 	/**
-	 * Gets the number of Branches referenced from this Cell. This number is
-	 * final / immutable for any given instance and is defined by the Cell encoding rules.
+	 * Gets a non-embedded Branch referenced from this Cell. 
 	 * 
 	 * @return The Ref for the branch, or null if an invalid index
 	 */

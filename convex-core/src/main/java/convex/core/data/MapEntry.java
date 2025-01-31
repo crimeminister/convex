@@ -284,5 +284,17 @@ public class MapEntry<K extends ACell, V extends ACell> extends AMapEntry<K, V> 
 	public AVector<ACell> toVector() {
 		return new VectorLeaf<ACell>(new Ref[] { keyRef, valueRef });
 	}
+	
+	@Override
+	protected void visitAllChildren(Consumer<AVector<ACell>> visitor) {
+		// nothing to visit
+	}
+
+	@Override
+	public AVector<ACell> dissocAt(long i) {
+		if (i==0) return Vectors.create(get(1));
+		if (i==1) return Vectors.create(get(0));
+		return null;
+	}
 
 }

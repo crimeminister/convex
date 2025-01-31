@@ -20,6 +20,7 @@ import convex.core.data.Keyword;
 import convex.core.data.SignedData;
 import convex.core.data.Vectors;
 import convex.core.exceptions.BadFormatException;
+import convex.core.exceptions.InvalidDataException;
 import convex.core.lang.RT;
 
 /**
@@ -39,6 +40,8 @@ public class Belief extends ARecordGeneric {
 
 	private static final RecordFormat BELIEF_FORMAT = RecordFormat.of(Keywords.ORDERS);
 	
+	private static final long IX_ORDERS=BELIEF_FORMAT.indexFor(Keywords.ORDERS);
+	
 	// Constants
 	private static final Index<AccountKey, SignedData<Order>> EMPTY_ORDERS = Index.none();
 
@@ -52,11 +55,11 @@ public class Belief extends ARecordGeneric {
 
 	// private final long timeStamp;
 
-	Belief(Index<AccountKey,SignedData<Order>> orders) {
+	private Belief(Index<AccountKey,SignedData<Order>> orders) {
 		super(CVMTag.BELIEF,BELIEF_FORMAT,Vectors.create(orders));
 	}
 
-	public Belief(AVector<ACell> newValues) {
+	private Belief(AVector<ACell> newValues) {
 		super(CVMTag.BELIEF,BELIEF_FORMAT,newValues);
 	}
 
@@ -176,9 +179,8 @@ public class Belief extends ARecordGeneric {
 	
 	@Override 
 	public boolean equals(ACell a) {
-		if (!(a instanceof Belief)) return false;
-		Belief as=(Belief)a;
-		return equals(as);
+		if (a instanceof Belief) return equals((Belief)a);
+		return super.equals(a);
 	}
 	
 	/**
@@ -230,6 +232,14 @@ public class Belief extends ARecordGeneric {
 		}
 		return result;
 	}
+	
+	@Override
+	public void validateStructure() throws InvalidDataException {
+		super.validateStructure();
+		if (!(values.get(IX_ORDERS) instanceof Index)) {
+			throw new InvalidDataException("Orders should be an Index",this);
+		}
+	}
 
 	/**
 	 * Propose a new Block at the end of the current Order
@@ -237,20 +247,25 @@ public class Belief extends ARecordGeneric {
 	 * @param signedBlock Signed Block of transactions
 	 * @return Updated Belief with new Order
 	 */
-	public Belief proposeBlock(AKeyPair kp, SignedData<Block> signedBlock) {
+	@SuppressWarnings("unchecked")
+	public Belief proposeBlock(AKeyPair kp, SignedData<Block>... signedBlocks) {
 		AccountKey peerKey=kp.getAccountKey();
 		Index<AccountKey, SignedData<Order>> orders = getOrders();
 
 		SignedData<Order> mySO=orders.get(peerKey);
 		Order myOrder;
 		if (mySO==null) {
-			myOrder=Order.create();
+			throw new IllegalStateException("Trying to propose block without a current ordering for peer "+peerKey);
 		} else {
 			myOrder=mySO.getValue();
 		}
 
 		// Create new order with signed Block
-		Order newOrder = myOrder.append(signedBlock);
+		Order newOrder = myOrder;
+		int n=signedBlocks.length;
+		for (int i=0; i<n; i++) {
+			newOrder=newOrder.append(signedBlocks[i]);
+		}
 		SignedData<Order> newSignedOrder = kp.signData(newOrder);
 		
 		Index<AccountKey, SignedData<Order>> newOrders = orders.assoc(peerKey, newSignedOrder);
@@ -258,13 +273,10 @@ public class Belief extends ARecordGeneric {
 		return newBelief;
 	}
 
-	@SuppressWarnings("unchecked")
 	@Override
 	protected ARecordGeneric withValues(AVector<ACell> newValues) {
 		if (values==newValues) return this;
-		return new Belief((Index<AccountKey, SignedData<Order>>) newValues.get(0));
+		return new Belief(newValues);
 	}
-
-
 
 }

@@ -368,6 +368,12 @@ public abstract class AArrayBlob extends ABlob {
 					"End out of range: " + (offset + count) + " with array size=" + store.length, this);
 		}
 	}
+	
+	@Override
+	public void validateStructure() throws InvalidDataException {
+		super.validateStructure();
+		// nothing to do by default
+	}
 
 	@Override
 	public long longValue() {

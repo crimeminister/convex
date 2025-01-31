@@ -131,6 +131,7 @@ public class BeliefMergeTest {
 			ps=ps.mergeBeliefs(sources); // belief merge step
 			ps=ps.updateState(); // state update
 			result[i] = ps; 
+			Cells.validate(ps.getPeerOrder());
 		}
 		result=updateTimestamps(result);
 		return result;
@@ -387,7 +388,7 @@ public class BeliefMergeTest {
 		boolean ANALYSIS = false;
 		int GOSSIP_NUM = 1;
 		final int TX_ROUNDS = 180;
-		final int SETTLE_ROUNDS = 20;
+		final int SETTLE_ROUNDS = 25;
 		final int NUM_INITIAL_TRANS = 3;
 
 		Peer[] bs0 = initialBeliefs();
@@ -452,6 +453,8 @@ public class BeliefMergeTest {
 		AVector<AccountStatus> accounts = finalState.getAccounts();
 		if (ANALYSIS) printAccounts(accounts);
 		// final state checks
+		
+		// assertEquals(Hash.fromHex("95915ffa2d983b763cb504a92cbc5d31622b5f01d4943ecda91d1efd1d5f0214"),finalState.getHash());
 		
 		int expectedTxCount=NUM_PEERS * (NUM_INITIAL_TRANS+TX_ROUNDS);
 		assertEquals(expectedTxCount, bs4[PROPOSER].getOrder(RKEY).getConsensusPoint()); 

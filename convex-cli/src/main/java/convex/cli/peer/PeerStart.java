@@ -60,8 +60,13 @@ public class PeerStart extends APeerCommand {
 	private int port = 0;
 
 	@Option(names = { "--url" }, 
-			description = "URL for the peer to publish. If not provided, the peer will have no public URL.")
+			description = "URL for the peer to set for other peers to use.")
 	private String url;
+	
+	@Option(names = { "--base-url" }, 
+			description = "Base URL for REST API / web access.")
+	private String baseURL;
+
 	
 	@Option(names = { "--norest" }, description = "Disable REST srever.")
 	private boolean norest;
@@ -121,6 +126,7 @@ public class PeerStart extends APeerCommand {
 
 	@Override
 	public void execute() throws InterruptedException {
+		Server server=null;
 		
 		storeMixin.ensureKeyStore();
 		try (EtchStore store = etchMixin.getEtchStore()) {
@@ -160,28 +166,36 @@ public class PeerStart extends APeerCommand {
 				HashMap<Keyword,Object> config=new HashMap<>();
 				config.put(Keywords.KEYPAIR, peerKey);
 				config.put(Keywords.STORE, store);
+				config.put(Keywords.SOURCE, peerMixin.getSpecifiedSource());
+				config.put(Keywords.URL, url);
+				config.put(Keywords.PORT, port);
+				config.put(Keywords.BASE_URL, baseURL);
 				if (genesisKey!=null) {
 					AccountKey gpk=genesisKey.getAccountKey();
 					State state=Init.createState(gpk,gpk,List.of(gpk));
-					informWarning("Greated genesis State: "+state.getHash());
+					informWarning("Created genesis State: "+state.getHash());
 					config.put(Keywords.STATE, state);
 				}
-				Server server=API.launchPeer(config);
+				server=API.launchPeer(config);
 				
 				if (!norest) {
-					restServer=RESTServer.create(server); 
+					restServer=RESTServer.create(server);
 					restServer.start(apiport);
 				}
 				
 				informSuccess("Peer started");
+				cli().notifyStartup();
 				server.waitForShutdown();
+				inform("Peer shutdown completed");
 			} catch (ConfigException t) {
 				throw new CLIError(ExitCodes.CONFIG,"Error in peer configuration: "+t.getMessage(),t);
 			} catch (LaunchException e) {
 				throw new CLIError("Error launching peer: "+e.getMessage(),e);
 			} finally {
 				if (restServer!=null) restServer.close();
-				inform("Peer shutdown completed");
+				if (server!=null) {
+					server.close();
+				}
 			}
 		}
 	}

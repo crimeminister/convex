@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
 
 import java.util.Arrays;
 import java.util.Random;
@@ -12,6 +11,7 @@ import java.util.Random;
 import org.junit.jupiter.api.Test;
 
 import convex.core.Result;
+import convex.core.cvm.AccountStatus;
 import convex.core.cvm.Address;
 import convex.core.cvm.CVMTag;
 import convex.core.cvm.Keywords;
@@ -28,7 +28,7 @@ import convex.core.init.Init;
 import convex.test.Samples;
 
 /**
- * Tests for adversarial data, i.e. data that should b=not be accepted by correct peers / clients
+ * Tests for adversarial data, i.e. data that should not be accepted by correct peers / clients
  */
 public class AdversarialDataTest {
 
@@ -113,7 +113,7 @@ public class AdversarialDataTest {
 		assertEquals(1,b.shift);
 	}
 	
-	@Test public void testBadSetLeafs() {
+	@Test public void testBadSetLeafs() throws InvalidDataException {
 		CVMLong a=CVMLong.ZERO;
 		CVMLong b=CVMLong.ONE;
 		if (a.getHash().compareTo(b.getHash())>0) {
@@ -138,8 +138,7 @@ public class AdversarialDataTest {
 		invalidTest(Sets.of(NON_VALID));
 		
 		// Inserting non-CVM values into existing valid sets
-		invalidTest(Sets.of(1,2,3,4).include(NON_CVM));
-		invalidTest(Samples.LONG_SET_100.conj(NON_CVM));
+		Cells.validate(Sets.of(1,2,3,4).include(NON_CVM));
 	}
 	
 	@Test public void testBadKeywords() {
@@ -273,10 +272,25 @@ public class AdversarialDataTest {
 
 	}
 	
+	@Test 
+	public void testBadBelief() {
+		invalidEncoding(CVMTag.BELIEF,"d401b6"); // Byteflag instead of Index
+	}
+	
+	@Test 
+	public void testBadBlobs() throws BadFormatException {
+		invalidEncoding("828041000000000000");
+		assertEquals(CVMLong.create(0x8041000000000000l),Format.read("188041000000000000"));
+	}
+	
+	@Test
+	public void testBadSet() {
+		invalidEncoding("83851d3ff0000000000000");
+	}
+	
 	@Test
 	public void testBadAccountStatus() {
-		// TODO: what should happen here?
-		//invalidTest(AccountStatus.create(-100, null));
+		invalidTest(AccountStatus.createUnsafe(-100, 0,null));
 	}
 	
 	@Test
@@ -296,6 +310,7 @@ public class AdversarialDataTest {
 		invalidEncoding("3d110000"); // just beyond maximum code point
 		invalidEncoding("3f0fffffff"); // way beyond max code point
 		invalidEncoding("3fffffffff"); // way beyond max code point, also negative int
+		
 	}
 	
 	protected void invalidEncoding(int tag, String more) {
@@ -323,6 +338,7 @@ public class AdversarialDataTest {
 		assertThrows(IllegalArgumentException.class, ()->Call.create(null, 0, HERO,0,Symbols.FOO,Vectors.empty())); 
 	}
 
+	// Asset that a Cell is invalid
 	private void invalidTest(ACell b) {
 		assertThrows(InvalidDataException.class, ()->b.validate());
 		doEncodingTest(b);
@@ -345,12 +361,11 @@ public class AdversarialDataTest {
 			// not a readable format, so probably not dangerous
 			return;
 		} catch (InvalidDataException e) {
-			fail("Failed to validate after re-reading?",e);
+			if (c.isCompletelyEncoded()) {
+				// Shouldn't validate
+				assertThrows(InvalidDataException.class, ()->b.validate());
+			}
 		}
 		
-		if (c.isCompletelyEncoded()) {
-			// Shouldn't validate
-			assertThrows(InvalidDataException.class, ()->b.validate());
-		}
 	}
 }

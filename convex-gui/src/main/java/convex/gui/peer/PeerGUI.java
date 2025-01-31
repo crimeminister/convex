@@ -21,16 +21,17 @@ import org.slf4j.LoggerFactory;
 
 import convex.api.Convex;
 import convex.api.ConvexLocal;
-import convex.core.cpos.Order;
-import convex.core.cvm.Peer;
 import convex.core.Result;
-import convex.core.cvm.State;
+import convex.core.cpos.Order;
 import convex.core.crypto.AKeyPair;
+import convex.core.crypto.wallet.AWalletEntry;
 import convex.core.crypto.wallet.HotWalletEntry;
-import convex.core.data.AccountKey;
 import convex.core.cvm.Address;
-import convex.core.data.Keyword;
 import convex.core.cvm.Keywords;
+import convex.core.cvm.Peer;
+import convex.core.cvm.State;
+import convex.core.data.AccountKey;
+import convex.core.data.Keyword;
 import convex.core.init.Init;
 import convex.core.store.AStore;
 import convex.core.store.Stores;
@@ -56,8 +57,6 @@ public class PeerGUI extends AbstractGUI {
 
 	protected JFrame frame;
 	
-	public List<AKeyPair> KEYPAIRS=new ArrayList<>();
-	private List<AccountKey> PEERKEYS;
 			
 	public static final int DEFAULT_NUM_PEERS=3;
 	
@@ -65,6 +64,9 @@ public class PeerGUI extends AbstractGUI {
 	public State genesisState;
 	private StateModel<State> latestState = StateModel.create(genesisState);
 	public StateModel<Long> tickState = StateModel.create(0L);
+	
+	protected DefaultListModel<ConvexLocal> peerList = new DefaultListModel<ConvexLocal>();
+
 
 	/**
 	 * Launch the application.
@@ -75,17 +77,89 @@ public class PeerGUI extends AbstractGUI {
 		// call to set up Look and Feel
 		Toolkit.init();
 		
-		PeerGUI gui=launchPeerGUI(DEFAULT_NUM_PEERS, AKeyPair.generate(),true);
+		PeerGUI gui=launchPeerGUI(DEFAULT_NUM_PEERS, AKeyPair.generate());
 		gui.waitForClose();
 		System.exit(0);
 	}
 
-	public static PeerGUI launchPeerGUI(int peerNum, AKeyPair genesis, boolean topLevel) throws InterruptedException, PeerException {
-		PeerGUI manager = new PeerGUI(peerNum,genesis);
+	public static PeerGUI launchPeerGUI(int peerNum, AKeyPair genesisKey) throws InterruptedException, PeerException {
+		PeerGUI manager = create(peerNum,genesisKey);
 		manager.run();
 		return manager;
 	}
+	
+	public static PeerGUI launchPeerGUI(InetSocketAddress sa, AWalletEntry we) throws InterruptedException, PeerException {
+		DefaultListModel<ConvexLocal> peerList=new DefaultListModel<>();
+		
+		HashMap<Keyword, Object> config=new HashMap<>();
+		config.put(Keywords.KEYPAIR,we.getKeyPair());
+		config.put(Keywords.SOURCE,sa);
+		Server server=API.launchPeer(config);
+		ConvexLocal convex=ConvexLocal.connect(server);
+		peerList.addElement(convex);
+		PeerGUI manager =  new PeerGUI(peerList);
+		manager.run();
+		return manager;		
+	}
+	
+	public static PeerGUI launchPeerGUI(Server server) throws InterruptedException, PeerException {
+		DefaultListModel<ConvexLocal> peerList=new DefaultListModel<>();
 
+		server.launch();
+		ConvexLocal convex=ConvexLocal.connect(server);
+		peerList.addElement(convex);
+		PeerGUI manager =  new PeerGUI(peerList);
+		manager.run();
+		return manager;		
+	}
+
+	public static PeerGUI create(int peerCount, AKeyPair genesisKey) throws PeerException {
+		DefaultListModel<ConvexLocal> peerList=launchAllPeers(peerCount,genesisKey);
+		return new PeerGUI(peerList);
+	}
+	
+
+	private static DefaultListModel<ConvexLocal> launchAllPeers(int peerCount, AKeyPair genesisKey) throws PeerException {
+		List<AKeyPair> KEYPAIRS=new ArrayList<>();
+		List<AccountKey> PEERKEYS;
+		for (int i=0; i<peerCount; i++) {
+			KEYPAIRS.add(AKeyPair.generate());
+		}
+
+        HotWalletEntry gwe = HotWalletEntry.create(genesisKey,"Genesis key pair (temp)");
+		KeyRingPanel.addWalletEntry(gwe);
+
+		AccountKey genPK=genesisKey.getAccountKey();
+		
+		PEERKEYS=KEYPAIRS.stream().map(kp->kp.getAccountKey()).collect(Collectors.toList());
+		State genesisState=Init.createState(genPK,genPK,PEERKEYS);
+
+		try {
+			DefaultListModel<ConvexLocal> peerList=new DefaultListModel<>();
+			List<Server> serverList = API.launchLocalPeers(KEYPAIRS,genesisState);
+			for (Server server: serverList) {
+				Address controller=server.getPeerController();
+				AKeyPair kp=server.getControllerKey();
+				ConvexLocal convex=Convex.connect(server, controller, kp); 
+				
+				if (kp==null) {
+					// Try to find alternative controller key in key ring if available
+					kp=KeyRingPanel.findWalletEntry(convex).getKeyPair();
+					convex.setKeyPair(kp);
+				}
+				
+				peerList.addElement(convex);
+				
+				// initial wallet list
+		        HotWalletEntry we = HotWalletEntry.create(server.getKeyPair(),"Peer key pair (temp)");
+				KeyRingPanel.addWalletEntry(we);
+			}
+			return peerList;
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new PeerException("Peer launch interrupted",e);
+		}
+	}
 	/*
 	 * Main component panel
 	 */
@@ -98,7 +172,6 @@ public class PeerGUI extends AbstractGUI {
 	JTabbedPane tabs;
 	RESTServer restServer;
 	
-	AKeyPair genesisKey;
 
 	/**
 	 * Create the application.
@@ -106,25 +179,22 @@ public class PeerGUI extends AbstractGUI {
 	 * @param peerCount number of peers to initialise in genesis
 	 * @throws PeerException If peer startup fails
 	 */
-	public PeerGUI(int peerCount, AKeyPair genesis) throws PeerException {
+	private PeerGUI(DefaultListModel<ConvexLocal> peerList) throws PeerException {
 		super ("Peer Manager");
-		// Create key pairs for peers, use genesis key as first keypair
-		genesisKey=genesis;
-		for (int i=0; i<peerCount; i++) {
-			KEYPAIRS.add(AKeyPair.generate());
-		}
-		KEYPAIRS.set(0, genesis);
+		this.peerList=peerList;
 		
-		PEERKEYS=KEYPAIRS.stream().map(kp->kp.getAccountKey()).collect(Collectors.toList());
-		genesisState=Init.createState(PEERKEYS);
+		// Create key pairs for peers, use genesis key as first keypair
+		Server firstServer=peerList.get(0).getLocalServer();
+		genesisState=firstServer.getPeer().getGenesisState();
+
 		latestState = StateModel.create(genesisState);
 		tickState = StateModel.create(0L);
 		
-		// launch local peers 
+
+		
 		serverPanel= new ServerListPanel(this);
 		keyRingPanel = new KeyRingPanel();
 
-		launchAllPeers();
 		
 		Server first=peerList.firstElement().getLocalServer();
 		ConvexLocal convex=Convex.connect(first);
@@ -210,7 +280,6 @@ public class PeerGUI extends AbstractGUI {
 		}
 	};
 
-	protected DefaultListModel<ConvexLocal> peerList = new DefaultListModel<ConvexLocal>();
 
 	public DefaultListModel<ConvexLocal> getPeerList() {
 		return peerList;
@@ -244,8 +313,9 @@ public class PeerGUI extends AbstractGUI {
 	 * @return Convex connection instance
 	 * @throws IOException If IO error occurs during connection attempt
 	 * @throws TimeoutException If attempt to connect times out
+	 * @throws InterruptedException 
 	 */
-	public Convex makeConnection(Address address,AKeyPair kp) throws IOException, TimeoutException {
+	public Convex makeConnection(Address address,AKeyPair kp) throws IOException, TimeoutException, InterruptedException {
 		InetSocketAddress host = getDefaultConvex().getHostAddress();
 		return Convex.connect(host,address, kp);
 	}
@@ -264,14 +334,14 @@ public class PeerGUI extends AbstractGUI {
 			ConvexLocal c= peerList.get(i);
 			if (c.getLocalServer().isLive()) return c;
 		}
-		throw new IllegalStateException("No live peers!");
+		throw new IllegalStateException("No live peers we control!");
 	}
 	
 	public Convex getClientConvex(Address contract) {
 		return Convex.connect(getPrimaryServer(),contract,null);
 	}
 
-	public Convex connectClient(Address address, AKeyPair keyPair) throws IOException, TimeoutException {
+	public Convex connectClient(Address address, AKeyPair keyPair) throws IOException, TimeoutException, InterruptedException {
 			return makeConnection(address,keyPair);
 	}
 	
@@ -333,37 +403,21 @@ public class PeerGUI extends AbstractGUI {
 		return null;
 	}
 
-	public void launchAllPeers() throws PeerException {
-		try {
-			List<Server> serverList = API.launchLocalPeers(KEYPAIRS,genesisState);
-			for (Server server: serverList) {
-				ConvexLocal convex=Convex.connect(server, server.getPeerController(), server.getKeyPair());
-				peerList.addElement(convex);
-				
-				// initial wallet list
-		        HotWalletEntry we = HotWalletEntry.create(server.getKeyPair(),"Peer key pair");
-				KeyRingPanel.addWalletEntry(we);
-			}
-		} catch (InterruptedException e) {
-			Thread.currentThread().interrupt();
-			throw new PeerException("Peer launch interrupted",e);
-		}
-	}
 
-	public void launchExtraPeer() {
+	public void launchExtraPeer(ConvexLocal source) {
 		AKeyPair kp=AKeyPair.generate();
 		
 		try {
-			Server base=getPrimaryServer();
-			ConvexLocal convex=getDefaultConvex();
-			Address a= convex.createAccountSync(kp.getAccountKey());
-			long amt=convex.getBalance()/10;
-			convex.transferSync(a, amt);
+			Server base=source.getLocalServer();
+
+			Address a= source.createAccountSync(kp.getAccountKey());
+			long amt=source.getBalance()/10;
+			source.transferSync(a, amt);
 			
 			KeyRingPanel.addWalletEntry(HotWalletEntry.create(kp,"Generated peer key"));
 			
 			// Set up Peer in base server
-			convex=Convex.connect(base, a, kp);
+			ConvexLocal convex=Convex.connect(base, a, kp);
 			AccountKey key=kp.getAccountKey();
 			Result rcr=convex.transactSync("(create-peer "+key+" "+amt/2+")");
 			if (rcr.isError()) {
@@ -414,5 +468,9 @@ public class PeerGUI extends AbstractGUI {
 		frame.getContentPane().setLayout(new MigLayout());
 		frame.getContentPane().add(this,"dock center");
 	}
+
+
+
+
 
 }

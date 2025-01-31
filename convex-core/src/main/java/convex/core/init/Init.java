@@ -62,6 +62,7 @@ public class Init {
 	
 	// First user of Protonet, i.e. @mikera
 	public static final Address FIRST_USER_ADDRESS = Address.create(13);
+	public static final AccountKey FIRST_USER_KEY = AccountKey.fromHex("89b5142678bfef7a2245af5ae5b9ab1e10c282b375fa297c5aaeccc48ac97cac");
 
 	// Constants
 	private static final Index<AccountKey, PeerStatus> EMPTY_PEERS = Index.none();
@@ -71,6 +72,13 @@ public class Init {
 	 * Number of coins issued at genesis (one million)
 	 */
 	private static final long GENESIS_COINS=1000000*Coin.GOLD;
+
+	public static final AccountKey DEFAULT_GOV_KEY = AccountKey.fromHex("12EF73ee900eD1FE78A188f59bF8CedE467bAA66f5b60368aFAaA3B9521aB94d");
+	public static final AccountKey DEFAULT_GENESIS_KEY = AccountKey.fromHex("c1d3b0104d55ddf7680181a46e93422e49e2ea9298e37794860f1ef1128427f7");
+	public static final AccountKey FIRST_PEER_KEY = AccountKey.fromHex("d6ef2d429b73ef1c78d9e46d87feb9d9535a991b8102099f54ed243f1e557d42");
+	
+	private static final long RESERVED_USER_LIMIT = 64;
+	private static final long RESERVED_ACTOR_LIMIT = 128;
 
 
 	/**
@@ -195,19 +203,27 @@ public class Init {
 			
 			// Genesis user gets half of all user funds
 			long genFunds = userFunds/2;
-			accts = addAccount(accts, GENESIS_ADDRESS, peerKeys.get(0), genFunds);
+			accts = addAccount(accts, GENESIS_ADDRESS, genesisKey, genFunds);
 			userFunds -= genFunds;
 			
 			// One Peer account for each  specified key (including initial genesis user)
 			for (int i = 0; i < keyCount; i++) {
 				Address address = Address.create(accts.count());
 				assert(address.longValue() == accts.count());
-				AccountKey key = peerKeys.get(i);
+				AccountKey key = (i==0)?genesisKey:peerKeys.get(i);
 				long userBalance = userFunds / (keyCount-i);
 				accts = addAccount(accts, address, key, userBalance);
 				userFunds -= userBalance;
 			}
 			assert(userFunds == 0L);
+		}
+		
+		// Initial user account, follows genesis peer controller(s)
+		accts=addAccount(accts,Address.create(accts.count()),FIRST_USER_KEY,0);
+		
+		// Reserve user accounts in base state
+		while(accts.count()<RESERVED_USER_LIMIT) {
+			accts=addAccount(accts,Address.create(accts.count()),genesisKey,0);
 		}
 
 		// Finally add initial peers
@@ -230,10 +246,16 @@ public class Init {
 			assert(peerFunds == 0L);
 		}
 		
+
+		
 		// Add the new accounts to the State
 		s = s.withAccounts(accts);
 		// Add peers to the State
 		s = s.withPeers(peers);
+		
+		s = register(s, GENESIS_ADDRESS, "Genesis User", "User account for genesis");
+		s = register(s, GENESIS_PEER_ADDRESS, "Genesis Controller", "Genesis peer controller account");
+
 
 		{ // Test total funds after creating user / peer accounts
 			long total = s.computeTotalBalance();
@@ -250,7 +272,16 @@ public class Init {
 			long balance) {
 		if (accts.count() != a.longValue()) throw new Error("Incorrect account address: " + a);
 		AccountStatus as = AccountStatus.create(0L, balance, key);
+		as=as.withController(ADMIN_ADDRESS);
 		as = as.withMemory(CPoSConstants.INITIAL_ACCOUNT_ALLOWANCE);
+		accts = accts.conj(as);
+		return accts;
+	}
+	
+	public static AVector<AccountStatus> addReservedActorAccount(AVector<AccountStatus> accts, Address a) {
+		if (accts.count() != a.longValue()) throw new Error("Incorrect account address: " + a);
+		AccountStatus as = AccountStatus.create(0L, 0L, null);
+		as=as.withController(ADMIN_ADDRESS);
 		accts = accts.conj(as);
 		return accts;
 	}
@@ -272,14 +303,14 @@ public class Init {
 		{ // Register core library now that registry exists
 			Context ctx = Context.create(s, INIT_ADDRESS);						             
 			s = ctx.getState();
-			s = register(s, CORE_ADDRESS, "Convex Core Library", "Core utilities accessible by default in any account.");
+			s = register(s, CORE_ADDRESS, "Convex Core Library", "Core library accessible by default in any account");
 			
-			s = register(s, FOUNDATION_ADDRESS, "Foundation Governance", "Master network governance account.");
-			s = register(s, RESERVE_ADDRESS, "Foundation Reserve", "Unreleased Foundation coin reserve.");
-			s = register(s, UNRELEASED_ADDRESS, "Release Curve Reserve", "Release curve unreleased coins.");
-			s = register(s, DISTRIBUTION_ADDRESS, "Release Curve Pre-Distribution", "Release curve coins for future distribution.");
-			s = register(s, GOVERNANCE_ADDRESS, "Network Governance", "Network governance account.");
-			s = register(s, ADMIN_ADDRESS, "Network Admin", "Network admin accouns.");
+			s = register(s, FOUNDATION_ADDRESS, "Foundation Governance", "Master network governance account");
+			s = register(s, RESERVE_ADDRESS, "Foundation Reserve", "Unreleased Foundation coin reserve");
+			s = register(s, UNRELEASED_ADDRESS, "Release Curve Reserve", "Release curve unreleased coins");
+			s = register(s, DISTRIBUTION_ADDRESS, "Release Curve Pre-Distribution", "Release curve coins for future distribution");
+			s = register(s, GOVERNANCE_ADDRESS, "Network Governance", "Network governance account");
+			s = register(s, ADMIN_ADDRESS, "Network Admin", "Network admin accouns");
 		}
 
 		return s;
@@ -290,13 +321,16 @@ public class Init {
 	}
 	
 	public static State createState(AccountKey genesisKey,List<AccountKey> peerKeys) {
-		return createState(genesisKey,genesisKey,peerKeys);
+		return createState(DEFAULT_GOV_KEY,genesisKey,peerKeys);
 	}
 	
 	public static State createState(AccountKey governanceKey, AccountKey genesisKey,List<AccountKey> peerKeys) {
 		State s=createBaseState(governanceKey, genesisKey, peerKeys);
 		
 		s = addStandardLibraries(s);
+		
+		s=addReservedAccounts(s);
+		
 		s = addTestingCurrencies(s);
 		s = addCNSExtraTree(s);
 
@@ -305,6 +339,16 @@ public class Init {
 		if (finalTotal != Constants.MAX_SUPPLY)
 			throw new Error("Bad total funds in init state amount: " + finalTotal);
 
+		return s;
+	}
+
+	private static State addReservedAccounts(State s) {
+		AVector<AccountStatus> accts = s.getAccounts();
+		while(accts.count()<RESERVED_ACTOR_LIMIT) {
+			accts=addReservedActorAccount(accts,Address.create(accts.count()));
+		}
+
+		s = s.withAccounts(accts);
 		return s;
 	}
 
@@ -324,29 +368,40 @@ public class Init {
 
 	private static State addStandardLibraries(State s) {
 		s = doActorDeploy(s, "/convex/asset/fungible.cvx");
-		s = doActorDeploy(s, "/convex/lab/trusted-oracle/actor.cvx");
-		s = doActorDeploy(s, "/convex/lab/oracle.cvx");
 		s = doActorDeploy(s, "/convex/asset/asset.cvx");
 		s = doActorDeploy(s, "/convex/torus/exchange.cvx");
 		s = doActorDeploy(s, "/convex/asset/nft/simple.cvx");
 		s = doActorDeploy(s, "/convex/asset/nft/basic.cvx");
-		s = doActorDeploy(s, "/convex/asset/nft/tokens.cvx");
 		s = doActorDeploy(s, "/convex/asset/box/actor.cvx");
 		s = doActorDeploy(s, "/convex/asset/box.cvx");
 		s = doActorDeploy(s, "/convex/asset/multi-token.cvx");
-		s = doActorDeploy(s, "/convex/asset/share.cvx");
-		s = doActorDeploy(s, "/convex/asset/market/trade.cvx");
 		s = doActorDeploy(s, "/convex/asset/wrap/convex.cvx");
-		s = doActorDeploy(s, "/convex/lab/play.cvx");
-		s = doActorDeploy(s, "/convex/lab/did.cvx");
-		s = doActorDeploy(s, "/convex/lab/curation-market.cvx");
 		s = doActorDeploy(s, "/convex/trust/ownership-monitor.cvx");
 		s = doActorDeploy(s, "/convex/trust/delegate.cvx");
 		s = doActorDeploy(s, "/convex/trust/whitelist.cvx");
 		s = doActorDeploy(s, "/convex/trust/monitors.cvx");
 		s = doActorDeploy(s, "/convex/trust/governance.cvx");
-		s = doActorDeploy(s, "/convex/asset/spatial.cvx");
 		// s = doActorDeploy(s, "convex/user.cvx");
+		return s;
+	}
+	
+	/**
+	 * Add extra libraries for testing purposes, not part of official genesis
+	 * @param peerKeys
+	 * @return
+	 */
+	public static State createTestState(List<AccountKey> peerKeys) {
+		State s=createState(peerKeys);
+		s = doActorDeploy(s, "/convex/asset/nft/tokens.cvx");
+		s = doActorDeploy(s, "/convex/lab/play.cvx");
+		s = doActorDeploy(s, "/convex/lab/did.cvx");
+		s = doActorDeploy(s, "/convex/lab/curation-market.cvx");
+		s = doActorDeploy(s, "/convex/lab/trusted-oracle/actor.cvx");
+		s = doActorDeploy(s, "/convex/lab/oracle.cvx");
+		s = doActorDeploy(s, "/convex/asset/share.cvx");
+		s = doActorDeploy(s, "/convex/asset/market/trade.cvx");
+		s = doActorDeploy(s, "/convex/asset/spatial.cvx");
+
 		return s;
 	}
 	
@@ -391,14 +446,6 @@ public class Init {
 		
 		s=ctx.getState();
 		return s;
-	}
-
-	public static Address calcPeerAddress(int userCount, int index) {
-		return Address.create(GENESIS_ADDRESS.longValue() + userCount + index);
-	}
-
-	public static Address calcUserAddress(int index) {
-		return Address.create(GENESIS_ADDRESS.longValue() + index);
 	}
 	
 	private static State doActorDeploy(State s, String resource) {
@@ -464,6 +511,7 @@ public class Init {
 						+ "(import convex.fungible :as fun) "
 						+ "(deploy "
 						  + "'(call *registry* (register "+metaString+"))"
+						  + "'(set-controller #2)"
 						  + "(fun/build-token {:supply " + supply + " :decimals "+decimals+"})"
 						  +")"
 					+ ")"));
@@ -516,6 +564,7 @@ public class Init {
 		accts = accts.conj(as);
 		return accts;
 	}
+
 
 
 }

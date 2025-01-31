@@ -1,25 +1,35 @@
 package convex.gui.peer;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.Objects;
-import java.util.concurrent.TimeoutException;
 
 import javax.swing.JButton;
+import javax.swing.JFileChooser;
 import javax.swing.JMenuItem;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import convex.api.Convex;
 import convex.api.ConvexLocal;
 import convex.api.ConvexRemote;
-import convex.core.cvm.Peer;
-import convex.core.cvm.State;
 import convex.core.crypto.AKeyPair;
-import convex.core.data.ACell;
-import convex.core.data.AccountKey;
+import convex.core.crypto.wallet.AWalletEntry;
 import convex.core.cvm.Address;
+import convex.core.cvm.Peer;
 import convex.core.cvm.PeerStatus;
+import convex.core.cvm.State;
+import convex.core.data.ACell;
+import convex.core.data.AMap;
+import convex.core.data.AccountKey;
+import convex.core.data.Keyword;
 import convex.core.text.Text;
+import convex.core.util.FileUtils;
+import convex.core.util.Utils;
 import convex.etch.EtchStore;
 import convex.gui.components.BaseImageButton;
 import convex.gui.components.BaseListComponent;
@@ -27,6 +37,7 @@ import convex.gui.components.CodeLabel;
 import convex.gui.components.DropdownMenu;
 import convex.gui.components.Identicon;
 import convex.gui.etch.EtchWindow;
+import convex.gui.keys.KeyRingPanel;
 import convex.gui.models.StateModel;
 import convex.gui.repl.REPLClient;
 import convex.gui.server.PeerWindow;
@@ -42,10 +53,29 @@ public class PeerComponent extends BaseListComponent {
 
 	public ConvexLocal convex;
 	CodeLabel description;
+	
+	private static final Logger log = LoggerFactory.getLogger(PeerComponent.class.getName());
+
 
 	public void launchPeerWindow(ConvexLocal peer) {
-		PeerWindow pw = new PeerWindow(peer);
+		Server server=peer.getLocalServer();
+		ConvexLocal newConvex=connectLocalControllerWallet(server);
+		PeerWindow pw = new PeerWindow(newConvex);
 		pw.run();
+	}
+
+	private ConvexLocal connectLocalControllerWallet(Server server) {
+		AKeyPair kp=null;
+		Address controller=server.getPeerController();
+		if (controller!=null) try {
+			AccountKey key=server.getPeer().getConsensusState().getAccount(controller).getAccountKey();
+			AWalletEntry we=KeyRingPanel.getKeyRingEntry(key);
+			kp=we.getKeyPair();
+		} catch (Exception e) {
+			log.warn("Error getting controller details",e);
+		}
+		ConvexLocal convex=ConvexLocal.connect(server,controller,kp);
+		return convex;
 	}
 
 	public void launchEtchWindow(ConvexLocal peer) {
@@ -141,9 +171,18 @@ public class PeerComponent extends BaseListComponent {
 		
 		JMenuItem walletButton = new JMenuItem("Open controller Wallet",Toolkit.menuIcon(0xe850));
 		walletButton.addActionListener(e -> {
-			new WalletApp(convex).run();
+			new WalletApp(connectLocalControllerWallet(server)).run();
 		});
 		popupMenu.add(walletButton);
+		
+		JMenuItem saveButton = new JMenuItem("Save Peer Data...",Toolkit.menuIcon(0xe161));
+		saveButton.addActionListener(e -> savePeerData(this.convex));
+		popupMenu.add(saveButton);
+
+		JMenuItem loadButton = new JMenuItem("Load Peer Data...",Toolkit.menuIcon(0xeaf3));
+		loadButton.addActionListener(e -> loadPeerData(this.convex));
+		popupMenu.add(loadButton);
+
 
 
 		DropdownMenu dm = new DropdownMenu(popupMenu);
@@ -171,6 +210,32 @@ public class PeerComponent extends BaseListComponent {
 		updateDescription();
 	}
 
+	private void loadPeerData(ConvexLocal convex) {
+		JFileChooser chooser=Toolkit.createCAD3Chooser(null);
+		int result=chooser.showOpenDialog(this);
+		if (result==JFileChooser.APPROVE_OPTION) {
+			System.out.println("Loading: "+chooser.getSelectedFile());
+		}
+	}
+
+	private void savePeerData(ConvexLocal convex)  {
+		Peer p=convex.getLocalServer().getPeer();
+		AMap<Keyword, ACell> data = p.toData();
+		
+		String fileName="peer-data-"+p.getPeerKey().toHexString(8)+"-"+Utils.timeString()+".cad3";
+		JFileChooser chooser=Toolkit.createCAD3Chooser(fileName);
+
+		int result=chooser.showSaveDialog(this);
+		if (result==JFileChooser.APPROVE_OPTION) {
+			Path path =chooser.getSelectedFile().toPath();
+			try {
+				FileUtils.writeCAD3(path, data);
+			} catch (IOException e) {
+				JOptionPane.showMessageDialog(this, "Peer data save failed:\n "+e,"Save Error",JOptionPane.ERROR_MESSAGE);
+			}
+		}
+	}
+
 	protected void updateDescription() {
 		String current=description.getText();
 		String updated=getPeerDescription();
@@ -187,10 +252,16 @@ public class PeerComponent extends BaseListComponent {
 		try {
 			Convex convex = ConvexRemote.connect(peer.getHostAddress());
 			Address addr=peer.getAddress();
-			AKeyPair kp=peer.getKeyPair();;
+			AKeyPair kp=null;
+			
+			Server s=peer.getLocalServer();
+			if (s!=null) {
+				kp=s.getControllerKey();
+			}
+			
 			convex.setAddress(addr,kp);
 			new REPLClient(convex).run();
-		} catch (IOException | TimeoutException e) {
+		} catch (Exception e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}

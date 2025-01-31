@@ -37,4 +37,20 @@ public class Gen {
 	public static final SetGen SET = new SetGen();
 
 	public static final CharGen CHAR = new CharGen();
+
+	public static final TransactionGen TRANSACTION = new TransactionGen();
+
+	public static final BooleanGen BOOLEAN = new BooleanGen();
+
+	public static final ByteFlagGen BYTE_FLAG = new ByteFlagGen();
+	
+	public static final DenseRecordGen DENSE_RECORD = new DenseRecordGen();
+
+	public static final OpGen OP = new OpGen();
+
+	public static final ExtensionValueGen EXTENSION_VALUE = new ExtensionValueGen();
+
+	public static final CodedValueGen CODED_VALUE = new CodedValueGen();
+	
+	public static final SyntaxGen SYNTAX = new SyntaxGen();
 }

@@ -9,6 +9,8 @@ import convex.core.Result;
 import convex.core.data.ACell;
 import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.MissingDataException;
+import convex.core.message.Message;
+import convex.core.message.MessageType;
 import convex.core.store.Stores;
 
 /**
@@ -26,7 +28,7 @@ public abstract class ResultConsumer implements Consumer<Message> {
 				handleDataProvided(m);
 				break;
 			}
-			case REQUEST_DATA: {
+			case DATA_REQUEST: {
 				handleDataRequest(m);
 				break;
 			}
@@ -35,7 +37,7 @@ public abstract class ResultConsumer implements Consumer<Message> {
 				break;
 			}
 			default: {
-				log.error("Message type ignored: ", type);
+				log.error("Message type ignored type: {} value: {}", type, m);
 			}
 		}
 	}

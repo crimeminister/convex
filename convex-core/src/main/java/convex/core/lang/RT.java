@@ -38,6 +38,7 @@ import convex.core.data.Ref;
 import convex.core.data.Sets;
 import convex.core.data.Strings;
 import convex.core.data.Symbol;
+import convex.core.data.VectorArray;
 import convex.core.data.Vectors;
 import convex.core.data.prim.AInteger;
 import convex.core.data.prim.ANumeric;
@@ -293,6 +294,7 @@ public class RT {
 		ANumeric result = RT.ensureNumber(args[0]);
 		for (int i = 1; i < args.length; i++) {
 			result =result.add(RT.ensureNumber(args[i]));
+			if (result==null) return null;
 		}
 		return result;
 	}
@@ -687,9 +689,10 @@ public class RT {
 	}
 
 	/**
-	 * Converts any data structure to a vector
+	 * Converts any data structure to a vector. May wrap a Java array in VectorArray, so
+	 * the object must be treated as immutable in order for this to be safe.
 	 * 
-	 * @param o Object to attempt to convert to a Vector. May wrap a Java array in VectorArray 
+	 * @param o Object to attempt to convert to a Vector. 
 	 * @return AVector instance, or null if not convertible
 	 */
 	@SuppressWarnings("unchecked")
@@ -710,6 +713,25 @@ public class RT {
 			return Vectors.create((java.util.List<T>) o);
 
 		return null;
+	}
+	
+	/**
+	 * Converts any data structure to a vector. May wrap a Java array in VectorArray, so
+	 * the object must be treated as immutable in order for this to be safe.
+	 * 
+	 * @param o Object to attempt to convert to a Vector. 
+	 * @param start start index to slice
+	 * @end end index to slice
+	 * @return AVector instance, or null if not convertible
+	 */
+	@SuppressWarnings("unchecked")
+	public static <T extends ACell> AVector<T> vec(Object o, long start, long end) {
+		if (o instanceof ACell[]) {
+			ACell[] arr = (ACell[])o;
+			return VectorArray.wrap(arr,start,end); 
+		}
+		
+		return (AVector<T>) vec(o).slice(start, end);
 	}
 
 	/**
@@ -1192,6 +1214,11 @@ public class RT {
 	public static Address castAddress(ACell a) {
 		if (a instanceof Address)
 			return (Address) a;
+		if (a instanceof AVector) {
+			AVector<?> v=RT.ensureVector(a);
+			if (v.count()==0) return null;
+			return ensureAddress(v.get(0));
+		}
 		if (a instanceof ABlob)
 			return Address.create((ABlob) a);
 		CVMLong value = RT.ensureLong(a);
@@ -1414,6 +1441,17 @@ public class RT {
 		Keyword k = Keyword.create(name);
 		return k;
 	}
+	
+	/**
+	 * Casts to a Keyword
+	 * @param a
+	 * @return
+	 */
+	public static Keyword ensureKeyword(ACell a) {
+		if (a instanceof Keyword)
+			return (Keyword) a;
+		return null;
+	}
 
 	/**
 	 * Ensures the argument is a Symbol.
@@ -1496,7 +1534,7 @@ public class RT {
 		if (o == null)
 			return;
 		if (o instanceof ACell) {
-			((ACell) o).validate();
+			Cells.validate((ACell) o);
 		} else if (o instanceof Ref) {
 			((Ref<?>) o).validate();
 		} else {
@@ -1504,20 +1542,6 @@ public class RT {
 					"Data of class" + Utils.getClass(o) + " neither IValidated, canonical nor embedded: ", o);
 		}
 
-	}
-
-	/**
-	 * Validate a Cell.
-	 * 
-	 * @param o Object to validate
-	 * @throws InvalidDataException For any validation failure
-	 */
-	public static void validateCell(ACell o) throws InvalidDataException {
-		if (o == null)
-			return;
-		if (o instanceof ACell) {
-			((ACell) o).validateCell();
-		}
 	}
 
 	/**
@@ -1893,6 +1917,9 @@ public class RT {
 		}
 		return result;
 	}
+
+
+
 
 
 

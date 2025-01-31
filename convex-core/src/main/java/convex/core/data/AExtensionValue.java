@@ -2,6 +2,7 @@ package convex.core.data;
 
 import convex.core.data.impl.LongBlob;
 import convex.core.data.prim.CVMLong;
+import convex.core.util.Bits;
 import convex.core.util.ErrorMessages;
 import convex.core.util.Utils;
 
@@ -11,10 +12,16 @@ import convex.core.util.Utils;
 public abstract class AExtensionValue extends ABlobLike<CVMLong> {
 
 	/**
-	 * Length of an Address in bytes (when considered as a Blob)
+	 * Length of an extension value in bytes (when considered as a Blob)
 	 */
 	protected static final int BYTE_LENGTH = 8;
+	
+	protected final long value;
 
+	protected AExtensionValue(long value) {
+		this.value=value;
+	}
+	
 	@Override
 	public final long count() {
 		return BYTE_LENGTH;
@@ -34,6 +41,11 @@ public abstract class AExtensionValue extends ABlobLike<CVMLong> {
 	@Override
 	public ABlob toBlob() {
 		return LongBlob.create(longValue());
+	}
+	
+	@Override
+	public final long longValue() {
+		return value;
 	}
 	
 	protected static void checkIndex(long i) {
@@ -86,6 +98,16 @@ public abstract class AExtensionValue extends ABlobLike<CVMLong> {
 	public AExtensionValue empty() {
 		// There is no empty extension value
 		return null;
+	}
+	
+	@Override
+	public final int hashCode() {
+		return Bits.hash32(value);
+	}
+
+	@Override
+	public boolean isEmbedded() {
+		return true;
 	}
 	
 	@Override

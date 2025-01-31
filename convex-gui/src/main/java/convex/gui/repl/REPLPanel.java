@@ -12,7 +12,6 @@ import java.util.concurrent.TimeoutException;
 
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
-import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
@@ -27,26 +26,26 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import convex.api.Convex;
-import convex.api.ConvexRemote;
 import convex.core.Result;
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.Address;
+import convex.core.cvm.Symbols;
 import convex.core.cvm.transactions.ATransaction;
 import convex.core.data.ACell;
 import convex.core.data.AList;
 import convex.core.data.AString;
 import convex.core.data.AVector;
-import convex.core.cvm.Address;
 import convex.core.data.SignedData;
 import convex.core.exceptions.ParseException;
 import convex.core.exceptions.ResultException;
 import convex.core.lang.RT;
 import convex.core.lang.Reader;
-import convex.core.cvm.Symbols;
 import convex.core.util.Utils;
 import convex.gui.components.ActionButton;
 import convex.gui.components.ActionPanel;
 import convex.gui.components.BaseTextPane;
 import convex.gui.components.CodePane;
+import convex.gui.components.ConnectPanel;
 import convex.gui.components.account.AccountChooserPanel;
 import convex.gui.utils.CVXHighlighter;
 import convex.gui.utils.Toolkit;
@@ -171,13 +170,16 @@ public class REPLPanel extends JPanel {
 		output.setFont(OUTPUT_FONT);
 		//outputArea.setForeground(Color.GREEN);
 		output.setBackground(new Color(10,10,10));
-		output.setFocusable(false);
 		output.setToolTipText("Output from transaction execution");
 		//DefaultCaret caret = (DefaultCaret)(outputArea.getCaret());
 		//caret.setUpdatePolicy(DefaultCaret.ALWAYS_UPDATE);
 		outputScrollPane=wrapScrollPane(output);
 		splitPane.setLeftComponent(outputScrollPane);
 
+		
+		/// Input panel
+		JPanel inputPanel=new JPanel();
+		inputPanel.setLayout(new MigLayout());
 		input = new CodePane();
 		input.setFont(INPUT_FONT);
 		input.getDocument().addDocumentListener(inputListener);
@@ -185,8 +187,15 @@ public class REPLPanel extends JPanel {
 		input.setToolTipText("Input commands here (Press Enter at the end of input to send)");
 		inputScrollPane=wrapScrollPane(input);
 		//inputArea.setForeground(Color.GREEN);
+		inputPanel.add(inputScrollPane,"dock center");
 
-		splitPane.setRightComponent(inputScrollPane);
+		JPanel historyPanel=new JPanel();
+		historyPanel.setLayout(new MigLayout("wrap 1,aligny center"));
+		historyPanel.add(ActionButton.build(0xe316, e->scrollHistory(-1),"Previous command in history"));
+		historyPanel.add(ActionButton.build(0xe313, e->scrollHistory(1),"Next command in history"));
+		inputPanel.add(historyPanel,"dock east");
+		
+		splitPane.setRightComponent(inputPanel);
 		
 		// stop CTRL+arrow losing focus
 		setFocusTraversalKeysEnabled(false);
@@ -200,7 +209,7 @@ public class REPLPanel extends JPanel {
 			sendMessage(input.getText());
 			input.requestFocus();
 		});
-		actionPanel.setToolTipText("Run the current command from the input pane");
+		btnRun.setToolTipText("Run the current command from the input pane");
 		actionPanel.add(btnRun);
 		
 		btnClear = new ActionButton("Clear",0xe9d5,e -> {
@@ -212,23 +221,9 @@ public class REPLPanel extends JPanel {
 		actionPanel.add(btnClear);
 
 		btnInfo = new ActionButton("Connection Info",0xe88e,e -> {
-			StringBuilder sb=new StringBuilder();
-			if (convex instanceof ConvexRemote) {
-				sb.append("Remote host: " + convex.getHostAddress() + "\n");
-			}
-			try {
-				sb.append("Sequence:    " + convex.getSequence() + "\n");
-			} catch (Exception e1) {
-				log.info("Failed to get sequence number");
-			}
-			sb.append("Account:     " + RT.print(convex.getAddress()) + "\n");
-			sb.append("Public Key:  " + RT.toString(convex.getAccountKey()) + "\n");
-			sb.append("Connected:   " + convex.isConnected()+"\n");
-
-			String infoString = sb.toString();
-			JOptionPane.showMessageDialog(this, infoString);
+			ConnectPanel.showConnectionInfo(REPLPanel.this,convex);
 		});
-		actionPanel.setToolTipText("Show diagnostic information for the Convex connection");
+		btnInfo.setToolTipText("Show diagnostic information for the Convex connection");
 		actionPanel.add(btnInfo);
 		
 		btnTX=new JCheckBox("Show transaction");
@@ -336,7 +331,7 @@ public class REPLPanel extends JPanel {
 				output.append(" TIMEOUT waiting for result\n",Color.RED);
 			} catch (IllegalStateException t) {
 				// General errors we understand
-				output.append(" ERROR: ",Color.RED);
+				output.append(" EXCEPTION: ",Color.RED);
 				output.append(t.getMessage() + "\n"); 
 			} catch (Exception t) {
 				// Something bad.....
@@ -393,24 +388,11 @@ public class REPLPanel extends JPanel {
 			int code = e.getKeyCode();
 			// CTRL or Shift plus arrow scrolls through history
 			if (e.isControlDown()||e.isShiftDown()) {
-				int hSize=history.size();
 				if (code==KeyEvent.VK_UP) {
-
-					if (historyPosition>0) {
-						if (historyPosition==hSize) {
-							// store current in history
-							String s=input.getText();
-							history.add(s);
-						}
-						historyPosition--;
-						setInput(history.get(historyPosition));
-					}
+					scrollHistory(-1);
 					e.consume(); // mark event consumed
 				} else if (code==KeyEvent.VK_DOWN) {
-					if (historyPosition<hSize-1) {
-						historyPosition++;
-						setInput(history.get(historyPosition));
-					}
+					scrollHistory(1);
 					e.consume(); // mark event consumed
 				}
 			}
@@ -441,6 +423,26 @@ public class REPLPanel extends JPanel {
 		@Override
 		public void keyReleased(KeyEvent e) {
 			
+		}
+	}
+
+	public void scrollHistory(int scroll) {
+		int hSize=history.size();
+		if (scroll<0) {
+			if (historyPosition>0) {
+				if (historyPosition==hSize) {
+					// store current in history
+					String s=input.getText();
+					history.add(s);
+				}
+				historyPosition=Math.max(0, historyPosition+scroll);
+				setInput(history.get(historyPosition));
+			}
+		} else if (scroll>0) {
+			if (historyPosition<hSize-1) {
+				historyPosition=Math.min(hSize-1, historyPosition+scroll);
+				setInput(history.get(historyPosition));
+			}
 		}
 	}
 

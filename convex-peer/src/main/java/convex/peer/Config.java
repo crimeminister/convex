@@ -41,6 +41,16 @@ public class Config {
 	 * Size of default client socket send buffer
 	 */
 	public static final int SOCKET_SEND_BUFFER_SIZE = 2*65536;
+	
+	/**
+	 * Flag to use Netty client connections
+	 */
+	public static final boolean USE_NETTY_CLIENT = true;
+
+	/**
+	 * Flag to use Netty server implementation
+	 */
+	public static final boolean USE_NETTY_SERVER = true;
 
 	/**
 	 * Delay before rebroadcasting Belief if not in consensus
@@ -94,14 +104,18 @@ public class Config {
 	 * Checks if the config specifies a valid store
 	 * @param config Configuration map for peer
 	 * @return Store specified in Config, or null if not specified
+	 * @throws IOException 
 	 */
 	@SuppressWarnings("unchecked")
-	public static <T extends AStore> T checkStore(Map<Keyword, Object> config) {
+	public static <T extends AStore> T checkStore(Map<Keyword, Object> config) throws IOException {
 		Object o=config.get(Keywords.STORE);
 		if (o instanceof AStore) return (T)o;
 		
 		if ((o instanceof String)||(o instanceof AString)) {
 			String fname=o.toString();
+			if ("temp".equals(fname)) {
+				return (T) EtchStore.createTemp();
+			}
 			File f=FileUtils.getFile(fname);
 			if (f.exists()) {
 				try {
@@ -175,11 +189,11 @@ public class Config {
 	 */
 	@SuppressWarnings("unchecked")
 	public static  <T extends AStore> T ensureStore(Map<Keyword, Object> config) throws ConfigException {
-		T store=checkStore(config);
-		if (store!=null) return store;
-		
+		T store;
 		try {
-			store=(T) EtchStore.createTemp("defaultPeerStore");
+			store=checkStore(config);
+			if (store!=null) return store;
+			store=(T) EtchStore.createTemp("tempPeerStore");
 		} catch (IOException e) {
 			throw new ConfigException("Unable to configure temporary store due to IO error",e);
 		}

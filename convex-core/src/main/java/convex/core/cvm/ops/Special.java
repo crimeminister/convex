@@ -18,6 +18,7 @@ import convex.core.data.prim.CVMLong;
 import convex.core.data.util.BlobBuilder;
 import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.InvalidDataException;
+import convex.core.util.Bits;
 import convex.core.util.ErrorMessages;
 import convex.core.util.Utils;
 
@@ -30,8 +31,8 @@ public class Special<T extends ACell> extends AOp<T> {
 	
 	private final byte specialCode;
 	
-	public static final int NUM_SPECIALS=24;
-	private static final int BASE=0;
+	public static final int NUM_SPECIALS=25;
+	public static final int BASE=0;
 	private static final int LIMIT=BASE+NUM_SPECIALS;
 	public static final Symbol[] SYMBOLS=new Symbol[NUM_SPECIALS];
 	private static final Special<?>[] specials=new Special[NUM_SPECIALS];
@@ -61,6 +62,7 @@ public class Special<T extends ACell> extends AOp<T> {
 	private static final byte S_MEMORY_PRICE=BASE+21;
 	private static final byte S_SIGNER=BASE+22;
 	private static final byte S_PEER=BASE+23;
+	private static final byte S_LOCATION=BASE+24;
 
 	static {
 		reg(S_JUICE,Symbols.STAR_JUICE);
@@ -87,6 +89,7 @@ public class Special<T extends ACell> extends AOp<T> {
 		reg(S_MEMORY_PRICE,Symbols.STAR_MEMORY_PRICE);
 		reg(S_SIGNER,Symbols.STAR_SIGNER);
 		reg(S_PEER,Symbols.STAR_PEER);
+		reg(S_LOCATION,Symbols.STAR_LOCATION);
 	}
 	
 	private static byte reg(byte opCode, Symbol sym) {
@@ -139,8 +142,9 @@ public class Special<T extends ACell> extends AOp<T> {
 		case S_PARENT: ctx= ctx.withResult(ctx.getAccountStatus().getParent()); break;
 		case S_NOP: break; // unchanged context, propagates *result*
 		case S_MEMORY_PRICE: ctx=ctx.withResult(CVMDouble.create(ctx.getState().getMemoryPrice())); break ;
-		case S_SIGNER: ctx=ctx.withResult(null); break; // TODO
-		case S_PEER: ctx=ctx.withResult(ctx.getPeer()); break ; // TODO
+		case S_SIGNER: ctx=ctx.withResult(ctx.getSigner()); break;
+		case S_PEER: ctx=ctx.withResult(ctx.getPeer()); break ; 
+		case S_LOCATION: ctx=ctx.withResult(ctx.getLocation()); break ; 
 		
 		default:
 			throw new Error("Bad Opcode"+specialCode);
@@ -202,6 +206,12 @@ public class Special<T extends ACell> extends AOp<T> {
 	
 	public static <R extends ACell> Special<R> get(String string) {
 		return forSymbol(Symbol.create(string));
+	}
+	
+	@Override
+	public final int hashCode() {
+		// Needed for hashCode equivalence with extension values
+		return Bits.hash32((long)specialCode);
 	}
 
 
