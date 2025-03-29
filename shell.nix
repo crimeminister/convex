@@ -7,6 +7,6 @@ pkgs.mkShellNoCC {
     # Java build tool
     maven
     # OpenJDK 21
-    jdk21
+    jdk23
   ];
 }
