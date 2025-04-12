@@ -38,9 +38,10 @@ bool
 
 string
 	: STRING;
-	
+
+// numbers allow extra IEEE754 values as per JSON5	
 number
-	: NUMBER;
+	: NUMBER | 'NaN' | 'Infinity' | '+Infinity' | '-Infinity';
 	
 nil
 	: 'null';
@@ -79,6 +80,16 @@ fragment EXP
     // exponent number permits leading 0s (e.g. `1e01`)
     : [Ee] [+-]? [0-9]+
     ;
+
+// Multi-line comments (ignored)
+MULTILINE_COMMENT
+	: '/*' .* '*/' -> skip
+	;
+
+// Single-line comments (ignored)
+SINGLELINE_COMMENT
+	: '//' ~[\r\n]* -> skip
+	;
 
 WS
     : [ \t\n\r]+ -> skip

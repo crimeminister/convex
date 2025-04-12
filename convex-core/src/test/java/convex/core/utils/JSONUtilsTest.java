@@ -11,6 +11,7 @@ import java.util.List;
 
 import org.junit.Test;
 
+import convex.core.ErrorCodes;
 import convex.core.cvm.Address;
 import convex.core.cvm.Keywords;
 import convex.core.cvm.Symbols;
@@ -55,6 +56,7 @@ public class JSONUtilsTest {
 		
 		assertEquals("\"foo\"",JSONUtils.toString(Symbols.FOO));
 		assertEquals("\"foo\"",JSONUtils.toString(Keywords.FOO));
+		assertEquals("\"CAST\"",JSONUtils.toString(ErrorCodes.CAST));
 
 	}
 	
@@ -118,6 +120,32 @@ public class JSONUtilsTest {
 		assertEquals(Maps.of("1",2), RT.cvm(JSONUtils.json(Maps.of(1,2))));
 		assertEquals(Maps.of("[]",3), RT.cvm(JSONUtils.json(Maps.of(Vectors.empty(),3))));
 		assertEquals(Maps.of("[\"\" 3]",4), RT.cvm(JSONUtils.json(Maps.of(Vectors.of("",3),4))));
+	}
+	
+	@Test
+	public void testJSONComments() {
+		assertEquals(Vectors.of(true,null),JSONUtils.parse("[true, /* \n */ null]"));
+		assertEquals(RT.cvm(12),JSONUtils.parse("12 //foo"));
+		assertEquals(RT.cvm(12),JSONUtils.parse("//foo \n 12"));
+		assertEquals(RT.cvm(12),JSONUtils.parse("//foo /* \n 12"));
+
+		assertThrows(ParseException.class,()->JSONUtils.parse("/* 67")); // comment not closed
+		assertThrows(ParseException.class,()->JSONUtils.parse("//")); // no value
+		
+	}
+	
+	@Test
+	public void testJSONDoubles() {
+		assertEquals(CVMDouble.POSITIVE_INFINITY,JSONUtils.parse("Infinity"));
+		assertEquals(CVMDouble.POSITIVE_INFINITY,JSONUtils.parse("+Infinity"));
+		assertEquals(CVMDouble.NEGATIVE_INFINITY,JSONUtils.parse("-Infinity"));
+		assertEquals(CVMDouble.NEGATIVE_INFINITY,JSONUtils.parse(" -Infinity"));
+		assertEquals(CVMDouble.NaN,JSONUtils.parse(" NaN"));
+
+		assertThrows(ParseException.class,()->JSONUtils.parse("- Infinity")); // space between
+		assertThrows(ParseException.class,()->JSONUtils.parse("Inf")); // not a JSON5 value
+		assertThrows(ParseException.class,()->JSONUtils.parse("NAN")); // incorrect ccase
+		
 	}
 	
 	@Test

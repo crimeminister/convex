@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Map;
 
 import org.json.simple.JSONObject;
-import org.json.simple.JSONValue;
 import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
 
@@ -110,7 +109,7 @@ public class JSON {
      * @throws RuntimeException on failure to create JSON from value
      */
     public static String toString(Object value) {
-       return JSONValue.toJSONString(value);
+       return JSONUtils.toString(value);
     }
     
     /**

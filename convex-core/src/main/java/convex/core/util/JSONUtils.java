@@ -182,9 +182,7 @@ public class JSONUtils {
 			    if (i>0) bb.append(",");
 				appendJSON(bb, jsonKey(me.getKey()));
 				bb.append(':');
-				bb.append(' ');
 				appendJSON(bb, me.getValue());
-
 			    i += 1;
 			}
 			
@@ -208,10 +206,18 @@ public class JSONUtils {
 			bb.append(bv ? Strings.TRUE : Strings.FALSE);
 			return;
 		}
-
-		if (value instanceof String cs) {
+		
+		if (value instanceof CharSequence cs) {
 			bb.append('\"');
 			appendCVMStringQuoted(bb, cs);
+			bb.append('\"');
+			return;
+		}
+
+
+		if (value instanceof ASymbolic cs) {
+			bb.append('\"');
+			appendCVMStringQuoted(bb, cs.getName().toString());
 			bb.append('\"');
 			return;
 		}
@@ -270,7 +276,6 @@ public class JSONUtils {
 				MapEntry<?,?> me=mv.entryAt(i);
 				appendJSON(bb, jsonKey(me.getKey()));
 				bb.append(':');
-				bb.append(' ');
 				appendJSON(bb, me.getValue());
 			}
 			bb.append('}');
