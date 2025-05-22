@@ -367,7 +367,7 @@ public class BIP39 {
 	
 	/**
 	 * Check if BIP39 checksum is correct
-	 * @param s
+	 * @param mnemonic BIP39 mnemonic words
 	 * @return True if BIP39 checksum is valid
 	 */
 	public static boolean checkSum(String mnemonic) {
@@ -398,7 +398,7 @@ public class BIP39 {
 	
 	/**
 	 * Gets bytes containing the entropy and checksum used to create the given words
-	 * @param mnemonic
+	 * @param mnemonic BIP39 Mnemonic string
 	 * @return byte array of sufficient size, or null if not valid BIP39 words
 	 */
 	public static byte[] mnemonicToBytes(String mnemonic) {
@@ -408,7 +408,7 @@ public class BIP39 {
 	
 	/**
 	 * Gets bytes containing the entropy and checksum used to create the given words
-	 * @param mnemonic
+	 * @param words List of BIP39 words (should be valid BIP39)
 	 * @return byte array of sufficient size, or null if not valid BIP39 words
 	 */
 	public static byte[] mnemonicToBytes(List<String> words) {
@@ -509,8 +509,8 @@ public class BIP39 {
 
 	/**
 	 * Extends an abbreviated form of a BIP39 word to a full word e.g. 'SHAL' => 'shallow'
-	 * @param abbr
-	 * @return
+	 * @param abbr abbreviated BIP39 word
+	 * @return Full lowercase BIP39 word
 	 */
 	public static String extendWord(String abbr) {
 		return ABBR.get(abbr.trim().toLowerCase());

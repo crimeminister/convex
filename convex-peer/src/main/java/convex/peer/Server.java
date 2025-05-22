@@ -189,8 +189,13 @@ public class Server implements Closeable {
 					throw new LaunchException("Timeout trying to connect to remote peer");
 				} catch (IllegalArgumentException e) {
 					throw new LaunchException("Bad :SOURCE for peer launch",e);
+				} catch (Exception e ) {
+					// something else failed, probably an IOException
+					throw new LaunchException("Failed to sync with remote peer host at: "+source,e);
 				}
-			} else if (Utils.bool(getConfig().get(Keywords.RESTORE))) {
+			} 
+			
+			if (Utils.bool(getConfig().get(Keywords.RESTORE))) {
 				ACell rk=RT.cvm(config.get(Keywords.ROOT_KEY));
 				if (rk==null) rk=keyPair.getAccountKey();
 	
@@ -200,6 +205,7 @@ public class Server implements Closeable {
 					return peer;
 				}
 			} 
+			
 			// No sync or restored state, so use passed state
 			State genesisState = (State) config.get(Keywords.STATE);
 			if (genesisState!=null) {
@@ -212,7 +218,7 @@ public class Server implements Closeable {
 			return Peer.createGenesisPeer(keyPair,genesisState);
 
 		} catch (IOException e) {
-			throw new LaunchException("IO Exception while establishing peer",e);
+			throw new LaunchException("IO Exception while establishing peer: "+e,e);
 		}
 	}
 
@@ -224,14 +230,20 @@ public class Server implements Closeable {
 			
 			// Sync status and genesis state
 			Result result = convex.requestStatusSync(timeout);
-			AVector<ACell> status = result.getValue();
-			if (status == null || status.count()!=Config.STATUS_COUNT) {
-				throw new Error("Bad status message from remote Peer");
+			AMap<Keyword,ACell> status = API.ensureStatusMap(result.getValue());
+			if ((result.isError()) || status == null) {
+				throw new LaunchException("Bad status message from remote Peer: "+result);
 			}
-			Hash beliefHash=RT.ensureHash(status.get(0));
-			AccountKey remoteKey=RT.ensureAccountKey(status.get(3));
-			Hash genesisHash=RT.ensureHash(status.get(2));
-			Hash stateHash=RT.ensureHash(status.get(4));
+			
+			Hash beliefHash=RT.ensureHash(status.get(Keywords.BELIEF));
+			AccountKey remotePeerKey=RT.ensureAccountKey(Keywords.PEER);
+			Hash genesisHash=RT.ensureHash(status.get(Keywords.GENESIS));
+			Hash stateHash=RT.ensureHash(Keywords.STATE);
+			
+			if (genesisHash==null) {
+				throw new LaunchException("Remote peer did not provide genesis hash");
+			}
+			
 			log.debug("Attempting to sync remote state: "+stateHash + " on network: "+genesisHash);
 			State genF=(State) convex.acquire(genesisHash).get(timeout,TimeUnit.MILLISECONDS);
 			log.debug("Retrieved Genesis State: "+genesisHash);
@@ -251,14 +263,19 @@ public class Server implements Closeable {
 			log.info("Retrieved Peer Belief: "+beliefHash+ " with memory size: "+belF.getMemorySize());
 	
 			// Add the new connection since it seems good
-			getConnectionManager().addConnection(remoteKey,convex);
+			getConnectionManager().addConnection(remotePeerKey,convex);
 			
-			SignedData<Order> peerOrder=belF.getOrders().get(remoteKey);
+			SignedData<Order> peerOrder=belF.getOrders().get(remotePeerKey);
+
+			
 			if (peerOrder!=null) {
+				// We got an order from remote peer, so assume correct
 				SignedData<Order> newOrder=keyPair.signData(peerOrder.getValue());
 				belF=belF.withOrders(belF.getOrders().assoc(keyPair.getAccountKey(),newOrder));
 			} else {
-				throw new LaunchException("Remote peer Belief missing it's own Order? Who to trust?");
+				// No order, so start with an empty Ordering
+				SignedData<Order> newOrder=keyPair.signData(Order.create());
+				belF=belF.withOrders(belF.getOrders().assoc(keyPair.getAccountKey(),newOrder));
 			}
 			// System.out.println(Lists.of(peerOrder.getValue().getConsensusPoints()));
 
@@ -345,6 +362,17 @@ public class Server implements Closeable {
 			executor.persistPeerData();
 
 			HashMap<Keyword, Object> config = getConfig();
+			
+			
+			if (config.containsKey(Keywords.RECALC)) try {
+				Object o=config.get(Keywords.RECALC);
+				if (o!=null) {
+					Long pos=Utils.toLong(o);
+					executor.recalcState(pos);
+				}
+			} catch (Exception e) {
+				throw new LaunchException("Launch failed to recalculate state: "+e,e);
+			}
 
 			Object p = config.get(Keywords.PORT);
 			Integer port = (p == null) ? null : Utils.toInt(p);
@@ -359,6 +387,8 @@ public class Server implements Closeable {
 			// Close server on shutdown, should be before Etch stores in priority
 			Shutdown.addHook(Shutdown.SERVER, ()->close());
 			
+			
+			
 			// Start threaded components
 			manager.start();
 			queryHandler.start();
@@ -370,9 +400,9 @@ public class Server implements Closeable {
 			goLive();
 			log.info( "Peer server started on port "+nio.getPort()+" with peer key: {}",getPeerKey());
 		} catch (ConfigException e) {
-			throw new LaunchException("Launch failed due to config problem",e);
+			throw new LaunchException("Launch failed due to config problem: "+e,e);
 		} catch (IOException e) {
-			throw new LaunchException("Launch failed due to IO Error",e);
+			throw new LaunchException("Launch failed due to IO Error: "+e,e);
 		} finally {
 			Stores.setCurrent(savedStore);
 		}
@@ -503,7 +533,10 @@ public class Server implements Closeable {
 	
 	protected void processStatus(Message m) {
 		// We can ignore payload
-		AVector<ACell> reply = getStatusData();
+		ACell reply = getStatusData();
+		
+		// TODO for 0.9.0 ACell reply = getStatusMap();
+		
 		Result r=Result.create(m.getID(), reply);
 		m.returnResult(r);
 	}
@@ -542,6 +575,12 @@ public class Server implements Closeable {
 		AVector<ACell> reply=Vectors.of(beliefHash,stateHash,genesisHash,peerKey,consensusHash, cp,pp,op,cps);
 		assert(reply.count()==Config.STATUS_COUNT);
 		return reply;
+	}
+	
+	public static final AVector<Keyword> sTATUS_KEYS=Vectors.create(Keywords.BELIEF,Keywords.STATES,Keywords.GENESIS);
+	
+	public AMap<Keyword,ACell> getStatusMap() {
+		return Maps.zipMap(API.STATUS_KEYS,getStatusData());
 	}
 
 	private void processChallenge(Message m) {
@@ -793,8 +832,6 @@ public class Server implements Closeable {
 
 	/**
 	 * Shut down the Server, as gracefully as possible.
-	 * @throws TimeoutException If shutdown attempt times out
-	 * @throws IOException  In case of IO Error
 	 */
 	public void shutdown()  {
 		try {

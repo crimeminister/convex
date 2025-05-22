@@ -4,6 +4,7 @@ import static convex.core.lang.TestState.STATE;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -285,6 +286,29 @@ public class UtilsTest {
 		assertEquals(7, Utils.toInt(7.0f));
 		assertEquals(8, Utils.toInt("8"));
 		assertEquals(-1, Utils.toInt("-1"));
+		assertEquals(Integer.MAX_VALUE, Utils.toInt("2147483647"));
+		assertEquals(Integer.MIN_VALUE, Utils.toInt(CVMLong.parse("-2147483648")));
+		
+		assertThrows(IllegalArgumentException.class, ()->Utils.toInt("foo"));
+		assertThrows(IllegalArgumentException.class, ()->Utils.toInt(1.5));
+		assertThrows(IllegalArgumentException.class, ()->Utils.toInt(null));
+	}
+	
+	@Test
+	public void testToLong() {
+		assertEquals(1, Utils.toLong(1));
+		assertEquals(7, Utils.toLong(7.0f));
+		assertEquals(8, Utils.toLong("8"));
+		assertEquals(-1, Utils.toLong("-1"));
+		assertEquals(Integer.MAX_VALUE, Utils.toLong("2147483647"));
+		assertEquals(Integer.MIN_VALUE, Utils.toLong(CVMLong.parse("-2147483648")));
+
+		assertEquals(Long.MAX_VALUE, Utils.toLong("9223372036854775807"));
+
+		assertThrows(IllegalArgumentException.class, ()->Utils.toLong("foo"));
+		assertThrows(IllegalArgumentException.class, ()->Utils.toLong(1.5));
+		assertThrows(IllegalArgumentException.class, ()->Utils.toLong(null));
+
 	}
 
 	@Test
@@ -409,6 +433,10 @@ public class UtilsTest {
 		assertEquals(2,q.poll());
 		assertNull(q.poll());
 		assertTrue(q.isEmpty());
+	}
+	
+	@Test public void testVersion() {
+		assertNotEquals("SNAPSHOT",Utils.getVersion());
 	}
 
 }

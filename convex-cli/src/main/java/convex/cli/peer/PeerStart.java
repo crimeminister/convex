@@ -1,6 +1,7 @@
 package convex.cli.peer;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.util.HashMap;
 import java.util.List;
 
@@ -70,6 +71,9 @@ public class PeerStart extends APeerCommand {
 	
 	@Option(names = { "--norest" }, description = "Disable REST srever.")
 	private boolean norest;
+	
+	@Option(names = { "--recalc" }, description = "Recalculate state from the specified block position onwards.")
+	private Integer recalc;
 	
 	@Option(names = { "--genesis" }, 
 			defaultValue = "${env:CONVEX_GENESIS_SEED}",
@@ -163,14 +167,28 @@ public class PeerStart extends APeerCommand {
 
 			RESTServer restServer=null;
 			try {
+				InetSocketAddress remoteSource=peerMixin.getSpecifiedSource();
+				
 				HashMap<Keyword,Object> config=new HashMap<>();
 				config.put(Keywords.KEYPAIR, peerKey);
 				config.put(Keywords.STORE, store);
-				config.put(Keywords.SOURCE, peerMixin.getSpecifiedSource());
 				config.put(Keywords.URL, url);
 				config.put(Keywords.PORT, port);
+				
+				if (remoteSource!=null) {
+					config.put(Keywords.SOURCE, remoteSource); // if remote source to sync with is specified
+				} else {
+					// if no remote host to sync with, assume we want to restore existing peer
+					config.put(Keywords.RESTORE,true);
+				}
+				if (recalc!=null) config.put(Keywords.RECALC, recalc);
+
 				config.put(Keywords.BASE_URL, baseURL);
 				if (genesisKey!=null) {
+					if (remoteSource!=null) {
+						throw new CLIError("--genesis option should not be used when syncing with remote source");
+					}
+					
 					AccountKey gpk=genesisKey.getAccountKey();
 					State state=Init.createState(gpk,gpk,List.of(gpk));
 					informWarning("Created genesis State: "+state.getHash());

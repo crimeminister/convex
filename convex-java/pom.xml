@@ -5,11 +5,11 @@
 	<parent>
 		<groupId>world.convex</groupId>
 		<artifactId>convex</artifactId>
-		<version>0.8.0</version>
+		<version>0.8.2-SNAPSHOT</version>
 	</parent>
 
 	<name>Convex Java Client Library</name>
-	<description>A Pure Java client library for Convex</description>
+	<description>Java client library for Convex</description>
 	<url>https://convex.world</url>
 
 	<properties>

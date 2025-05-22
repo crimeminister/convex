@@ -14,14 +14,13 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import convex.core.crypto.AKeyPair;
-import convex.core.data.AccountKey;
 import convex.core.cvm.Address;
-import convex.core.data.Keyword;
 import convex.core.cvm.Keywords;
-import convex.core.init.Init;
 import convex.core.cvm.Symbols;
+import convex.core.data.AccountKey;
+import convex.core.data.Keyword;
+import convex.core.init.Init;
 import convex.java.Convex;
-import convex.java.JSON;
 import convex.peer.API;
 import convex.peer.ConfigException;
 import convex.peer.LaunchException;
@@ -103,7 +102,7 @@ public class RemoteBinaryClientTest {
 		
 		// Query *key*
 		res=c.query(Symbols.STAR_KEY.toString());
-		assertEquals(JSON.toString(kp.getAccountKey()),res.get("value"));
+		assertEquals(kp.getAccountKey().toString(),res.get("value"));
 	}
 	
 	@Test 

@@ -9,13 +9,12 @@ import java.util.List;
 import java.util.Map;
 
 import org.json.simple.JSONObject;
-import org.json.simple.JSONValue;
 import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
 
 import convex.core.data.ACell;
 import convex.core.data.ASymbolic;
-import convex.core.lang.RT;
+import convex.core.util.JSONUtils;
 import convex.core.util.Utils;
 
 /**
@@ -110,7 +109,7 @@ public class JSON {
      * @throws RuntimeException on failure to create JSON from value
      */
     public static String toString(Object value) {
-       return JSONValue.toJSONString(value);
+       return JSONUtils.toString(value);
     }
     
     /**
@@ -120,7 +119,7 @@ public class JSON {
      * @return Java Object representing the value as JSON
      */
     public static Object from(ACell a) {
-    	return RT.json(a);
+    	return JSONUtils.json(a);
     }
     
     /**

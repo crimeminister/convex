@@ -21,9 +21,10 @@ public class Keywords {
 	public static final Keyword PERSIST = Keyword.intern("persist");
 	public static final Keyword POLL_DELAY = Keyword.intern("poll-delay");
 
-
+	// configuration parameters
 	public static final Keyword STORE = Keyword.intern("store");
 	public static final Keyword RESTORE = Keyword.intern("restore");
+	public static final Keyword RECALC = Keyword.intern("recalc");
 
 	// for testing and suchlike
 	public static final Keyword FOO = Keyword.intern("foo");
@@ -130,6 +131,8 @@ public class Keywords {
 	public static final Keyword CONSENSUS_POINT = Keyword.intern("consensus-point");
 	public static final Keyword CONSENSUS = Keyword.intern("consensus");
 	public static final Keyword PROPOSAL_POINT = Keyword.intern("proposal-point");
+	public static final Keyword BLOCK_POINT = Keyword.intern("block-point");
+
 
 	public static final Keyword ROOT_KEY = Keyword.intern("root-key");
 	public static final Keyword POSITION = Keyword.intern("position");
@@ -146,6 +149,8 @@ public class Keywords {
 	
 	// Commond trust keys
 	public static final Keyword CONTROL = Keyword.intern("control");
+	
+
 
 
 

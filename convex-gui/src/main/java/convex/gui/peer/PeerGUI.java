@@ -24,7 +24,6 @@ import convex.api.ConvexLocal;
 import convex.core.Result;
 import convex.core.cpos.Order;
 import convex.core.crypto.AKeyPair;
-import convex.core.crypto.wallet.AWalletEntry;
 import convex.core.crypto.wallet.HotWalletEntry;
 import convex.core.cvm.Address;
 import convex.core.cvm.Keywords;
@@ -88,11 +87,19 @@ public class PeerGUI extends AbstractGUI {
 		return manager;
 	}
 	
-	public static PeerGUI launchPeerGUI(InetSocketAddress sa, AWalletEntry we) throws InterruptedException, PeerException {
+	/**
+	 * LAunch a peer, joining an existing network
+	 * @param sa Socket address of source peer to sync with
+	 * @param kp Key pair for new peer
+	 * @return PeerGUI instance
+	 * @throws InterruptedException In case of interrupt
+	 * @throws PeerException In case of peer launch error
+	 */
+	public static PeerGUI launchPeerGUI(InetSocketAddress sa, AKeyPair kp) throws InterruptedException, PeerException {
 		DefaultListModel<ConvexLocal> peerList=new DefaultListModel<>();
 		
 		HashMap<Keyword, Object> config=new HashMap<>();
-		config.put(Keywords.KEYPAIR,we.getKeyPair());
+		config.put(Keywords.KEYPAIR,kp);
 		config.put(Keywords.SOURCE,sa);
 		Server server=API.launchPeer(config);
 		ConvexLocal convex=ConvexLocal.connect(server);
@@ -313,7 +320,7 @@ public class PeerGUI extends AbstractGUI {
 	 * @return Convex connection instance
 	 * @throws IOException If IO error occurs during connection attempt
 	 * @throws TimeoutException If attempt to connect times out
-	 * @throws InterruptedException 
+	 * @throws InterruptedException In case of interrupt
 	 */
 	public Convex makeConnection(Address address,AKeyPair kp) throws IOException, TimeoutException, InterruptedException {
 		InetSocketAddress host = getDefaultConvex().getHostAddress();

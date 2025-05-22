@@ -34,6 +34,7 @@ import convex.core.exceptions.InvalidDataException;
 import convex.core.exceptions.MissingDataException;
 import convex.core.exceptions.ResultException;
 import convex.core.lang.RT;
+import convex.core.util.JSONUtils;
 import convex.core.util.Utils;
 
 /**
@@ -72,8 +73,8 @@ public final class Result extends ARecordGeneric {
 	
 	/**
 	 * Build a Result from a vector. WARNING: does not validate values
-	 * @param values
-	 * @return
+	 * @param values Vector or values for result record, according to record format
+	 * @return Result instance
 	 */
 	public static Result buildFromVector(AVector<ACell> values) {
 		return new Result(values);
@@ -463,13 +464,13 @@ public final class Result extends ARecordGeneric {
 			hm.put("errorCode", RT.name(getErrorCode()).toString());
 		} 
 		 
-		hm.put("value", RT.json(getValue()));
+		hm.put("value", JSONUtils.json(getValue()));
 		
 		AVector<AVector<ACell>> log = getLog();
-		if (log!=null) hm.put("info", RT.json(log));
+		if (log!=null) hm.put("info", JSONUtils.json(log));
 		
 		AMap<Keyword, ACell> info = getInfo();
-		if (info!=null) hm.put("info", RT.json(info));
+		if (info!=null) hm.put("info", JSONUtils.json(info));
 		
 		return hm;
 	}

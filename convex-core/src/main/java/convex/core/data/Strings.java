@@ -69,9 +69,13 @@ public class Strings {
 
 	public static final StringShort FULL_BUFFER = StringShort.create("Buffer full");
 
+	public static final StringShort NULL = StringShort.create("null");
+
+	
 	public static final Comparator<AString> lengthComparator = (a,b)->{
 		return Long.signum(a.count()-b.count());
 	};
+
 
 
 	/**
@@ -125,8 +129,8 @@ public class Strings {
 	
 	/**
 	 * Create a canonical CVM String from an object
-	 * @param s Java String to convert.
-	 * @return CVM String instance, or null if input was null
+	 * @param o Java Object to convert.
+	 * @return CVM String instance, or "nil" if input was null
 	 */
 	public static AString create(Object o) {
 		if (o==null) return NIL;

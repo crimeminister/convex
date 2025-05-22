@@ -144,6 +144,7 @@ public final class Index<K extends ABlobLike<?>, V extends ACell> extends AIndex
 
 	@Override
 	public MapEntry<K, V> getEntry(K key) {
+		if (key==null) return null;
 		long kl = key.hexLength();
 		long pl = depth;
 		if (kl < pl) return null; // key is too short to start with current prefix
@@ -735,6 +736,12 @@ public final class Index<K extends ABlobLike<?>, V extends ACell> extends AIndex
 		return (Index<K, V>) EMPTY;
 	}
 	
+	/**
+	 * Return an empty Index (with no elements)
+	 * @param <K> Type of keys
+	 * @param <V> Type of Values
+	 * @return Empty Index instance (singleton)
+	 */
 	@SuppressWarnings("unchecked")
 	public static <K extends ABlobLike<?>, V extends ACell> Index<K, V> none() {
 		return (Index<K, V>) EMPTY;

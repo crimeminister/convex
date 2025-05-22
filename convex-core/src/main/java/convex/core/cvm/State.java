@@ -202,7 +202,6 @@ public class State extends ARecordGeneric {
 	 * 
 	 * @param signedBlock Signed Block to apply
 	 * @return The BlockResult from applying the given Block to this State
-	 * @throws InvalidBlockException 
 	 */
 	public BlockResult applyBlock(SignedData<Block> signedBlock) {
 		Block block=null;
@@ -461,15 +460,16 @@ public class State extends ARecordGeneric {
 	 * Applies a signed transaction to the State.
 	 *
 	 * SECURITY: Checks digital signature and correctness of account key
-	 * @param tctx 
+	 * @param signedTx Signed transaction
+	 * @param tctx Transaction context
 	 *
 	 * @return ResultContext containing the result of the transaction
-	 * @throws InvalidBlockException 
+	 * @throws InvalidBlockException If block is invalid (bad transaction)
 	 */
-	public ResultContext applyTransaction(SignedData<ATransaction> t2, TransactionContext tctx) throws InvalidBlockException {
+	public ResultContext applyTransaction(SignedData<ATransaction> signedTx, TransactionContext tctx) throws InvalidBlockException {
 		// Extract transaction
-		ATransaction t=RT.ensureTransaction(t2.getValue());
-		if (t==null) throw new InvalidBlockException("Not a signed transaction: "+t2.getHash());
+		ATransaction t=RT.ensureTransaction(signedTx.getValue());
+		if (t==null) throw new InvalidBlockException("Not a signed transaction: "+signedTx.getHash());
 
 		Address addr=t.getOrigin();
 		tctx.origin=addr;
@@ -494,7 +494,7 @@ public class State extends ARecordGeneric {
 			}
 			
 			// Perform Signature check
-			boolean sigValid=t2.checkSignature(key);
+			boolean sigValid=signedTx.checkSignature(key);
 			if (!sigValid) {
 				ResultContext rc= ResultContext.error(this,ErrorCodes.SIGNATURE, Strings.BAD_SIGNATURE);
 				return rc.withSource(SourceCodes.CVM);
@@ -510,7 +510,7 @@ public class State extends ARecordGeneric {
 	 *
 	 * There are three phases in application of a transaction:
 	 * <ol>
-	 * <li>Preparation for accounting, with {@link #prepareTransaction(ResultContext) prepareTransaction}</li>
+	 * <li>Preparation for accounting, with {@link #prepareTransaction(ResultContext,TransactionContext) prepareTransaction}</li>
 	 * <li>Functional application of the transaction with ATransaction.apply(....)</li>
 	 * <li>Completion of accounting, with completeTransaction</li>
 	 * </ol>
@@ -552,7 +552,7 @@ public class State extends ARecordGeneric {
 	/**
 	 * Apply a transaction in a detached transaction context, mainly for test / query
 	 * @param t Transaction
-	 * @return
+	 * @return ResultContext after transaction is applied
 	 */
 	public ResultContext applyTransaction(ATransaction t) {
 		return applyTransaction(t,TransactionContext.create(this));
