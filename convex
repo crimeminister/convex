@@ -5,4 +5,5 @@ JAR_NAME=`ls -1 $BASE_PATH/convex-integration/target/convex.jar`
 
 # echo "using: $JAR_NAME"
 
-java -jar $JAR_NAME $@
+# Added scaling of app for local system.
+java -Dsun.java2d.uiScale.enabled=true -Dsun.java2d.uiScale=2.0 -Djava.awt.headless=false -jar $JAR_NAME $@
