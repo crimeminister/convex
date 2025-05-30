@@ -36,6 +36,7 @@ import convex.core.data.Ref;
 import convex.core.data.Sets;
 import convex.core.data.Strings;
 import convex.core.data.Symbol;
+import convex.core.data.Tag;
 import convex.core.data.VectorArray;
 import convex.core.data.Vectors;
 import convex.core.data.prim.AInteger;
@@ -1382,6 +1383,26 @@ public class RT {
 			return null;
 		return coll.get(key);
 	}
+	
+	/**
+	 * Gets an element from a data structure using the given key path.
+	 * 
+	 * @param coll Collection to query
+	 * @param keys  Key to look up in collection
+	 * @return Value from collection with the specified key, or null if not found / invalid path
+	 */
+	public static ACell getIn(ACell coll, Object... keys) {
+		ACell result=coll;
+		for (int i=0; i<keys.length; i++) {
+			if (result instanceof ADataStructure ds) {
+				ACell key=RT.cvm(keys[i]);
+				result=RT.get(ds,key);
+			} else {
+				return null;
+			}
+		}
+		return result;
+	}
 
 	/**
 	 * Gets an element from a data structure using the given key. Returns the
@@ -1485,12 +1506,16 @@ public class RT {
 	/**
 	 * Casts to a Keyword
 	 * 
-	 * @param a
-	 * @return
+	 * @param a Value to enforce as a keyword
+	 * @return Keyword value, or null if not a Keyword
 	 */
 	public static Keyword ensureKeyword(ACell a) {
+		if (a==null) return null;
 		if (a instanceof Keyword)
 			return (Keyword) a;
+		if (a.getTag()==Tag.KEYWORD) {
+			return Keyword.create(a);
+		}
 		return null;
 	}
 

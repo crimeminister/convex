@@ -10,7 +10,7 @@ json
     ;
 
 obj
-    : '{' pair (',' pair)* '}'
+    : '{' pair (',' pair)* ','? '}'
     | '{' '}'
     ;
 
@@ -18,8 +18,9 @@ pair
     : string ':' value
     ;
 
+// Note single training comma allowed after values
 array
-    : '[' value (',' value)* ']'
+    : '[' value (',' value)* ','? ']'
     | '[' ']'
     ;
 
@@ -83,7 +84,7 @@ fragment EXP
 
 // Multi-line comments (ignored)
 MULTILINE_COMMENT
-	: '/*' .* '*/' -> skip
+	: '/*' .*? '*/' -> skip
 	;
 
 // Single-line comments (ignored)
