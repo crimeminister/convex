@@ -33,6 +33,7 @@
 						</annotationProcessorPath>
 					</annotationProcessorPaths>
 				</configuration>
+				<!-- 
 				<executions>
 					<execution>
 						<id>default-compile</id>
@@ -41,6 +42,7 @@
 						</goals>
 					</execution>
 				</executions>
+				-->
 			</plugin>
 		</plugins>
 	</build>
