@@ -11,28 +11,33 @@ import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
 
 import convex.core.Constants;
+import convex.core.data.impl.StringStore;
 import convex.core.data.prim.CVMBool;
 import convex.core.data.prim.CVMChar;
 import convex.core.data.util.BlobBuilder;
 import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.Panic;
 import convex.core.lang.RT;
+import convex.core.util.Utils;
 
 public class Strings {
 	public static final StringShort EMPTY = StringShort.EMPTY;
 	
 	public static final Ref<StringShort> EMPTY_REF = EMPTY.getRef();
 	
-	public static final StringShort NIL = StringShort.create("nil");
-	public static final StringShort TRUE = StringShort.create(CVMBool.TRUE_STRING);
-	public static final StringShort FALSE = StringShort.create(CVMBool.FALSE_STRING);
+	public static final StringShort NIL = StringShort.intern("nil");
+	public static final StringShort TRUE = StringShort.intern(CVMBool.TRUE_STRING);
+	public static final StringShort FALSE = StringShort.intern(CVMBool.FALSE_STRING);
+	
+	public static final StringShort SPACE = StringShort.intern(" ");
+	public static final StringShort COLON = StringShort.intern(":");
+	public static final StringShort HEX_PREFIX = StringShort.intern("0x");
+
 	
 	public static final StringShort BAD_SIGNATURE = StringShort.create("Bad Signature!");
 	public static final StringShort BAD_FORMAT = StringShort.create("Bad Message Format!");
 	public static final StringShort SERVER_LOADED = StringShort.create("Trx overload");
 	
-	public static final StringShort COLON = StringShort.create(":");
-	public static final StringShort HEX_PREFIX = StringShort.create("0x");
 
 	public static final int MAX_ENCODING_LENGTH = Math.max(StringShort.MAX_ENCODING_LENGTH,StringTree.MAX_ENCODING_LENGTH);
 
@@ -69,7 +74,7 @@ public class Strings {
 
 	public static final StringShort FULL_BUFFER = StringShort.create("Buffer full");
 
-	public static final StringShort NULL = StringShort.create("null");
+	public static final StringShort NULL = StringShort.intern("null");
 
 	
 	public static final Comparator<AString> lengthComparator = (a,b)->{
@@ -140,13 +145,13 @@ public class Strings {
 		return create(o.toString());
 	}
 
-	public static <T extends AString> T intern(T value) {
-		return Cells.intern(value);
+	public static StringShort intern(AString value) {
+		return StringStore.intern(value);
 	}
 	
 	@SuppressWarnings("unchecked")
 	public static <T extends AString> T intern(String value) {
-		return (T) intern(create(value));
+		return (T) StringStore.intern(value);
 	}
 	
 	public static AString create(CVMChar c) {
@@ -168,7 +173,7 @@ public class Strings {
 	 * Creates a string by joining a sequence of substrings with the given separator
 	 * @param ss Sequence of Strings to join
 	 * @param separator any String to use as a separator.
-	 * @return Concatenated String, including the separator. Will return the empty string if the seqence is empty.
+	 * @return Concatenated String, including the separator. Will return the empty string if the sequence is empty.
 	 */
 	public static AString join(ASequence<AString> ss,AString separator) {
 		long n=ss.count();
@@ -186,7 +191,7 @@ public class Strings {
 	 * Creates a string by joining a sequence of substrings with the given separator
 	 * @param ss Sequence of Strings to join
 	 * @param separator any String to use as a separator.
-	 * @return Concatenated String, including the separator. Will return the empty string if the seqence is empty.
+	 * @return Concatenated String, including the separator. Will return the empty string if the array is empty.
 	 */
 	public static <T> AString join(T[] ss,Object separator) {
 		int n=ss.length;
@@ -223,12 +228,36 @@ public class Strings {
 		return Strings.create(builder.toBlob());
 	}
 
+	/**
+	 * Create a string using the UTF-8 bytes in a Blob
+	 * @param b Blob of UTF-8 bytes (assumed valid - invalid UTF-8 will create an invalid string)
+	 * @return AString instance
+	 */
 	public static AString create(ABlob b) {
 		long n=b.count();
 		if (n<=StringShort.MAX_LENGTH) {
 			return StringShort.create(b.toFlatBlob());
 		}
 		return StringTree.create(b);
+	}
+	
+	/**
+	 * Create a string repeating the specified character
+	 * @param c Java character (need not be ASCII, but must not be a surrogate)
+	 * @param count Number of times to repeat
+	 * @return String instance
+	 */
+	public static AString createRepeated(char c, int count) {
+		if (count==0) return EMPTY;
+		if (Utils.isASCIIChar(c)) {
+			return create(Blobs.createFilled(c, count));
+		} else {
+			BlobBuilder bb=new BlobBuilder();
+			for (int i=0; i<count; i++) {
+				bb.append(c);
+			}
+			return bb.getCVMString();
+		}
 	}
 	
 	/**
@@ -243,6 +272,10 @@ public class Strings {
 		return create(Blobs.fromHex(hexString));
 	}
 
+	/**
+	 * Get an empty singleton AString instance
+	 * @return Empty string
+	 */
 	public static StringShort empty() {
 		return StringShort.EMPTY;
 	}

@@ -333,13 +333,19 @@ public class RT {
 		return result;
 	}
 
+	/**
+	 * Multiply numbers
+	 * @param args
+	 * @return Numeric result, or null if out of valid numeric range
+	 */
 	public static ANumeric multiply(ACell... args) {
 		int n = args.length;
 		if (n == 0)
 			return CVMLong.ONE;
 		ANumeric result = RT.ensureNumber(args[0]);
-		for (int i = 1; i < args.length; i++) {
+		for (int i = 1; i < n; i++) {
 			result = result.multiply(RT.ensureNumber(args[i]));
+			if (result==null) return null;
 		}
 		return result;
 	}
@@ -1094,7 +1100,7 @@ public class RT {
 	 * Converts a value to a Java String representation
 	 * 
 	 * @param a Any CVM value
-	 * @return Java String representation. May be "nil".
+	 * @return Java String representation. May be "nil" for null values.
 	 */
 	public static String toString(ACell a) {
 		return toString(a, Constants.PRINT_LIMIT);
@@ -1391,7 +1397,8 @@ public class RT {
 	 * @param keys  Key to look up in collection
 	 * @return Value from collection with the specified key, or null if not found / invalid path
 	 */
-	public static ACell getIn(ACell coll, Object... keys) {
+	@SuppressWarnings("unchecked")
+	public static <T extends ACell> T getIn(ACell coll, Object... keys) {
 		ACell result=coll;
 		for (int i=0; i<keys.length; i++) {
 			if (result instanceof ADataStructure ds) {
@@ -1401,7 +1408,80 @@ public class RT {
 				return null;
 			}
 		}
-		return result;
+		return (T) result;
+	}
+	
+	/**
+	 * Gets an element from a data structure using the given key path.
+	 * 
+	 * @param coll Collection to query
+	 * @param keys  Key to look up in collection
+	 * @return Value from collection with the specified key, or null if not found / invalid path
+	 */
+	@SuppressWarnings("unchecked")
+	public static <T extends ACell> T getIn(ACell coll, ACell... keys) {
+		ACell result=coll;
+		for (int i=0; i<keys.length; i++) {
+			if (result instanceof ADataStructure ds) {
+				ACell key=keys[i];
+				result=RT.get(ds,key);
+			} else {
+				return null;
+			}
+		}
+		return (T) result;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static <T extends ADataStructure<?>> T assocIn(ACell a, ACell value, Object... keys) {
+		int n=keys.length;
+		ADataStructure<?>[] ass=new ADataStructure[n];
+		ACell[] ks=new ACell[n];
+		ACell data=a;
+		for (int i = 0; i < n; i++) {
+			ADataStructure<?> struct = RT.ensureAssociative(data);  // nil-> empty map
+			if (struct == null) throw new IllegalArgumentException("Not a data structure at depth: "+i+" found "+Utils.getClassName(data));
+			ass[i]=struct;
+			ACell k=RT.cvm(keys[i]);
+			ks[i]=k;
+			data=struct.get(k);
+		}
+
+		for (int i = n-1; i >=0; i--) {
+			ADataStructure<?> struct=ass[i];
+			ACell k=ks[i];
+			value=RT.assoc(struct, k, value);
+			if (value==null) {
+				throw new IllegalArgumentException("Invalid structure for assocIn at depth "+i);
+			}
+		}
+		return (T) value;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static <T extends ADataStructure<?>> T assocIn(ACell a, ACell value, ACell... keys) {
+		int n=keys.length;
+		ADataStructure<?>[] ass=new ADataStructure[n];
+		ACell[] ks=new ACell[n];
+		ACell data=a;
+		for (int i = 0; i < n; i++) {
+			ADataStructure<?> struct = RT.ensureAssociative(data);  // nil-> empty map
+			if (struct == null) throw new IllegalArgumentException("Not a data structure at depth: "+i+" found "+Utils.getClassName(data));
+			ass[i]=struct;
+			ACell k=keys[i];
+			ks[i]=k;
+			data=struct.get(k);
+		}
+
+		for (int i = n-1; i >=0; i--) {
+			ADataStructure<?> struct=ass[i];
+			ACell k=ks[i];
+			value=RT.assoc(struct, k, value);
+			if (value==null) {
+				throw new IllegalArgumentException("Invalid structure for assocIn at depth "+i);
+			}
+		}
+		return (T) value;
 	}
 
 	/**
@@ -1764,26 +1844,24 @@ public class RT {
 			return null;
 		if (o instanceof ACell)
 			return ((T) o);
-		if (o instanceof String)
-			return (T) Strings.create((String) o);
-		if (o instanceof Double)
-			return (T) CVMDouble.create(((Double) o));
-		if (o instanceof Number)
-			return (T) CVMLong.create(((Number) o).longValue());
-		if (o instanceof Character)
-			return (T) CVMChar.create((Character) o);
-		if (o instanceof Boolean)
-			return (T) CVMBool.create((Boolean) o);
-		if (o instanceof List) {
-			List<?> l = (List<?>) o;
+		if (o instanceof String s)
+			return (T) Strings.create(s);
+		if (o instanceof Double d)
+			return (T) CVMDouble.create(d);
+		if (o instanceof Number n)
+			return (T) ANumeric.fromNumber(n);
+		if (o instanceof Character c)
+			return (T) CVMChar.create(c);
+		if (o instanceof Boolean b)
+			return (T) CVMBool.create(b);
+		if (o instanceof List l) {
 			AVector<?> v = Vectors.empty();
 			for (Object val : l) {
 				v = v.conj(cvm(val));
 			}
 			return (T) v;
 		}
-		if (o instanceof Map) {
-			Map<?, ?> m = (Map<?, ?>) o;
+		if (o instanceof Map<?,?> m) {
 			AMap<ACell, ACell> cm = Maps.empty();
 			for (Map.Entry<?, ?> me : m.entrySet()) {
 				Object k = me.getKey();
@@ -1808,6 +1886,8 @@ public class RT {
 
 		throw new IllegalArgumentException("Can't convert to CVM type with class: " + Utils.getClassName(o));
 	}
+	
+
 
 	/**
 	 * Converts a CVM value to equivalent JVM value
@@ -1822,7 +1902,7 @@ public class RT {
 		if (o instanceof CVMLong)
 			return (T) (Long) ((CVMLong) o).longValue();
 		if (o instanceof CVMDouble)
-			return (T) (Double) ((CVMDouble) o).doubleValue();
+			return (T) (Double)  ((CVMDouble) o).doubleValue();
 		if (o instanceof CVMBool)
 			return (T) (Boolean) ((CVMBool) o).booleanValue();
 		if (o instanceof CVMChar)
@@ -1921,5 +2001,7 @@ public class RT {
 		}
 		return result;
 	}
+
+
 
 }

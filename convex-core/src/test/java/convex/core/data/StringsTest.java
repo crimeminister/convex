@@ -3,11 +3,15 @@ package convex.core.data;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.io.IOException;
 
 import org.junit.jupiter.api.Test;
 
 import convex.core.Constants;
+import convex.core.ErrorCodes;
 import convex.core.cvm.Keywords;
 import convex.core.cvm.Symbols;
 import convex.core.data.prim.CVMChar;
@@ -66,7 +70,7 @@ public class StringsTest {
 	}
 
 	@Test
-	public void testStringTree() {
+	public void testStringTree() throws IOException {
 		String src = "0123456789abcdef";
 		for (int i = 0; i < 8; i++) {
 			src = src + src;
@@ -88,6 +92,8 @@ public class StringsTest {
 		AString span = twoChunk.slice(4000, 4200);
 		assertEquals(200, span.count());
 		doStringTest(span);
+		
+		assertEquals(twoChunk,Strings.create(Blobs.fromStream(twoChunk.getInputStream())));
 	}
 
 	@Test
@@ -209,6 +215,19 @@ public class StringsTest {
 		assertEquals(0xffffffff, s.intAt(6)); // 0xff beyond end of string
 		assertEquals(0xffffffff, s.intAt(-6)); // 0xff before start of string
 	}
+	
+	@Test public void testIntern() {
+		AString s1=Strings.intern("interned");
+		AString s2=Strings.intern("interned");
+		assertSame(s1,s2);
+		AString s3=Strings.intern(s1);
+		assertSame(s1,s3);
+		assertSame(s1.toFlatBlob(),s3.toFlatBlob());
+		
+		assertTrue(s1.getRef().isInternal());
+		
+		assertSame(ErrorCodes.TIMEOUT,Keyword.create("TIMEOUT"));
+	}
 
 	@Test
 	public void testCharAt() {
@@ -256,7 +275,7 @@ public class StringsTest {
 		assertEquals(a, abs);
 
 		// JSON round trip as String
-		assertEquals(a, JSONUtils.parse(JSONUtils.toString(a)));
+		assertEquals(a, JSONUtils.parseJSON5(JSONUtils.toString(a)));
 
 		// JSON escape / unescape
 		assertEquals(a, JSONUtils.unescape(JSONUtils.escape(js).toString()));

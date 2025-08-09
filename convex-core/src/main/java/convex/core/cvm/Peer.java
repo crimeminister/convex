@@ -16,6 +16,7 @@ import convex.core.cpos.CPoSConstants;
 import convex.core.cpos.Order;
 import convex.core.crypto.AKeyPair;
 import convex.core.cvm.transactions.ATransaction;
+import convex.core.data.ABlob;
 import convex.core.data.ACell;
 import convex.core.data.AMap;
 import convex.core.data.AVector;
@@ -296,15 +297,15 @@ public class Peer {
 	public ResultContext executeQuery(ACell form, Address address) {
 		State state=getConsensusState();
 
-		if (form instanceof ATransaction) {
-			return executeDetached((ATransaction)form);
+		if (form instanceof ATransaction tx) {
+			return executeDetached(tx);
 		}
 		
 		if (form instanceof SignedData) {
 			SignedData<?> sc=(SignedData<?>)form;
 			ACell val=sc.getValue();
-			if (form instanceof ATransaction) {
-				return executeDetached((ATransaction)val);
+			if (val instanceof ATransaction tx) {
+				return executeDetached(tx);
 			}
 		}
 		
@@ -527,6 +528,11 @@ public class Peer {
 		return result;
 	}
 
+	/**
+	 * Truncate the peer's sate history at a given block position. Subsequent state updates will be recalculated
+	 * @param pos End block at which to truncate
+	 * @return Peer with truncated state
+	 */
 	public Peer truncateState(long pos) {
 		if (pos>=statePosition) return this;
 		
@@ -753,6 +759,26 @@ public class Peer {
 
 	public AVector<BlockResult> getBlockResults() {
 		return blockResults;
+	}
+
+	public Result getTransactionResult(ABlob txID) {
+		return getPeerIndex().getTransactionResult(this,txID);
+	}
+
+	// Private field for cached peer index
+	private PeerIndex peerIndex=new PeerIndex();
+	
+	private PeerIndex getPeerIndex() {
+		long cp=getFinalityPoint();
+		while (cp!=peerIndex.getFinalityPoint()) {
+			peerIndex= peerIndex.update(this);
+			if (peerIndex==null) peerIndex=new PeerIndex(); // in case we need to recompute
+		}
+		return peerIndex;
+	}
+
+	public SignedData<ATransaction> getTransaction(Hash transactionID) {
+		return getPeerIndex().getTransaction(this, transactionID);
 	}
 
 

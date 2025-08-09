@@ -28,6 +28,10 @@ public class ARESTClient {
 		return host;
 	}
 	
+	/**
+	 * Gets the base URI for the target server, e.g. "https://foo.com/api/v1/"
+	 * @return URI
+	 */
 	public URI getBaseURI() {
 		return baseURI;
 	}
@@ -35,7 +39,6 @@ public class ARESTClient {
 	/**
 	 * Makes a HTTP request as a CompletableFuture
 	 * @param request Request object
-	 * @param body Body of request (as String, should normally be valid JSON)
 	 * @return Future to be filled with JSON response.
 	 */
 	protected CompletableFuture<Result> doRequest(SimpleHttpRequest request) {
@@ -45,7 +48,7 @@ public class ARESTClient {
 				String rbody=null;
 				try {
 					rbody=response.getBody().getBodyText();
-					return Result.create(null,JSONUtils.parse(rbody));
+					return Result.create(null,JSONUtils.parseJSON5(rbody));
 				} catch (Exception e) {
 					if (rbody==null) rbody="<Body not readable as String>";
 					Result res= Result.error(ErrorCodes.FORMAT,"Can't parse JSON body: " +rbody);

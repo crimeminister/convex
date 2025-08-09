@@ -3836,6 +3836,9 @@ public class CoreTest extends ACVMTest {
 
 		assertCastError(step("(mod :a 7)"));
 		assertCastError(step("(mod 7 nil)"));
+		
+		assertCVMEquals(Long.MAX_VALUE,eval("(mod 9223372036854775807 (* -2 9223372036854775807))"));
+		assertCVMEquals(Long.MAX_VALUE-1,eval("(mod 9223372036854775806 (* -2 9223372036854775807))"));
 
 		assertArityError(step("(mod)"));
 		assertArityError(step("(mod 1)"));
@@ -4933,12 +4936,18 @@ public class CoreTest extends ACVMTest {
 		// set-parent
 		assertEquals(VILLAIN, eval("(set-parent "+VILLAIN+")"));
 		assertEquals(VILLAIN, eval("(do (set-parent "+VILLAIN+") *parent*)"));
+		
+		// Behaviour for a deployed actor with *caller* as parent
+		assertEquals(CVMLong.ONE, eval("(do (def a 1) (def actor (deploy '(set-parent *caller*))) actor/a)"));
+		assertUndeclaredError(step("(do (def a 1) (def actor (deploy '(set-parent *caller*))) actor/b)")); 
+
 			
 		// non-existent parent accounts
 		assertNobodyError(step("(set-parent #99999)")); 
 		
 		// protection against account being it's own parent
 		assertArgumentError(step("(set-parent *address*)")); 
+		
 
 		assertCastError(step("(set-parent :foo)"));
 		assertCastError(step("(set-parent [#8 :foo])"));
