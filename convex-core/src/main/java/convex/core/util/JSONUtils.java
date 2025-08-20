@@ -20,11 +20,13 @@ import convex.core.data.Keyword;
 import convex.core.data.MapEntry;
 import convex.core.data.StringShort;
 import convex.core.data.Strings;
+import convex.core.data.prim.CVMBigInteger;
 import convex.core.data.prim.CVMBool;
 import convex.core.data.prim.CVMChar;
 import convex.core.data.prim.CVMDouble;
 import convex.core.data.prim.CVMLong;
 import convex.core.data.util.BlobBuilder;
+import convex.core.json.JSON5Reader;
 import convex.core.json.JSONReader;
 import convex.core.lang.RT;
 import convex.core.text.Text;
@@ -48,26 +50,25 @@ public class JSONUtils {
 	 * @param o Value to convert to JSON value object
 	 * @return Java Object which represents JSON value
 	 */
-	@SuppressWarnings("unchecked")
-	public static <T> T json(ACell o) {
+	public static Object json(ACell o) {
 		if (o == null)
 			return null;
-		if (o instanceof CVMLong)
-			return (T) (Long) ((CVMLong) o).longValue();
-		if (o instanceof CVMDouble)
-			return (T) (Double) ((CVMDouble) o).doubleValue();
-		if (o instanceof CVMBool)
-			return (T) (Boolean) ((CVMBool) o).booleanValue();
-		if (o instanceof CVMChar)
-			return (T) ((CVMChar) o).toString();
-		if (o instanceof Address)
-			return (T) (Long) ((Address) o).longValue();
-		if (o instanceof AMap) {
-			AMap<?, ?> m = (AMap<?, ?>) o;
-			return (T) JSONUtils.jsonMap(m);
+		if (o instanceof CVMLong cvmLong)
+			return cvmLong.longValue();
+		if (o instanceof CVMBigInteger bi)
+			return bi.big();
+		if (o instanceof CVMDouble cd)
+			return  cd.doubleValue();
+		if (o instanceof CVMBool bool)
+			return  bool.booleanValue();
+		if (o instanceof CVMChar c)
+			return  c.toString();
+		if (o instanceof Address a)
+			return (Long) a.longValue();
+		if (o instanceof AMap m) {
+			return JSONUtils.jsonMap(m);
 		}
-		if (o instanceof ASequence) {
-			ASequence<?> seq = (ASequence<?>) o;
+		if (o instanceof ASequence seq) {
 			long n = seq.count();
 			ArrayList<Object> list = new ArrayList<>();
 			for (long i = 0; i < n; i++) {
@@ -75,10 +76,10 @@ public class JSONUtils {
 				Object v = json(cvmv);
 				list.add(v);
 			}
-			return (T) list;
+			return list;
 		}
 
-		return (T) o.toString();
+		return o.toString();
 	}
 
 	/**
@@ -130,13 +131,22 @@ public class JSONUtils {
 	}
 
 	/**
-	 * Convert any object to JSON
+	 * Convert any object to a String containing valid JSON
 	 * 
 	 * @param value Value to convert to JSON, may be Java or CVM structure
 	 * @return Java String containing valid JSON String
 	 */
 	public static String toString(Object value) {
 		return toJSONString(value).toString();
+	}
+	
+	/**
+	 * Parse JSON as a CVM value. Note JSON is a subset of CVM data types, you get Strings instead of Keywords etc.
+	 * @param jsonString String containing JSON5 data
+	 * @return Parsed JSON value as a CVM data structure
+	 */
+	public static ACell parseJSON5(String jsonString) {
+		return JSON5Reader.read(jsonString);
 	}
 	
 	/**
@@ -157,6 +167,18 @@ public class JSONUtils {
 	public static AString toJSONString(Object value) {
 		BlobBuilder bb = new BlobBuilder();
 		appendJSON(bb, value);
+		return Strings.create(bb.toBlob());
+	}
+	
+	/**
+	 * Convert any object to JSON
+	 * 
+	 * @param value Value to convert to JSON, may be Java or CVM structure
+	 * @return CVM String containing valid JSON
+	 */
+	public static AString toJSONPretty(Object value) {
+		BlobBuilder bb = new BlobBuilder();
+		appendPrettyJSON(bb, RT.cvm(value),0);
 		return Strings.create(bb.toBlob());
 	}
 
@@ -312,6 +334,11 @@ public class JSONUtils {
 			return;
 		}
 		
+		if (value instanceof CVMBigInteger nv) {
+			bb.append(nv.toString());
+			return;
+		}
+		
 		if (value instanceof CVMBool bv) {
 			bb.append(bv.booleanValue() ? Strings.TRUE : Strings.FALSE);
 			return;
@@ -319,17 +346,90 @@ public class JSONUtils {
 		
 		throw new IllegalArgumentException("Can't print as JSON: "+Utils.getClassName(value));
 	}
+	
+	private static final int INDENT=2;
+	
+    private static BlobBuilder appendPrettyJSON(BlobBuilder sb, ACell o, int indent) {
+        if (o instanceof AMap) {
+            int entryIndent = indent + INDENT;
+            sb.append("{\n");
+            AMap<?, ?> m = ((AMap<?, ?>) o);
+            int size = m.size();
+            int pos = 0;
+            for (int i = 0; i < size; i++) {
+            	MapEntry<?,?> me=m.entryAt(i);
+                AString k = keyValue(me.getKey());
+                appendWhitespaceString(sb, entryIndent);
+                sb.append(toString(k));
+                sb.append(": ");
+                int vIndent = entryIndent + k.size() + 4; // indent for value
+                ACell v = me.getValue();
+                appendPrettyJSON(sb, v, vIndent);
+                pos++;
+                if (pos == size) {
+                    sb.append('\n'); // final entry
+                } else {
+                    sb.append(",\n"); // comma for next entry
+                }
+            }
+            appendWhitespaceString(sb, indent);
+            sb.append("}");
+        } else if (o instanceof ASequence) {
+        	ASequence<?> list = (ASequence<?>) o;
+            int size = list.size();
+            int entryIndent = indent + 1;
+            sb.append("[");
+            for (int i = 0; i < size; i++) {
+                if (i > 0) {
+                    sb.append(",\n");
+                    appendWhitespaceString(sb, entryIndent);
+                }
+                ACell v = list.get(i);
+                appendPrettyJSON(sb, v, entryIndent);
+            }
+            sb.append("]");
+        } else {
+            sb.append(toString(o));
+        }
+        return sb;
+    }
+    
+    /**
+     * Convert any CVM value into a JSON style key
+     * @param key
+     * @return
+     */
+    private static AString keyValue(ACell key) {
+		return RT.str(key);
+	}
 
+    /**
+     * Appends a whitespace string of the specified length.
+     *
+     * @param sb    StringBuilder to append the whitespace characters
+     * @param count Number of whitespace characters
+     * @return Updated StringBuilder
+     */
+    private static BlobBuilder appendWhitespaceString(BlobBuilder sb, long count) {
+    	return sb.appendRepeatedByte((byte)' ', count);
+    }
 
 	private static void appendCVMStringQuoted(BlobBuilder bb, CharSequence cs) {
 		int n = cs.length();
+		
 		for (int i = 0; i < n; i++) {
 			char c = cs.charAt(i);
 			AString rep = getReplacementString(c);
 			if (rep != null) {
 				bb.append(rep);
 			} else {
-				bb.append(c);
+				if (Character.isSurrogate(c)) {
+					int codePoint=Character.codePointAt(cs, i);
+					bb.append(CVMChar.create(codePoint));
+					i++;
+				} else {
+					bb.append(c);
+				}
 			}
 		}
 	}

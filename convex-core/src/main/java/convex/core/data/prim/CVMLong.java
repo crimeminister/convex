@@ -373,6 +373,7 @@ public final class CVMLong extends AInteger {
 	@Override
 	public AInteger mod(AInteger base) {
 		if (base instanceof CVMLong) return mod((CVMLong)base);
+		if (base.isNegative()) base=base.negate();
 		return AInteger.create(big().mod(base.big()));
 	}
 	
@@ -451,6 +452,16 @@ public final class CVMLong extends AInteger {
 	@Override
 	public boolean isLong() {
 		return true;
+	}
+
+	@Override
+	public boolean isNegative() {
+		return value<0;
+	}
+
+	@Override
+	public boolean isPositive() {
+		return value>0;
 	}
 
 

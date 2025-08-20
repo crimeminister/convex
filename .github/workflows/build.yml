@@ -1,0 +1,40 @@
+name: tests
+on: [push]
+
+###
+
+jobs:
+
+  test:
+
+    strategy:
+      matrix:
+        java-version:
+          - 21
+        os:
+          - ubuntu-latest
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Prepare Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: ${{ matrix.java-version }}
+      - name: Maven dependencies cache
+        uses: actions/cache@v3
+        with:
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          path: ~/.m2
+          restore-keys: ${{ runner.os }}-m2
+      - name: Install and run tests
+        run: mvn clean install
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: convex-jar
+          path: convex-integration/target/convex.jar # Path to the built .jar
+          retention-days: 7 # Optional: Set retention period

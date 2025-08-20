@@ -71,7 +71,7 @@ public class Init {
 	/**
 	 * Number of coins issued at genesis (one million)
 	 */
-	private static final long GENESIS_COINS=1000000*Coin.GOLD;
+	public static final long GENESIS_COINS=1000000*Coin.GOLD;
 
 	public static final AccountKey DEFAULT_GOV_KEY = AccountKey.fromHex("12EF73ee900eD1FE78A188f59bF8CedE467bAA66f5b60368aFAaA3B9521aB94d");
 	public static final AccountKey DEFAULT_GENESIS_KEY = AccountKey.fromHex("c1d3b0104d55ddf7680181a46e93422e49e2ea9298e37794860f1ef1128427f7");
@@ -230,20 +230,20 @@ public class Init {
 
 		// BASE_PEER_ADDRESS = accts.size();
 		{
-			long peerFunds = supply;
-			supply -= peerFunds;
+			long peerFundsLeft = supply;
+			supply = 0; // all supply used up
 			for (int i = 0; i < keyCount; i++) {
 				AccountKey peerKey = peerKeys.get(i);
 				Address peerController = getGenesisPeerAddress(i);
 	
 				// Divide funds among peers
-				long peerStake = peerFunds / (keyCount-i);
+				long peerStake = peerFundsLeft / (keyCount-i);
 	
 	            // Add peer with specified stake
 				peers = addPeer(peers, peerKey, peerController, peerStake);
-				peerFunds -= peerStake;
+				peerFundsLeft -= peerStake;
 			}
-			assert(peerFunds == 0L);
+			assert(peerFundsLeft == supply);
 		}
 		
 
@@ -488,8 +488,8 @@ public class Init {
 		String symName = row.get(0).toString();
 		String name = row.get(1).toString();
 		String desc = row.get(2).toString();
-		double usdPrice = RT.jvm(row.get(6)); // Value in USD for currency, e.g. USD=1.0, GBP=1.3
-		long decimals = RT.jvm(row.get(5)); // Decimals for lowest currency unit, e.g. USD = 2
+		double usdPrice = (Double) RT.jvm(row.get(6)); // Value in USD for currency, e.g. USD=1.0, GBP=1.3
+		long decimals = (Long) RT.jvm(row.get(5)); // Decimals for lowest currency unit, e.g. USD = 2
 		long usdValue=(Long) RT.jvm(row.get(4)); // USD value of liquidity in currency
 		
 		// number of sub-units in currency
