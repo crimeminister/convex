@@ -140,12 +140,6 @@
 			<version>${bc.version}</version>
 		</dependency>
 
-
-		<dependency>
-			<groupId>org.apache.commons</groupId>
-			<artifactId>commons-text</artifactId>
-			<version>1.12.0</version>
-		</dependency>
 		<dependency>
 			<groupId>com.pholser</groupId>
 			<artifactId>junit-quickcheck-core</artifactId>
@@ -187,11 +181,6 @@
 			<groupId>org.antlr</groupId>
 			<artifactId>antlr4-runtime</artifactId>
 			<version>${antlr.version}</version>
-		</dependency>
-		<dependency>
-			<groupId>org.slf4j</groupId>
-			<artifactId>slf4j-api</artifactId>
-			<version>${slf4j.version}</version>
 		</dependency>
 
 	</dependencies>

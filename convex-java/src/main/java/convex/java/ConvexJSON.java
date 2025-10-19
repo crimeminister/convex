@@ -1,21 +1,24 @@
 package convex.java;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
-import org.apache.hc.client5.http.async.methods.SimpleHttpRequest;
-import org.apache.hc.client5.http.async.methods.SimpleHttpResponse;
-import org.apache.hc.client5.http.async.methods.SimpleRequestBuilder;
-import org.apache.hc.core5.http.ContentType;
 
 import convex.core.ErrorCodes;
 import convex.core.Result;
 import convex.core.crypto.AKeyPair;
 import convex.core.crypto.ASignature;
 import convex.core.cvm.Address;
+import convex.core.data.ACell;
 import convex.core.data.Blob;
-import convex.core.util.JSONUtils;
+import convex.core.json.JSONReader;
+import convex.core.util.JSON;
 import convex.core.util.Utils;
 
 /**
@@ -28,16 +31,20 @@ import convex.core.util.Utils;
  * if concurrent transactions are submitted. Read-only actions (e.g. queries) do not have this
  * limitation.
  */
-public class Convex {
+public class ConvexJSON {
 
 
 	private final String url;
+	private final HttpClient httpClient;
 	private AKeyPair keyPair;
 	private Address address;
 	private Long sequence=null;
 
-	private Convex(String peerServerURL) {
-		this.url=peerServerURL;
+	private ConvexJSON(String peerServerURL) {
+		this.url = peerServerURL;
+		this.httpClient = HttpClient.newBuilder()
+				.connectTimeout(Duration.ofSeconds(30))
+				.build();
 	}
 
 	/**
@@ -47,8 +54,8 @@ public class Convex {
 	 * @param keyPair Key pair to use for this connection
 	 * @return New Convex instance with supplied connection details
 	 */
-	public static Convex connect(String peerServerURL, Address address,AKeyPair keyPair) {
-		Convex convex=new Convex(peerServerURL);
+	public static ConvexJSON connect(String peerServerURL, Address address,AKeyPair keyPair) {
+		ConvexJSON convex=new ConvexJSON(peerServerURL);
 		convex.setAddress(address);
 		convex.setKeyPair(keyPair);
 		return convex;
@@ -63,8 +70,8 @@ public class Convex {
 	 * @param peerServerURL Peer server address, e.g. "https://convex.world"
 	 * @return New Convex instance with supplied connection details
 	 */
-	public static Convex connect(String peerServerURL) {
-		Convex convex=new Convex(peerServerURL);
+	public static ConvexJSON connect(String peerServerURL) {
+		ConvexJSON convex=new ConvexJSON(peerServerURL);
 		return convex;
 	}
 
@@ -182,7 +189,7 @@ public class Convex {
 		if (keyPair==null) throw new IllegalArgumentException("createAccount requires a non-null valid keyPair");
 		HashMap<String,Object> req=new HashMap<>();
 		req.put("accountKey", keyPair.getAccountKey().toHexString());
-		String json=JSONUtils.toString(req);
+		String json=JSON.toString(req);
 		Map<String,Object> response= doPost(url+"/api/v1/createAccount",json);
 		Address address=Address.parse(response.get("address"));
 		if (address==null) throw new RuntimeException("Account creation failed: "+response);
@@ -283,7 +290,7 @@ public class Convex {
 		HashMap<String,Object> req=new HashMap<>();
 		req.put("address", address.longValue());
 		req.put("amount", requestedAmount);
-		String json=JSONUtils.toString(req);
+		String json=JSON.toString(req);
 
 		return doPost(url+"/api/v1/faucet",json);
 	}
@@ -366,7 +373,7 @@ public class Convex {
 		req.put("hash", message.toHexString());
 		req.put("accountKey", getKeyPair().getAccountKey().toHexString());
 		req.put("sig", sd.toHexString());
-		String json=JSONUtils.toString(req);
+		String json=JSON.toString(req);
 		return doPostAsync(url+"/api/v1/transaction/submit",json);
 	}
 
@@ -384,7 +391,7 @@ public class Convex {
 		HashMap<String,Object> req=new HashMap<>();
 		if (a!=null) req.put("address", a);
 		req.put("source", code);
-		String json=JSONUtils.toString(req);
+		String json=JSON.toString(req);
 		return json;
 	}
 	
@@ -409,35 +416,40 @@ public class Convex {
 	}
 
 	private CompletableFuture<Map<String,Object>> doPostAsync(String endPoint, String json) {
-		SimpleHttpRequest post=SimpleRequestBuilder.post(endPoint)
-				.setBody(json, ContentType.APPLICATION_JSON)
+		HttpRequest request = HttpRequest.newBuilder()
+				.uri(URI.create(endPoint))
+				.header("Content-Type", "application/json")
+				.POST(HttpRequest.BodyPublishers.ofString(json))
 				.build();
-		return doRequest(post);
+		return doRequest(request);
 	}
 
 	private CompletableFuture<Map<String,Object>> doGetAsync(String endPoint) {
-		SimpleHttpRequest post=SimpleRequestBuilder.get(endPoint)
+		HttpRequest request = HttpRequest.newBuilder()
+				.uri(URI.create(endPoint))
+				.GET()
 				.build();
-		return doRequest(post);
+		return doRequest(request);
 	}
 
 	/**
 	 * Makes a HTTP request as a CompletableFuture
 	 * @param request Request object
-	 * @param body Body of request (as String, should normally be valid JSON)
 	 * @return Future to be filled with JSON response.
 	 */
-	private CompletableFuture<Map<String,Object>> doRequest(SimpleHttpRequest request) {
+	@SuppressWarnings("unchecked")
+	private CompletableFuture<Map<String,Object>> doRequest(HttpRequest request) {
 		try {
-			CompletableFuture<SimpleHttpResponse> future=HTTPClients.execute(request);
+			CompletableFuture<HttpResponse<String>> future = httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString());
 			return future.thenApply(response->{
-				String rbody=null;
+				String rbody = null;
 				try {
-					rbody=response.getBody().getBodyText();
-					return JSON.parse(rbody);
+					rbody = response.body();
+					ACell json = JSONReader.read(response.body());
+					return (Map<String,Object>)JSON.json(json);
 				} catch (Exception e) {
 					if (rbody==null) rbody="<Body not readable as String>";
-					Result res= Result.error(ErrorCodes.FORMAT,"Error in response "+response+" because can't parse body: " +rbody);
+					Result res = Result.error(ErrorCodes.FORMAT,"Error in response "+response+" because can't parse body: " +rbody);
 					return res.toJSON();
 				}
 			});

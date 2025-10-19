@@ -2,7 +2,6 @@ package convex.restapi.api;
 
 import java.util.Collections;
 import java.util.Enumeration;
-import java.util.HashMap;
 import java.util.Map;
 
 import convex.api.ContentTypes;
@@ -15,13 +14,20 @@ import convex.core.data.Blob;
 import convex.core.data.Format;
 import convex.core.data.Keyword;
 import convex.core.data.Strings;
+import convex.core.data.util.BlobBuilder;
+import convex.core.text.StringUtils;
+import convex.core.exceptions.ParseException;
 import convex.core.lang.RT;
 import convex.core.lang.Reader;
-import convex.java.JSON;
+import convex.core.util.JSON;
 import io.javalin.Javalin;
 import io.javalin.http.BadRequestResponse;
 import io.javalin.http.Context;
 
+/**
+ * Base class for generic Convex REST API
+ * Contains useful common functionality for all API implementations.
+ */
 public abstract class AGenericAPI {
 
 	/**
@@ -40,6 +46,12 @@ public abstract class AGenericAPI {
 					type=ContentTypes.CVX_RAW;
 					break;
 				}
+				if (a.contains(ContentTypes.TEXT)) {
+					type=ContentTypes.TEXT;
+				}
+				if (a.contains(ContentTypes.HTML)) {
+					type=ContentTypes.HTML;
+				}
 				if (a.contains(ContentTypes.CVX)) {
 					type=ContentTypes.CVX;
 				}
@@ -56,9 +68,9 @@ public abstract class AGenericAPI {
 	 */
 	protected Map<String, Object> getJSONBody(Context ctx) {
 		try {
-			Map<String, Object> req= JSON.toMap(ctx.body());
+			Map<String, Object> req= RT.jvm(JSON.parse(ctx.body()));
 			return req;
-		} catch (IllegalArgumentException e) {
+		} catch (IllegalArgumentException | ParseException e) {
 			throw new BadRequestResponse(jsonError("Invalid JSON body"));
 		}
 	}
@@ -69,10 +81,19 @@ public abstract class AGenericAPI {
 	 * @return CVM Value
 	 * @throws BadRequestResponse if the body is invalid
 	 */
+	@SuppressWarnings("unchecked")
 	protected <T extends ACell> T getCVXBody(Context ctx) {
 		try {
-			@SuppressWarnings("unchecked")
-			T req= (T) Reader.read(ctx.body());
+			String contentType = ctx.contentType();
+			T req;
+			
+			// Check for JSON content type and use JSON.parse
+			if (ContentTypes.JSON.equals(contentType)) {
+				req = (T) JSON.parse(ctx.body());
+			} else {
+				// Default to Reader.read for other content types
+				req = (T) Reader.read(ctx.body());
+			}
 			return req;
 		} catch (Exception e) {
 			throw new BadRequestResponse(jsonError("Invalid CVX body"));
@@ -104,33 +125,61 @@ public abstract class AGenericAPI {
 		return "{\"error\":\"" + string + "\"}";
 	}
 
-
-	public void prepareResult(Context ctx, Result r) {
-		if (r.getSource()==null) {
-			r=r.withSource(SourceCodes.SERVER);
+	/**
+	 * Set content to a CVM Result according to requested content type. Updates status according to result error status
+	 * @param ctx Javalin context
+	 * @param resultContent 
+	 */
+	public void setResult(Context ctx, Result resultContent) {
+		if (resultContent.getSource()==null) {
+			resultContent=resultContent.withSource(SourceCodes.SERVER);
 		}
 		
-		int status=statusForResult(r);
+		int status=statusForResult(resultContent);
 		ctx.status(status);
+		
+		setContent(ctx,(ACell)resultContent);
+	}
+	
+	/**
+	 * Set content to a CVM Value according to requested content type. Updates status according to result error status
+	 * @param ctx Javalin context
+	 * @param content Return content
+	 */
+	public void setContent(Context ctx, ACell content) {
 		
 		String type = calcResponseContentType(ctx);
 		
 		if (type.equals(ContentTypes.JSON)) {
 			ctx.contentType(ContentTypes.JSON);
-			HashMap<String, Object> resultJSON = r.toJSON();
-			ctx.result(JSON.toPrettyString(resultJSON));
+			if (content instanceof Result r) {
+				// Special format for CVM results at top level
+				Object jsonResult=r.toJSON();
+				ctx.result(JSON.printPretty(jsonResult).getInputStream());
+			} else {
+			
+				ctx.result(JSON.printPretty(content).getInputStream());
+			}
 		} else if (type.equals(ContentTypes.CVX)) {
 			ctx.contentType(ContentTypes.CVX);
-			AString rs=RT.print(r);
+			AString rs=RT.print(content);
 			if (rs==null) {
-				rs=RT.print(Result.error(ErrorCodes.LIMIT, Strings.PRINT_EXCEEDED).withSource(SourceCodes.PEER));
+				setResult(ctx,Result.error(ErrorCodes.LIMIT, Strings.PRINT_EXCEEDED).withSource(SourceCodes.PEER));
 				ctx.status(403); // Forbidden because of result size
+				return;
 			}
 			ctx.result(rs.toString());
 		} else if (type.equals(ContentTypes.CVX_RAW)) {
 			ctx.contentType(ContentTypes.CVX_RAW);
-			Blob b=Format.encodeMultiCell(r, true);
+			Blob b=Format.encodeMultiCell(content, true);
 			ctx.result(b.getBytes());
+		} else if (type.equals(ContentTypes.HTML)) {
+			ctx.contentType(ContentTypes.HTML);
+			AString htmlContent = formatAsHTML(content);
+			ctx.result(htmlContent.toString());
+		} else if (type.equals(ContentTypes.TEXT)) {
+			ctx.contentType(ContentTypes.TEXT);
+			ctx.result("Unsupported content type: "+type);
 		} else {
 			ctx.contentType(ContentTypes.TEXT);
 			ctx.status(415); // unsupported media type for "Accept" header
@@ -157,4 +206,30 @@ public abstract class AGenericAPI {
 		int status = 422;
 		return status;
 	}
+	
+	/**
+	 * Format CVM data as minimal HTML
+	 * @param content CVM data to format
+	 * @return HTML string representation
+	 */
+	private AString formatAsHTML(ACell content) {
+		BlobBuilder bb = new BlobBuilder();
+		
+		// Minimal HTML structure
+		bb.append("<!DOCTYPE html>\n<html><head><title>Convex API Result</title><meta charset=\"UTF-8\"></head><body><pre>\n");
+		
+		// Format the content
+		try {
+			AString jsonString = JSON.printPretty(content);
+			bb.append(StringUtils.escapeHtml(jsonString));
+		} catch (Exception e) {
+			bb.append("Error formatting result: ");
+			bb.append(StringUtils.escapeHtml(Strings.create(e.getMessage())));
+		}
+		
+		bb.append("\n</pre></body></html>");
+		
+		return bb.getCVMString();
+	}
+	
 }
