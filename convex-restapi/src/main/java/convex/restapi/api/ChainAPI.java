@@ -1,19 +1,26 @@
 package convex.restapi.api;
 
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
+import javax.imageio.ImageIO;
+
 import convex.api.ContentTypes;
 import convex.api.Convex;
 import convex.core.Coin;
 import convex.core.ErrorCodes;
 import convex.core.Result;
+import convex.core.cpos.Block;
+import convex.core.cpos.Order;
 import convex.core.crypto.AKeyPair;
 import convex.core.crypto.ASignature;
 import convex.core.crypto.Ed25519Signature;
+import convex.core.crypto.IdenticonBuilder;
 import convex.core.cvm.AccountStatus;
 import convex.core.cvm.Address;
 import convex.core.cvm.Keywords;
@@ -21,9 +28,11 @@ import convex.core.cvm.PeerStatus;
 import convex.core.cvm.Symbols;
 import convex.core.cvm.transactions.ATransaction;
 import convex.core.cvm.transactions.Invoke;
+import convex.core.data.AArrayBlob;
 import convex.core.data.ABlob;
 import convex.core.data.ACell;
 import convex.core.data.AMap;
+import convex.core.data.AVector;
 import convex.core.data.AccountKey;
 import convex.core.data.Blob;
 import convex.core.data.Blobs;
@@ -38,12 +47,11 @@ import convex.core.data.prim.AInteger;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.MissingDataException;
+import convex.core.exceptions.ParseException;
 import convex.core.exceptions.ResultException;
 import convex.core.lang.RT;
 import convex.core.lang.Reader;
-import convex.core.util.JSONUtils;
-import convex.core.util.Utils;
-import convex.java.JSON;
+import convex.core.util.JSON;
 import convex.restapi.RESTServer;
 import convex.restapi.model.CreateAccountRequest;
 import convex.restapi.model.CreateAccountResponse;
@@ -59,6 +67,7 @@ import io.javalin.Javalin;
 import io.javalin.http.BadRequestResponse;
 import io.javalin.http.Context;
 import io.javalin.http.ForbiddenResponse;
+import io.javalin.http.InternalServerErrorResponse;
 import io.javalin.http.NotFoundResponse;
 import io.javalin.openapi.HttpMethod;
 import io.javalin.openapi.OpenApi;
@@ -74,7 +83,6 @@ public class ChainAPI extends ABaseAPI {
 
 	public ChainAPI(RESTServer restServer) {
 		super(restServer);
-		convex = restServer.getConvex();
 	}
 
 	private static final String ROUTE = "/api/v1/";
@@ -93,10 +101,19 @@ public class ChainAPI extends ABaseAPI {
 
 		app.post(prefix + "transact", this::transact);
 
-		app.get(prefix + "accounts/<addr>", this::queryAccount);
-		app.get(prefix + "peers/<addr>", this::queryPeer);
+		app.get(prefix + "accounts/{addr}", this::queryAccount);
+		app.get(prefix + "peers/{addr}", this::queryPeer);
 
 		app.get(prefix + "data/<hash>", this::getData);
+		app.get(prefix + "tx", this::getTransaction);
+		
+		app.get(prefix + "blocks", this::getBlocks);
+		app.get(prefix + "blocks/{blockNum}", this::getBlock);
+		
+		app.get("/identicon/{hex}", this::getIdenticon);
+		
+		convex = restServer.getConvex();
+
 	}
 
 	@OpenApi(path = ROUTE + "data/{hash}", 
@@ -127,8 +144,220 @@ public class ChainAPI extends ABaseAPI {
 		} catch (Exception e) {
 			throw new BadRequestResponse(jsonError("Error: " + e.getMessage()));
 		}
-		String ds = Utils.print(d);
-		ctx.result(ds);
+		setContent(ctx,d);
+	}
+
+	@OpenApi(path = ROUTE + "tx", 
+			versions="peer-v1",
+			methods = HttpMethod.GET, 
+			tags = { "Transactions"},
+			summary = "Get transaction by hash", 
+			operationId = "getTransaction", 
+			queryParams = {
+					@OpenApiParam(
+							name = "hash", 
+							description = "Transaction hash as a hex string. Leading '0x' is optional but discouraged.", 
+							required = true, 
+							type = String.class, 
+							example = "0x1234567812345678123456781234567812345678123456781234567812345678") },
+			responses = {
+				@OpenApiResponse(
+						status = "200", 
+						description = "Transaction found", 
+						content = {
+							@OpenApiContent(
+									type = "application/json") }),
+				@OpenApiResponse(
+						status = "400", 
+						description = "Bad request, invalid hash format"),
+				@OpenApiResponse(
+						status = "404", 
+						description = "Transaction not found")
+			})
+	public void getTransaction(Context ctx) {
+		String hashParam = ctx.queryParam("hash");
+		if (hashParam == null) {
+			throw new BadRequestResponse("Missing required query parameter: hash");
+		}
+		
+		Hash h = Hash.parse(hashParam);
+		if (h == null) {
+			throw new BadRequestResponse("Invalid hash: " + hashParam);
+		}
+
+		SignedData<ATransaction> transaction = server.getPeer().getTransaction(h);
+		if (transaction == null) {
+			throw new NotFoundResponse("Transaction not found: " + hashParam);
+		}
+
+		ctx.result(JSON.toStringPretty(transaction));
+	}
+
+	@OpenApi(path = ROUTE + "blocks", 
+			versions="peer-v1",
+			methods = HttpMethod.GET, 
+			tags = { "Blocks"},
+			summary = "Get blocks with pagination", 
+			operationId = "getBlocks", 
+			queryParams = {
+					@OpenApiParam(
+							name = "offset", 
+							description = "Starting index for blocks (0-based)", 
+							required = false, 
+							type = Long.class, 
+							example = "0"),
+					@OpenApiParam(
+							name = "limit", 
+							description = "Maximum number of blocks to return", 
+							required = false, 
+							type = Long.class, 
+							example = "100") },
+			responses = {
+				@OpenApiResponse(
+						status = "200", 
+						description = "Blocks retrieved successfully", 
+						content = {
+							@OpenApiContent(
+									type = "application/json") }),
+				@OpenApiResponse(
+						status = "400", 
+						description = "Bad request, invalid offset or limit parameters")
+			})
+	public void getBlocks(Context ctx) {
+		// Get pagination parameters
+		String offsetParam = ctx.queryParam("offset");
+		String limitParam = ctx.queryParam("limit");
+		
+		long offset = 0;
+		long limit = 100; // Default limit
+		
+		try {
+			if (offsetParam != null) {
+				offset = Long.parseLong(offsetParam);
+				if (offset < 0) {
+					throw new BadRequestResponse("Offset must be non-negative");
+				}
+			}
+			if (limitParam != null) {
+				limit = Long.parseLong(limitParam);
+				if (limit <= 0 || limit > 1000) {
+					throw new BadRequestResponse("Limit must be between 1 and 1000");
+				}
+			}
+		} catch (NumberFormatException e) {
+			throw new BadRequestResponse("Invalid offset or limit parameter: must be a number");
+		}
+		
+		// Get blocks from peer order
+		Order peerOrder = server.getPeer().getPeerOrder();
+		AVector<SignedData<Block>> blocks = peerOrder.getBlocks();
+		long totalBlocks = blocks.count();
+		
+		// Get finality point for determining if blocks are finalised
+		long finalityPoint = server.getPeer().getFinalityPoint();
+		
+		// Calculate actual range
+		long start = Math.min(offset, totalBlocks);
+		long end = Math.min(start + limit, totalBlocks);
+		
+		// Build response
+		HashMap<String, Object> response = new HashMap<>();
+		response.put("count", totalBlocks);
+		response.put("offset", offset);
+		
+		// Extract block data for the requested range
+		java.util.List<Map<String, Object>> items = new java.util.ArrayList<>();
+		for (long i = start; i < end; i++) {
+			SignedData<Block> signedBlock = blocks.get(i);
+			HashMap<String, Object> blockData = getBlockData(signedBlock);
+			blockData.put("index", i);
+			blockData.put("finalised", i < finalityPoint);
+			
+			items.add(blockData);
+		}
+		
+		response.put("items", items);
+		
+		ctx.result(JSON.toStringPretty(response));
+	}
+
+	/**
+	 * Constructs a block data map from a SignedData<Block>
+	 * @param signedBlock The signed block data
+	 * @return HashMap containing block information
+	 */
+	private HashMap<String, Object> getBlockData(SignedData<Block> signedBlock) {
+		Block block = signedBlock.getValue();
+		
+		HashMap<String, Object> blockData = new HashMap<>();
+		blockData.put("timestamp", block.getTimeStamp());
+		blockData.put("peer", signedBlock.getAccountKey().toString());
+		blockData.put("hash", signedBlock.getHash().toString());
+		blockData.put("transactionCount", block.getTransactions().count());
+		
+		return blockData;
+	}
+
+	@OpenApi(path = ROUTE + "blocks/{blockNum}", 
+			versions="peer-v1",
+			methods = HttpMethod.GET, 
+			tags = { "Blocks"},
+			summary = "Get a specific block by block number", 
+			operationId = "getBlock", 
+			pathParams = {
+					@OpenApiParam(
+							name = "blockNum", 
+							description = "Block number (0-based index)", 
+							required = true, 
+							type = Long.class, 
+							example = "0") },
+			responses = {
+				@OpenApiResponse(
+						status = "200", 
+						description = "Block found", 
+						content = {
+							@OpenApiContent(
+									type = "application/json") }),
+				@OpenApiResponse(
+						status = "400", 
+						description = "Bad request, invalid block number format"),
+				@OpenApiResponse(
+						status = "404", 
+						description = "Block not found")
+			})
+	public void getBlock(Context ctx) {
+		String blockNumParam = ctx.pathParam("blockNum");
+		long blockNum;
+		
+		try {
+			blockNum = Long.parseLong(blockNumParam);
+			if (blockNum < 0) {
+				throw new BadRequestResponse("Block number must be non-negative");
+			}
+		} catch (NumberFormatException e) {
+			throw new BadRequestResponse("Invalid block number format: must be a number");
+		}
+		
+		// Get blocks from peer order
+		Order peerOrder = server.getPeer().getPeerOrder();
+		AVector<SignedData<Block>> blocks = peerOrder.getBlocks();
+		long totalBlocks = blocks.count();
+		
+		// Check if block exists
+		if (blockNum >= totalBlocks) {
+			throw new NotFoundResponse("Block not found: " + blockNum);
+		}
+		
+		// Get finality point for determining if block is finalised
+		long finalityPoint = server.getPeer().getFinalityPoint();
+		
+		// Get the specific block
+		SignedData<Block> signedBlock = blocks.get(blockNum);
+		HashMap<String, Object> blockData = getBlockData(signedBlock);
+		blockData.put("index", blockNum);
+		blockData.put("finalised", blockNum < finalityPoint);
+		
+		ctx.result(JSON.toStringPretty(blockData));
 	}
 
 	@OpenApi(path = ROUTE + "createAccount", 
@@ -179,7 +408,7 @@ public class ChainAPI extends ABaseAPI {
 				convex.transferSync(a, amt.longValue());
 			}
 		} catch (ResultException e) {
-			prepareResult(ctx,e.getResult());
+			setContent(ctx,e.getResult());
 			return;
 		}
 		ctx.result("{\"address\": " + a.longValue() + "}");
@@ -220,7 +449,7 @@ public class ChainAPI extends ABaseAPI {
 		Result r = convex.querySync(Lists.of(Symbols.ACCOUNT, addr));
 
 		if (r.isError()) {
-			prepareResult(ctx,r);
+			setContent(ctx,r);
 			return;
 		}
 
@@ -244,7 +473,7 @@ public class ChainAPI extends ABaseAPI {
 		hm.put("sequence", as.getSequence());
 		hm.put("type", isUser ? "user" : "actor");
 
-		ctx.result(JSON.toPrettyString(hm));
+		ctx.result(JSON.toString(hm));
 	}
 
 	public void queryPeer(Context ctx) throws InterruptedException {
@@ -259,7 +488,7 @@ public class ChainAPI extends ABaseAPI {
 		Result r = convex.querySync(Reader.read("(get-in *state* [:peers " + addr + "])"));
 
 		if (r.isError()) {
-			prepareResult(ctx,r);
+			setContent(ctx,r);
 			return;
 		}
 
@@ -268,9 +497,7 @@ public class ChainAPI extends ABaseAPI {
 			throw new NotFoundResponse("Peer does not exist: "+addrParam);
 		}
 
-		Object hm = JSON.from(as);
-
-		ctx.result(JSON.toPrettyString(hm));
+		ctx.result(JSON.toString(as));
 	}
 
 	private static Keyword K_FAUCET=Keyword.create("faucet");
@@ -280,9 +507,9 @@ public class ChainAPI extends ABaseAPI {
 			methods = HttpMethod.POST, 
 			operationId = "faucetRequest", 
 			tags = { "Account"},
-			summary = "Request coins from a Fucet provider. Requires a peer winning to accept faucet requests.", 
+			summary = "Request coins from a Faucet provider. Requires a peer winning to accept faucet requests.", 
 			requestBody = @OpenApiRequestBody(
-				description = "Fauncet request, must provide an address for coins to be deposited in", 
+				description = "Faucet request, must provide an address for coins to be deposited in", 
 				content = {@OpenApiContent(
 								from = FaucetRequest.class, 
 								type = "application/json", 
@@ -333,12 +560,12 @@ public class ChainAPI extends ABaseAPI {
 		Result r = convex.transactSync("(transfer " + addr + " " + amt + ")");
 		if (r.isError()) {
 			HashMap<String, Object> hm = r.toJSON();
-			ctx.result(JSON.toPrettyString(hm));
+			ctx.result(JSON.toString(hm));
 			ctx.status(422);
 		} else {
 			req.put("address", RT.castLong(addr).longValue());
 			req.put("amount", r.getValue());
-			ctx.result(JSON.toPrettyString(req));
+			ctx.result(JSON.toString(req));
 		}
 	}
 
@@ -354,7 +581,7 @@ public class ChainAPI extends ABaseAPI {
 	}
 	
 	protected void failBadRequest(HashMap<String, Object> result) {
-		throw new BadRequestResponse(JSON.toPrettyString(result));
+		throw new BadRequestResponse(JSON.toString(result));
 	}
 
 	private void checkFaucetAllowed() {
@@ -421,7 +648,7 @@ public class ChainAPI extends ABaseAPI {
 				sequence = convex.getSequence(addr)+1;
 			}
 		} catch (ResultException e) {
-			prepareResult(ctx,e.getResult());
+			setContent(ctx,e.getResult());
 			return;
 		}
 
@@ -429,10 +656,11 @@ public class ChainAPI extends ABaseAPI {
 		Ref<ATransaction> ref = Cells.persist(trans).getRef();
 		HashMap<String, Object> rmap = new HashMap<>();
 		rmap.put("source", srcValue);
-		rmap.put("address", JSONUtils.json(addr));
+		rmap.put("address", JSON.json(addr));
 		rmap.put("hash", SignedData.getMessageForRef(ref).toHexString());
 		rmap.put("sequence", sequence);
-		ctx.result(JSON.toPrettyString(rmap));
+		ctx.status(200);
+		ctx.result(JSON.toString(rmap));
 	}
 
 
@@ -451,7 +679,7 @@ public class ChainAPI extends ABaseAPI {
 							exampleObjects = {
 									@OpenApiExampleProperty(name = "address", value = "12"),
 									@OpenApiExampleProperty(name = "source", value = "(* 2 3)"),
-									@OpenApiExampleProperty(name = "seed", value = "0x690f51d2eb7163f820fdb861b33d5b077034f09923a2d31946ac199f28639506")
+									@OpenApiExampleProperty(name = "seed", value = "0x0026a11f81cd2a7df7e00e3a55c4e9817b3bb4d3ed6252117d7d22923d4be24d")
 								}
 							),
 							@OpenApiContent(
@@ -459,15 +687,24 @@ public class ChainAPI extends ABaseAPI {
 							)}),
 			responses = {
 					@OpenApiResponse(status = "200", 
-							description = "Transaction executed sucessfully", 
+							description = "Transaction executed successfully", 
+							
 							content = {
 								@OpenApiContent(
+									
 										from=ResultResponse.class,
 										type = "application/json", 
 										exampleObjects = {
-											@OpenApiExampleProperty(name = "value", value = "6")
+											@OpenApiExampleProperty(name = "value", value = "6"),
+											@OpenApiExampleProperty(name = "info", objects={ 
+												@OpenApiExampleProperty(name = "juice", value = "581"),
+												@OpenApiExampleProperty(name = "tx", value = "0x9e328480aef5490ca864c1c1d8881c34b51e8499b59145d3bd6e06bcc6f1ddaf"),
+												@OpenApiExampleProperty(name = "source", value = "SERVER"),
+												@OpenApiExampleProperty(name = "fees", value = "13810"),
+												@OpenApiExampleProperty(name = "loc", value = "[0, 0]")
+											})										
 										}
-										)}),
+								)}),
 					@OpenApiResponse(status = "422", 
 					description = "Transaction failed", 
 					content = {
@@ -519,7 +756,7 @@ public class ChainAPI extends ABaseAPI {
 				long sequence = convex.getSequence(addr);
 				nextSeq = sequence + 1;
 			} catch (ResultException e) {
-				prepareResult(ctx,e.getResult());
+				setContent(ctx,e.getResult());
 				return;
 			} 
 		
@@ -529,7 +766,7 @@ public class ChainAPI extends ABaseAPI {
 		} 
 
 		Result r = convex.transactSync(sd);
-		prepareResult(ctx,r);
+		setContent(ctx,r);
 	}
 
 	/**
@@ -538,11 +775,7 @@ public class ChainAPI extends ABaseAPI {
 	 * @return Object to interpret as code
 	 */
 	private static ACell readCode(Object srcValue) {
-		try {
-			return Reader.read((String) srcValue);
-		} catch (Exception e) {
-			throw new BadRequestResponse(jsonError("Source code could not be read: " + e.getMessage()));
-		}
+		return Reader.read((String) srcValue);
 	}
 
 	@OpenApi(path = ROUTE+"transaction/submit",
@@ -550,7 +783,7 @@ public class ChainAPI extends ABaseAPI {
 			methods = HttpMethod.POST,
 			operationId = "transactionSubmit",
 			tags= {"Transactions"},
-			summary="Submit a pre-prepared Convex transaction. If sucessful, will return transaction result.",
+			summary="Submit a pre-prepared Convex transaction. If successful, will return transaction result.",
 			requestBody = @OpenApiRequestBody(
 					description = "Transaction preparation request",
 					content= @OpenApiContent(
@@ -565,9 +798,16 @@ public class ChainAPI extends ABaseAPI {
 										from=ResultResponse.class,
 										type = "application/json", 
 										exampleObjects = {
-											@OpenApiExampleProperty(name = "value", value = "6")
-										}
-										)}),
+											@OpenApiExampleProperty(name = "value", value = "6"),
+											@OpenApiExampleProperty(name = "info", 
+											objects={ 
+												@OpenApiExampleProperty(name = "juice", value = "581"),
+												@OpenApiExampleProperty(name = "tx", value = "0x9e328480aef5490ca864c1c1d8881c34b51e8499b59145d3bd6e06bcc6f1ddaf"),
+												@OpenApiExampleProperty(name = "source", value = "SERVER"),
+												@OpenApiExampleProperty(name = "fees", value = "13810"),
+												@OpenApiExampleProperty(name = "loc", value = "[0, 0]")
+											})
+										})}),
 					@OpenApiResponse(status = "503", 
 							description = "Transaction service unavailable" )
 				}
@@ -591,11 +831,11 @@ public class ChainAPI extends ABaseAPI {
 				throw new BadFormatException("Value with hash " + h + " is not a transaction: can't submit it!");
 			trans = (ATransaction) maybeTrans;
 		} catch (MissingDataException e) {
-			prepareResult(ctx,Result.error(ErrorCodes.MISSING, "Missing data for transaction. Possible need to prepare first?"));
+			setContent(ctx,Result.error(ErrorCodes.MISSING, "Missing data for transaction. Possible need to prepare first?"));
 			ctx.status(404);
 			return;
 		} catch (BadFormatException e) {
-			prepareResult(ctx,Result.error(ErrorCodes.FORMAT, "Bad format: "+e));
+			setContent(ctx,Result.error(ErrorCodes.FORMAT, "Bad format: "+e));
 			ctx.status(400);
 			return;
 		} 
@@ -621,7 +861,7 @@ public class ChainAPI extends ABaseAPI {
 
 		SignedData<ATransaction> sd = SignedData.create(key, sig, trans.getRef());
 		Result r = convex.transactSync(sd);
-		prepareResult(ctx,r);
+		setContent(ctx,r);
 	}
 
 	@OpenApi(path = ROUTE+"query",
@@ -647,24 +887,24 @@ public class ChainAPI extends ABaseAPI {
 				}),
 		responses = {
 				@OpenApiResponse(status = "200", 
-						description = "Query executed", 
+						description = "Query executed. Result could be a CVM error, but query itself was valid", 
 						content = {
 							@OpenApiContent(
 									from=ResultResponse.class,
 									type = "application/json", 
 									exampleObjects = {
-										@OpenApiExampleProperty(name = "value", value = "6")
+										@OpenApiExampleProperty(name = "result", value = "6")
 									}
 									)}),
 				@OpenApiResponse(status = "422", 
-				description = "Query failed", 
+				description = "Query failed due to bad input", 
 				content = {
 					@OpenApiContent(
 							from=ResultResponse.class,
 							type = "application/json", 
 							exampleObjects = {
-								@OpenApiExampleProperty(name = "errorCode", value = ":SYNTAX"),
-								@OpenApiExampleProperty(name = "value", value = "Bad syntax")
+								@OpenApiExampleProperty(name = "error", value = "SYNTAX"),
+								@OpenApiExampleProperty(name = "result", value = "Bad syntax")
 							}
 							)}),
 				@OpenApiResponse(status = "503", 
@@ -672,27 +912,90 @@ public class ChainAPI extends ABaseAPI {
 			}
 		)
 	public void query(Context ctx) throws InterruptedException {
-		Address addr;
-		ACell form;
-		String type=ctx.req().getContentType();
-		
-		if (ContentTypes.CVX.equals(type)) {
-			ACell rbody=getCVXBody(ctx);
-			if (!(rbody instanceof AMap)) {
-				throw new BadRequestResponse("query body is not a map.");
+		try {
+			Address addr;
+			ACell form;
+			String type=ctx.req().getContentType();
+			
+			if (ContentTypes.CVX.equals(type)) {
+				ACell rbody=getCVXBody(ctx);
+				if (!(rbody instanceof AMap)) {
+					throw new BadRequestResponse("query body is not a map.");
+				}
+				@SuppressWarnings("unchecked")
+				AMap<Keyword,ACell> req=(AMap<Keyword, ACell>) rbody;
+				addr=Address.parse(RT.get(req, Keywords.ADDRESS));
+				form=RT.get(req, Keywords.SOURCE);
+			} else {
+				Map<String, Object> req = getJSONBody(ctx);
+				// System.out.println("query data: "+req+ " of type "+Utils.getClassName(req));
+				addr = Address.parse(req.get("address"));
+				Object srcValue = req.get("source");
+				// System.out.println("query source: "+srcValue);
+				form = readCode(srcValue);
 			}
-			@SuppressWarnings("unchecked")
-			AMap<Keyword,ACell> req=(AMap<Keyword, ACell>) rbody;
-			addr=Address.parse(RT.get(req, Keywords.ADDRESS));
-			form=RT.get(req, Keywords.SOURCE);
-		} else {
-			Map<String, Object> req = getJSONBody(ctx);
-			addr = Address.parse(req.get("address"));
-			Object srcValue = req.get("source");
-			form = readCode(srcValue);
+	
+			Result r = convex.querySync(form, addr);
+			setContent(ctx,r);
+		} catch (ParseException e) {
+			throw new BadRequestResponse(e.getMessage());
 		}
-
-		Result r = convex.querySync(form, addr);
-		prepareResult(ctx,r);
+	}
+	
+	@OpenApi(path = "/identicon/{hex}", 
+			versions="peer-v1",
+			methods = HttpMethod.GET, 
+			tags = { "Utility"},
+			summary = "Get the identicon for a hash / public key", 
+			operationId = "getIdenticon", 
+			pathParams = {
+					@OpenApiParam(
+							name = "hex", 
+							description = "Hex string. Leading '0x' is optional but discouraged.", 
+							required = true, 
+							type = String.class, 
+							example = "0x1234567812345678123456781234567812345678123456781234567812345678") },
+			responses = {
+				@OpenApiResponse(
+						status = "200", 
+						description = "Transaction found", 
+						content = {
+							@OpenApiContent(
+									type = "image/png") }),
+				@OpenApiResponse(
+						status = "400", 
+						description = "Bad request, invalid hash format")
+			})
+	public void getIdenticon(Context ctx) {
+		String hexParam = ctx.pathParam("hex");
+		
+		// Parse hex string to blob
+		AArrayBlob data = Blob.parse(hexParam);
+		if (data == null) {
+			throw new BadRequestResponse("Invalid hex string for identicon: " + hexParam);
+		}
+		
+		try {
+			// Generate identicon data
+			int[] identiconData = IdenticonBuilder.build(data);
+			
+			// Create BufferedImage from identicon data
+			BufferedImage image = new BufferedImage(IdenticonBuilder.SIZE, IdenticonBuilder.SIZE, BufferedImage.TYPE_INT_RGB);
+			image.setRGB(0, 0, IdenticonBuilder.SIZE, IdenticonBuilder.SIZE, identiconData, 0, IdenticonBuilder.SIZE);
+			
+			// Convert to PNG bytes
+			ByteArrayOutputStream baos = new ByteArrayOutputStream();
+			ImageIO.write(image, "PNG", baos);
+			byte[] pngBytes = baos.toByteArray();
+			
+			// Set response headers for caching and content type
+			ctx.header("Content-Type", "image/png");
+			ctx.header("Cache-Control", "public, max-age=31536000"); // 1 year cache
+			ctx.header("ETag", "\"" + data.toHexString() + "\""); // Use data as ETag
+			ctx.result(pngBytes);
+			
+		} catch (IOException e) {
+			throw new InternalServerErrorResponse("Failed to generate identicon: " + e.getMessage());
+		}
 	}
 }

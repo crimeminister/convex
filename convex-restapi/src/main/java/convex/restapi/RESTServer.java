@@ -1,9 +1,6 @@
 package convex.restapi;
 
 import java.io.Closeable;
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.function.Consumer;
 
@@ -14,9 +11,9 @@ import org.slf4j.LoggerFactory;
 import convex.api.Convex;
 import convex.api.ConvexLocal;
 import convex.core.crypto.AKeyPair;
-import convex.core.crypto.CertUtils;
-import convex.core.data.Keyword;
+import convex.core.cvm.Address;
 import convex.core.cvm.Keywords;
+import convex.core.data.Keyword;
 import convex.core.util.Utils;
 import convex.peer.API;
 import convex.peer.ConfigException;
@@ -25,10 +22,10 @@ import convex.peer.Server;
 import convex.restapi.api.ChainAPI;
 import convex.restapi.api.DLAPI;
 import convex.restapi.api.DepAPI;
-import convex.restapi.api.ExplorerAPI;
-import convex.restapi.api.PeerAdminAPI;
+import convex.restapi.web.ExplorerAPI;
+import convex.restapi.web.PeerAdminAPI;
+import convex.restapi.web.WebApp;
 import io.javalin.Javalin;
-import io.javalin.community.ssl.SslPlugin;
 import io.javalin.config.JavalinConfig;
 import io.javalin.http.staticfiles.Location;
 import io.javalin.openapi.JsonSchemaLoader;
@@ -40,20 +37,51 @@ import io.javalin.openapi.plugin.redoc.ReDocPlugin;
 import io.javalin.openapi.plugin.swagger.SwaggerPlugin;
 import io.javalin.util.JavalinException;
 
+/**
+ * Operates a REST API server and web application connected to a local peer server
+ */
 public class RESTServer implements Closeable {
 	protected static final Logger log = LoggerFactory.getLogger(RESTServer.class.getName());
 
 	protected final Server server;
 	protected final Convex convex;
 	protected Javalin javalin;
+	
+	protected static final Integer DEFAULT_PORT=8080;
 
 	private RESTServer(Server server) {
 		this.server = server;
 		this.convex = ConvexLocal.create(server, server.getPeerController(), server.getKeyPair());
 	}
 	
+	protected ChainAPI chainAPI;
+	protected DepAPI depAPI;
+	protected DLAPI dlAPI;
+	protected WebApp webApp;
+	protected PeerAdminAPI peerAPI;
+	protected ExplorerAPI explorerAPI;
+
+	private void addAPIRoutes(Javalin app) {
+		chainAPI = new ChainAPI(this);
+		chainAPI.addRoutes(app);
+
+		depAPI = new DepAPI(this);
+		depAPI.addRoutes(app);
+		
+		peerAPI = new PeerAdminAPI(this);
+		peerAPI.addRoutes(app);
+
+		webApp = new WebApp(this);
+		webApp.addRoutes(app);
+
+		dlAPI = new DLAPI(this);
+		dlAPI.addRoutes(app);
+
+		explorerAPI = new ExplorerAPI(this);
+		explorerAPI.addRoutes(app);
+	}
+	
 	private Javalin buildApp(boolean useSSL) {
-		SslPlugin sslPlugin = getSSLPlugin(server.getConfig());
 		Javalin app = Javalin.create(config -> {
 			config.bundledPlugins.enableCors(cors -> {
 				cors.addRule(corsConfig -> {
@@ -64,9 +92,6 @@ public class RESTServer implements Closeable {
 				});
 			});
 			
-			if (useSSL&&(sslPlugin!=null)) {
-				config.registerPlugin(sslPlugin);
-			}
 			
 			addOpenApiPlugins(config);
 
@@ -84,6 +109,8 @@ public class RESTServer implements Closeable {
 			
 			config.useVirtualThreads=true;
 		});
+		
+
 
 		app.exception(Exception.class, (e, ctx) -> {
 			e.printStackTrace();
@@ -91,6 +118,7 @@ public class RESTServer implements Closeable {
 			ctx.result(message);
 			ctx.status(500);
 		});
+		
 		
 		app.options("/*", ctx-> {
 			ctx.status(204); // No context#
@@ -118,37 +146,8 @@ public class RESTServer implements Closeable {
 
 
 
-	// Get an SSL plugin, or null if SSL cannot be configured
-	protected SslPlugin getSSLPlugin(HashMap<Keyword, Object> config) {
-		SslPlugin sslPlugin=null;
-		try {
-			Path basePath=Utils.getHomePath().resolve(".convex/ssl");
-			Path certFile=basePath.resolve("certificate.pem");
-			Path privateFile=basePath.resolve("private.pem");
-			if (Files.exists(certFile)&&Files.exists(privateFile)) {
-				// Use provided files
-			} else {
-				basePath = Files.createTempDirectory("certs");
-				String subjectDN="CN=localhost, O=o, L=L, ST=il, C=c";
-				CertUtils.createCertificateFiles(subjectDN,basePath);
-			}
-
-			InputStream certS=Files.newInputStream(certFile);
-			InputStream privateS=Files.newInputStream(privateFile);
-			sslPlugin = new SslPlugin(conf -> {
-				conf.pemFromInputStream(certS, privateS);
-				conf.http2=true;
-			});
-
-		} catch (Exception e) {
-			e.printStackTrace();
-			log.warn("Failed to create SSL plugin, will use insecure HTTP only", e);
-		}
-		return sslPlugin;
-	}
-
 	protected void addOpenApiPlugins(JavalinConfig config) {
-		String docsPath="openapi-plugin/openapi-restapi.json";
+		String docsPath="/openapi";
 		
 		config.registerPlugin(new OpenApiPlugin(pluginConfig -> {
             pluginConfig
@@ -158,7 +157,7 @@ public class RESTServer implements Closeable {
                 def=def.withInfo((Consumer <OpenApiInfo>)
                 		info -> {
 							info.setTitle("Convex REST API");
-							info.setVersion("0.7.0");
+							info.setVersion(Utils.getVersion());
 		                });
             });
 		}));
@@ -175,32 +174,7 @@ public class RESTServer implements Closeable {
 	    }
 	}
 
-	protected ChainAPI chainAPI;
-	protected DepAPI depAPI;
-	protected DLAPI dlAPI;
-	protected WebApp webApp;
-	protected PeerAdminAPI peerAPI;
-	protected ExplorerAPI explorerAPI;
 
-	private void addAPIRoutes(Javalin app) {
-		chainAPI = new ChainAPI(this);
-		chainAPI.addRoutes(app);
-
-		depAPI = new DepAPI(this);
-		depAPI.addRoutes(app);
-		
-		peerAPI = new PeerAdminAPI(this);
-		peerAPI.addRoutes(app);
-
-		webApp = new WebApp(this);
-		webApp.addRoutes(app);
-
-		dlAPI = new DLAPI(this);
-		dlAPI.addRoutes(app);
-
-		explorerAPI = new ExplorerAPI(this);
-		explorerAPI.addRoutes(app);
-	}
 
 	/**
 	 * Create a RESTServer connected to a local Convex Peer Server instance.
@@ -226,7 +200,7 @@ public class RESTServer implements Closeable {
 	}
 	
 	protected void setupJettyServer(org.eclipse.jetty.server.Server jettyServer, Integer port) {
-		if (port==null) port=8080;
+		if (port==null) port=DEFAULT_PORT;
 		ServerConnector connector = new ServerConnector(jettyServer);
 		connector.setPort(port);
 		jettyServer.addConnector(connector);
@@ -303,18 +277,27 @@ public class RESTServer implements Closeable {
 		return null;
 	}
 
-	
+	/**
+	 * Main function to run a test server instance locally
+	 */
 	public static void main(String[] args) throws InterruptedException, ConfigException, LaunchException {
 		HashMap<Keyword,Object> config=new HashMap<>();
-		config.put(Keywords.KEYPAIR, AKeyPair.generate());
+		AKeyPair kp=AKeyPair.createSeeded(88888888);
+		config.put(Keywords.KEYPAIR, kp);
 		config.put(Keyword.create("faucet"), true);
 		Server s=API.launchPeer(config);
 		System.out.println("Using Ed25519 seed:   "+s.getKeyPair().getSeed());
 		System.out.println("Using peer port:      "+s.getPort());
+		
+		Convex c=Convex.connect(s);
+		c.setAddress(Address.create(12), kp);
+		c.transactSync(":test-transaction");
+		
 		try (RESTServer rs=RESTServer.create(s)) {
 			rs.start();
 			System.out.println("Started on REST port: "+rs.getPort());
 			
+			// Loop inside rest server instance
 			while (s.isRunning()) {
 				Thread.sleep(1000);
 			}

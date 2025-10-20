@@ -3,6 +3,7 @@ module convex.core {
 	exports convex.core.store;
 	exports convex.core.data.util;
 	exports convex.core.crypto;
+	exports convex.core.crypto.util;
 	exports convex.core.cpos;
 	exports convex.core.data.type;
 	exports convex.core.init;
@@ -19,6 +20,7 @@ module convex.core {
 	exports convex.core.cvm.ops;
 	exports convex.core.data;
 	exports convex.core.lang;
+	exports convex.core.json;
 	exports convex.etch;
 	exports convex.lattice.fs;
 
@@ -26,7 +28,5 @@ module convex.core {
 	requires org.bouncycastle.pkix;
 	requires transitive org.bouncycastle.provider;
 	requires org.bouncycastle.util;
-	requires org.slf4j;
 	requires java.base;
-	requires java.desktop;
 }

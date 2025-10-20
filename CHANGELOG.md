@@ -8,10 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Peer Explorer web application
 - Lattice Cursor functionality
 - Improved file / resource handling utilities
 - Improved JSON Functionality
 - New string handling functions
+- Base58 encoding support
 
 ### Changed
 
@@ -25,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Merge operation subssytem for standard lattice types
+- Merge operation subsystem for standard lattice types
 - JSON parser and ANTLR4 grammar
 - Web based explorer interface on REST API server
 
