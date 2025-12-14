@@ -29,7 +29,6 @@ import convex.core.data.util.BlobBuilder;
 import convex.core.json.JSON5Reader;
 import convex.core.json.JSONReader;
 import convex.core.lang.RT;
-import convex.core.lang.impl.CoreFn;
 import convex.core.text.Text;
 
 /**
@@ -38,11 +37,6 @@ import convex.core.text.Text;
  * Note than JSON is a strict subset of CAD3 data, so we expect to encode all valid JSON perfectly in CAD3 / CVM data structures
  */
 public class JSON {
-
-	
-
-
-
 
 	/**
 	 * Convert any object to a String containing valid JSON
@@ -123,7 +117,7 @@ public class JSON {
 	}
 
 	/**
-	 * Convert any object to JSON
+	 * Print any object as a JSON string
 	 * 
 	 * @param value Value to convert to JSON, may be Java or CVM structure
 	 * @return CVM String containing valid JSON
@@ -135,7 +129,7 @@ public class JSON {
 	}
 	
 	/**
-	 * Convert any object to JSON
+	 * Pretty-print any object as a JSON string
 	 * 
 	 * @param value Value to convert to JSON, may be Java or CVM structure
 	 * @return CVM String containing valid JSON

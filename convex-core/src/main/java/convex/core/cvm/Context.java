@@ -18,6 +18,7 @@ import convex.core.cvm.exception.ReturnValue;
 import convex.core.cvm.exception.RollbackValue;
 import convex.core.cvm.exception.TailcallValue;
 import convex.core.cvm.transactions.ATransaction;
+import convex.core.data.AArrayBlob;
 import convex.core.data.ACell;
 import convex.core.data.AHashMap;
 import convex.core.data.AList;
@@ -356,7 +357,7 @@ public class Context {
 		long executionJuice=this.juice;
 		rc.juiceUsed=executionJuice;
 
-		// Base fixed juice cost per transaction
+		// Juice cost per transaction, affected by TX memory size
 		long trxJuice=Juice.priceTransaction(rc.tx);
 		
 		long totalJuice=executionJuice+trxJuice;
@@ -441,6 +442,7 @@ public class Context {
 			rctx=rctx.withError(ErrorCodes.MEMORY, "Unable to allocate additional memory required for transaction ("+rc.memUsed+" bytes)");
 			rc.source=SourceCodes.CVM;
 		}
+
 		return rctx;
 	}
 
@@ -2100,7 +2102,7 @@ public class Context {
 	
 	public Context evictPeer(AccountKey peerKey) {
 		Context ctx=this;
-		Index<AccountKey, PeerStatus> peers = ctx.getState().getPeers();
+		Index<AArrayBlob, PeerStatus> peers = ctx.getState().getPeers();
 		PeerStatus ps=peers.get(peerKey);
 		if (ps==null) {
 			// no peer to evict
@@ -2280,10 +2282,15 @@ public class Context {
 		return log;
 	}
 
-	public Context lookupCNS(String name) {
+	public Context lookupCNS(Symbol name) {
 		Context ctx=this.fork();
-		ctx=this.actorCall(Init.REGISTRY_ADDRESS, 0, Symbols.CNS_RESOLVE, Symbol.create(name));
+		ctx=this.actorCall(Init.REGISTRY_ADDRESS, 0, Symbols.RESOLVE, name);
+		return ctx;
+	}
 
+	public Context lookupCNSRecord(Symbol name) {
+		Context ctx=this.fork();
+		ctx=this.actorCall(Init.REGISTRY_ADDRESS, 0, Symbols.READ, name);
 		return ctx;
 	}
 
@@ -2401,7 +2408,7 @@ public class Context {
 	}
 
 	public AccountKey getSigner() {
-		SignedData<ATransaction> sd=chainState.getTransactionContext().tx;
+		SignedData<ATransaction> sd=chainState.getTransactionContext().signedTx;
 		if (sd==null) return null;
 		return sd.getAccountKey();
 	}

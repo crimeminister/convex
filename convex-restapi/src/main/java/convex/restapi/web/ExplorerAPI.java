@@ -1,10 +1,43 @@
 package convex.restapi.web;
 
-import static j2html.TagCreator.*;
+import static j2html.TagCreator.a;
+import static j2html.TagCreator.article;
+import static j2html.TagCreator.button;
+import static j2html.TagCreator.code;
+import static j2html.TagCreator.datalist;
+import static j2html.TagCreator.details;
+import static j2html.TagCreator.div;
+import static j2html.TagCreator.each;
+import static j2html.TagCreator.em;
+import static j2html.TagCreator.h4;
+import static j2html.TagCreator.h5;
+import static j2html.TagCreator.h6;
+import static j2html.TagCreator.input;
+import static j2html.TagCreator.label;
+import static j2html.TagCreator.option;
+import static j2html.TagCreator.p;
+import static j2html.TagCreator.rawHtml;
+import static j2html.TagCreator.script;
+import static j2html.TagCreator.small;
+import static j2html.TagCreator.span;
+import static j2html.TagCreator.summary;
+import static j2html.TagCreator.table;
+import static j2html.TagCreator.tbody;
+import static j2html.TagCreator.td;
+import static j2html.TagCreator.text;
+import static j2html.TagCreator.textarea;
+import static j2html.TagCreator.th;
+import static j2html.TagCreator.thead;
+import static j2html.TagCreator.tr;
 
+import java.net.InetSocketAddress;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 
+import convex.api.Convex;
 import convex.core.cpos.Block;
 import convex.core.cpos.Order;
 import convex.core.cvm.AccountStatus;
@@ -15,27 +48,36 @@ import convex.core.cvm.PeerStatus;
 import convex.core.cvm.State;
 import convex.core.cvm.transactions.ATransaction;
 import convex.core.data.AArrayBlob;
+import convex.core.data.ACell;
+import convex.core.data.AMap;
 import convex.core.data.AVector;
 import convex.core.data.AccountKey;
 import convex.core.data.Blob;
+import convex.core.data.Hash;
 import convex.core.data.Cells;
 import convex.core.data.Index;
 import convex.core.data.MapEntry;
 import convex.core.data.SignedData;
+import convex.core.data.Strings;
+import convex.core.data.Symbol;
+import convex.core.data.prim.CVMLong;
+import convex.core.lang.RT;
+import convex.core.util.Utils;
+import convex.peer.Config;
+import convex.peer.ConnectionManager;
 import convex.peer.Server;
 import convex.restapi.RESTServer;
 import convex.restapi.api.ABaseAPI;
+import convex.restapi.mcp.McpAPI;
 import io.javalin.Javalin;
 import io.javalin.http.BadRequestResponse;
 import io.javalin.http.Context;
 import io.javalin.http.NotFoundResponse;
 import j2html.tags.DomContent;
-import convex.core.data.Symbol;
-import convex.core.lang.RT;
-import convex.core.data.AMap;
-import convex.core.data.ACell;
 import j2html.tags.specialized.TableTag;
 import j2html.tags.specialized.TbodyTag;
+import convex.core.data.AString;
+import convex.core.util.JSON;
 
 /**
  * On-chain explorer API 
@@ -47,8 +89,13 @@ public class ExplorerAPI extends AWebSite {
 	}
 	
 	static final String ROUTE = "/explorer/";
-	
 
+	private static final AString KEY_NAME = Strings.create("name");
+	private static final AString KEY_TITLE = Strings.create("title");
+	private static final AString KEY_DESCRIPTION = Strings.create("description");
+	private static final AString KEY_INPUT_SCHEMA = Strings.create("inputSchema");
+	private static final AString KEY_OUTPUT_SCHEMA = Strings.create("outputSchema");
+	
 
 	@Override
 	public void addRoutes(Javalin app) {
@@ -63,6 +110,9 @@ public class ExplorerAPI extends AWebSite {
 		app.get(prefix+"accounts/{accountNum}", this::showAccount);
 		app.get(prefix+"peers", this::showPeers);
 		app.get(prefix+"peers/{peerKey}", this::showPeerDetail);
+		app.get(prefix+"connections", this::showConnections);
+		app.get(prefix+"mcp", this::showMcp);
+		app.get(prefix+"mcp/tools/{toolName}", this::showMcpTool);
 		app.get(prefix+"repl", this::showRepl);
 		app.post(prefix+"search", this::handleSearch);
 	}
@@ -91,6 +141,14 @@ public class ExplorerAPI extends AWebSite {
 					p("Examine peers on the current network, including stakes and activity.")
 				),
 				article(
+					p(a("Connections").withHref(ROUTE+"connections").withStyle("font-weight:600;font-size:1.1em;")),
+					p("Inspect outbound peer connections maintained by this server.")
+				),
+				article(
+					p(a("MCP").withHref(ROUTE+"mcp").withStyle("font-weight:600;font-size:1.1em;")),
+					p("View Model Context Protocol endpoint details and available tools.")
+				),
+				article(
 					p(a("States").withHref(ROUTE+"states").withStyle("font-weight:600;font-size:1.1em;")),
 					p("View historical consensus states.")
 				),
@@ -107,6 +165,291 @@ public class ExplorerAPI extends AWebSite {
 				)
 			)
 		);
+	}
+	
+	public void showConnections(Context ctx) {
+		Server s=restServer.getServer();
+		if (s==null) {
+			returnPage(ctx, "Connections", new String[][] {{"Explorer",ROUTE},{"Connections",null}},
+				p("No local peer server is configured.")
+			);
+			return;
+		}
+		
+		ConnectionManager cm=s.getConnectionManager();
+		HashMap<AccountKey, Convex> connectionMap=new HashMap<>(cm.getConnections());
+		
+		Integer targetConnections;
+		try {
+			targetConnections=Utils.toInt(s.getConfig().get(Keywords.OUTGOING_CONNECTIONS));
+		} catch (IllegalArgumentException ex) {
+			targetConnections=null;
+		}
+		if (targetConnections==null) targetConnections=Config.DEFAULT_OUTGOING_CONNECTION_COUNT;
+		
+		State state=s.getPeer().getConsensusState();
+		
+		ArrayList<Map.Entry<AccountKey, Convex>> entries=new ArrayList<>(connectionMap.entrySet());
+		entries.sort(Comparator.comparing(e -> e.getKey().toHexString()));
+		
+		ArrayList<DomContent[]> rows=new ArrayList<>();
+		
+		AccountKey localPeerKey=s.getPeerKey();
+		PeerStatus localStatus=(localPeerKey!=null)?state.getPeer(localPeerKey):null;
+		DomContent localPeerCell;
+		if (localPeerKey!=null) {
+			String localLink=ROUTE+"peers/"+localPeerKey.toHexString();
+			localPeerCell=td(a(showID(localPeerKey)).withHref(localLink));
+		} else {
+			localPeerCell=td(code("-"));
+		}
+		DomContent localStake=(localStatus!=null)?showBalance(localStatus.getBalance()):code("-");
+		DomContent localAdvertised=(localStatus!=null && localStatus.getHostname()!=null)?code(localStatus.getHostname().toString()):code("-");
+		InetSocketAddress localAddress;
+		try {
+			localAddress=s.getHostAddress();
+		} catch (Exception e) {
+			localAddress=null;
+		}
+		String localHost="-";
+		if (localAddress!=null) {
+			String hostPart=localAddress.getHostString();
+			if ((hostPart==null)||hostPart.isBlank()) {
+				if (localAddress.getAddress()!=null) {
+					hostPart=localAddress.getAddress().getHostAddress();
+				} else {
+					hostPart=localAddress.toString();
+				}
+			}
+			if (localAddress.getPort()>=0) {
+				localHost=hostPart+":"+localAddress.getPort();
+			} else {
+				localHost=hostPart;
+			}
+		}
+		String localType=s.getClass().getSimpleName();
+		rows.add(new DomContent[] {
+			localPeerCell,
+			td(code("Local")),
+			td(code(localHost)),
+			td(localAdvertised),
+			td(localStake),
+			td(code(localType))
+		});
+		
+		for (Map.Entry<AccountKey, Convex> entry: entries) {
+			AccountKey peerKey=entry.getKey();
+			if ((localPeerKey!=null) && localPeerKey.equals(peerKey)) continue;
+			Convex connection=entry.getValue();
+			InetSocketAddress remoteAddress=(connection!=null)?connection.getHostAddress():null;
+			String remoteHost="-";
+			if (remoteAddress!=null) {
+				String hostPart=remoteAddress.getHostString();
+				if ((hostPart==null)||hostPart.isBlank()) {
+					if (remoteAddress.getAddress()!=null) {
+						hostPart=remoteAddress.getAddress().getHostAddress();
+					} else {
+						hostPart=remoteAddress.toString();
+					}
+				}
+				if (remoteAddress.getPort()>=0) {
+					remoteHost=hostPart+":"+remoteAddress.getPort();
+				} else {
+					remoteHost=hostPart;
+				}
+			}
+			boolean connected=(connection!=null)&&connection.isConnected();
+			
+			PeerStatus peerStatus=state.getPeer(peerKey);
+			DomContent stakeCell=(peerStatus!=null)?showBalance(peerStatus.getBalance()):code("-");
+			DomContent advertisedHost=(peerStatus!=null && peerStatus.getHostname()!=null)?code(peerStatus.getHostname().toString()):code("-");
+			String connType=(connection!=null)?connection.getClass().getSimpleName():"-";
+			
+			String peerLink=ROUTE+"peers/"+peerKey.toHexString();
+			
+			rows.add(new DomContent[] {
+				td(a(showID(peerKey)).withHref(peerLink)),
+				td(code(connected?"Connected":"Closed")),
+				td(code(remoteHost)),
+				td(advertisedHost),
+				td(stakeCell),
+				td(code(connType))
+			});
+		}
+		
+		DomContent tableContent=table(
+				thead(tr(
+					th("Peer Key"),
+					th("Status"),
+					th("Remote Address"),
+					th("Advertised Host"),
+					th("Total Stake"),
+					th("Connection Type")
+				)),
+				tbody(
+					each(rows, row -> tr(row))
+				)
+			);
+		
+		returnPage(ctx, "Connections", new String[][] {{"Explorer",ROUTE},{"Connections",null}},
+			article(
+				p("Active connections: "+connectionMap.size()),
+				p("Target connections: "+targetConnections)
+			),
+			article(
+				tableContent
+			)
+		);
+	}
+
+	public void showMcp(Context ctx) {
+		McpAPI mcp = restServer.getMcpAPI();
+		if (mcp == null) {
+			returnPage(ctx, "MCP", new String[][] {{"Explorer", ROUTE},{"MCP", null}},
+				p("MCP API is not configured on this server."));
+			return;
+		}
+
+		String endpointUrl = ABaseAPI.getExternalBaseUrl(ctx, "/mcp");
+
+		AMap<AString, ACell> serverInfo = mcp.getServerInfo();
+		ArrayList<DomContent> infoRows = new ArrayList<>();
+		if (serverInfo != null) {
+			long count = serverInfo.count();
+			for (int i = 0; i < count; i++) {
+				MapEntry<AString, ACell> entry = serverInfo.entryAt(i);
+				infoRows.add(row(entry.getKey().toString(), showCVX(entry.getValue()), ""));
+			}
+		}
+
+		DomContent infoTable = table(
+			thead(tr(th("Field"), th("Value"), th("Notes"))),
+			tbody(infoRows.isEmpty() ? tr(td("-"), td(code("nil")), td("")) : each(infoRows, r -> r))
+		);
+
+		AVector<AMap<AString, ACell>> toolMetadata = mcp.getToolMetadata();
+		ArrayList<DomContent[]> toolRows = new ArrayList<>();
+		if (toolMetadata != null) {
+			long toolCount = toolMetadata.count();
+			for (int i = 0; i < toolCount; i++) {
+				AMap<AString, ACell> metadata = toolMetadata.get(i);
+				AString nameCell = RT.ensureString(metadata.get(KEY_NAME));
+				AString titleCell = RT.ensureString(metadata.get(KEY_TITLE));
+				AString descriptionCell = RT.ensureString(metadata.get(KEY_DESCRIPTION));
+				String toolName = (nameCell != null) ? nameCell.toString() : "unknown";
+				String toolTitle = (titleCell != null) ? titleCell.toString() : toolName;
+				String description = (descriptionCell != null) ? descriptionCell.toString() : "";
+
+				String toolLink = ROUTE + "mcp/tools/" + toolName;
+				toolRows.add(new DomContent[] {
+					td(a(toolTitle).withHref(toolLink)),
+					td(code(toolName)),
+					td(description == null || description.isBlank() ? em("No description") : text(description))
+				});
+			}
+		}
+
+		DomContent toolsTable = table(
+			thead(tr(th("Title"), th("Name"), th("Description"))),
+			tbody(
+				toolRows.isEmpty()
+					? tr(td(em("No tools registered")).attr("colspan", "3"))
+					: each(toolRows, row -> tr(row))
+			)
+		);
+
+		returnPage(ctx, "Model Context Protocol", new String[][] {{"Explorer", ROUTE},{"MCP", null}},
+			article(
+				h6("MCP Endpoint"),
+				p(text("POST requests to "), code(endpointUrl)),
+				p(text("This peer provides MCP JSON-RPC access for LLMs and AI tools"))
+			),
+			article(
+				h6("MCP Server Info"),
+				infoTable
+			),
+			article(
+				h6("Registered Tools"),
+				toolsTable
+			)
+		);
+	}
+
+	public void showMcpTool(Context ctx) {
+		McpAPI mcp = restServer.getMcpAPI();
+		if (mcp == null) {
+			returnPage(ctx, "MCP Tool", new String[][] {{"Explorer", ROUTE},{"MCP", ROUTE + "mcp"},{"Tool", null}},
+				p("MCP API is not configured on this server."));
+			return;
+		}
+
+		String toolNameParam = ctx.pathParam("toolName");
+		AVector<AMap<AString, ACell>> toolMetadata = mcp.getToolMetadata();
+		if (toolMetadata == null) {
+			throw new NotFoundResponse("No tools available");
+		}
+
+		AMap<AString, ACell> metadata = null;
+		long toolCount = toolMetadata.count();
+		for (int i = 0; i < toolCount; i++) {
+			AMap<AString, ACell> entry = toolMetadata.get(i);
+			AString nameCell = RT.ensureString(entry.get(KEY_NAME));
+			if (nameCell != null && toolNameParam.equals(nameCell.toString())) {
+				metadata = entry;
+				break;
+			}
+		}
+
+		if (metadata == null) {
+			throw new NotFoundResponse("Unknown MCP tool: " + toolNameParam);
+		}
+
+		AString titleCell = RT.ensureString(metadata.get(KEY_TITLE));
+		AString descriptionCell = RT.ensureString(metadata.get(KEY_DESCRIPTION));
+		String toolTitle = (titleCell != null) ? titleCell.toString() : toolNameParam;
+		String description = (descriptionCell != null) ? descriptionCell.toString() : null;
+		ACell inputSchema = metadata.get(KEY_INPUT_SCHEMA);
+		ACell outputSchema = metadata.get(KEY_OUTPUT_SCHEMA);
+
+		String[][] breadcrumbs = {
+			{"Explorer", ROUTE},
+			{"MCP", ROUTE + "mcp"},
+			{toolNameParam, null}
+		};
+
+		DomContent toolMetadataTable = table(
+			thead(tr(th("Field"), th("Value"))),
+			tbody(
+				tr(td("Name"), td(code(toolNameParam))),
+				tr(td("Title"), td(toolTitle)),
+				tr(td("Description"), td(description == null || description.isBlank() ? em("No description provided") : text(description)))
+			)
+		);
+
+		DomContent schemaSection = div(
+			inputSchema != null
+				? details(
+					summary("Input Schema"),
+					preCode(JSON.toStringPretty(inputSchema)))
+				: p(em("No input schema defined")),
+			outputSchema != null
+				? details(
+					summary("Output Schema"),
+					preCode(JSON.toStringPretty(outputSchema)))
+				: p(em("No output schema defined"))
+		);
+
+		ACell examples = metadata.get(Strings.create("examples"));
+		DomContent examplesSection = (examples != null)
+			? details(
+				summary("Examples"),
+				preCode(JSON.toStringPretty(examples)))
+			: div();
+
+		returnPage(ctx, toolTitle, breadcrumbs,
+			article(toolMetadataTable),
+			article(schemaSection),
+			article(examplesSection));
 	}
 	
 	/**
@@ -179,7 +522,7 @@ public class ExplorerAPI extends AWebSite {
 		Server s=restServer.getServer();
 		
 		// Get current state from server
-		State state = s.getPeer().getConsensusState();
+		State state = s.getState();
 		AVector<AccountStatus> accounts = state.getAccounts();
 		long naccounts = accounts.count();
 		
@@ -208,7 +551,7 @@ public class ExplorerAPI extends AWebSite {
 		for (long i = start; i < end; i++) {
 			Address address = Address.create(i);
 			AccountStatus account = accounts.get(i);
-			String accountLink = ABaseAPI.getExternalBaseUrl(ctx, ROUTE+"accounts/"+i);
+			String accountLink = ROUTE+"accounts/"+i;
 			
 			rows.add(new DomContent[] {
 				td(a(address.toString()).withHref(accountLink)),
@@ -238,13 +581,25 @@ public class ExplorerAPI extends AWebSite {
 		
 		long[] range = getPaginationRange(ctx, nblocks);
 		long start=range[0];
-		long end=range[1];
+		long limit=range[2];
 		
+		DomContent paginationLinks = makePaginationLinks(ctx, ROUTE+"blocks", start, limit, nblocks);
+		
+	        returnPage(ctx, "Blocks", new String[][] {{"Explorer",ROUTE},{"Blocks",null}},
+			paginationLinks,
+			buildBlocksTable(ctx, blocks, range)
+	);
+	}
+
+	private TableTag buildBlocksTable(Context ctx, AVector<SignedData<Block>> blocks, long[] range) {
+		long start=range[0];
+		long end=range[1];
+		if (end-start>100) throw new BadRequestResponse("Too many elements requested");
 		ArrayList<DomContent[]> rows=new ArrayList<>();
 		for (long i=start; i<end; i++) {
 			SignedData<Block> sd=blocks.get(i);
-			String link=ABaseAPI.getExternalBaseUrl(ctx, ROUTE+"blocks/"+i);
-			String peerLink=ABaseAPI.getExternalBaseUrl(ctx, ROUTE+"peers/"+sd.getAccountKey().toHexString());
+			String link=ROUTE+"blocks/"+i;
+			String peerLink=ROUTE+"peers/"+sd.getAccountKey().toHexString();
 			
 			rows.add(new DomContent[] {
 				td(a(Long.toString(i)).withHref(link)),	
@@ -252,15 +607,12 @@ public class ExplorerAPI extends AWebSite {
 				td(showID(sd.getHash()))	
 			});
 		}
-		
-        returnPage(ctx, "Blocks", new String[][] {{"Explorer",ROUTE},{"Blocks",null}},
-				table(
-					thead(tr(th("Index"),th("Peer"),th("Block Hash"))),
-					tbody(
-						each(rows,row->{return tr(row);})
-				)
-			)
-		);
+		return table(
+				thead(tr(th("Index"),th("Peer"),th("Block Hash"))),
+				tbody(
+					each(rows,row->{return tr(row);})
+		)
+	);
 	}
 	
 	/**
@@ -302,10 +654,10 @@ public class ExplorerAPI extends AWebSite {
 	private TbodyTag makeBlockTable(SignedData<Block> sblock) {
 		AccountKey peerKey=sblock.getAccountKey(); // Public key of signing peer
 		return tbody(
-				tr(
-						td("Block Hash"),
-						td(showID(sblock.getHash(),64)),
-						td("Hash of block as signed by peer")),
+			tr(
+				td("Block Hash"),
+				td(showID(sblock.getHash(),64)),
+				td("Hash of block as signed by peer")),
 			tr(
 				td("Peer"),
 				td(a(showID(peerKey,64)).withHref(ROUTE+"peers/"+peerKey)),
@@ -335,7 +687,7 @@ public class ExplorerAPI extends AWebSite {
 			rows.add(new DomContent[] {
 				td(a(Long.toString(i)).withHref(txLink)),
 				td(identicon(strans.getAccountKey()),showAddress(strans.getValue().getOrigin())),
-				td(showID(strans.getHash()))
+				td(showCVX(strans.getHash()))
 			});
 		}
 		
@@ -441,6 +793,210 @@ public class ExplorerAPI extends AWebSite {
 						code(""+Cells.storageSize(signedTx)),
 						"Bytes consumed by transaction data")
 				)
+			),
+			buildTransactionResultView(blockNum, txNum, trans),
+			buildTransactionLogsView(blockNum, txNum, trans)
+		);
+	}
+	
+	/**
+	 * Build a view of the transaction result
+	 */
+	private DomContent buildTransactionResultView(long blockNum, long txNum, ATransaction trans) {
+		Server s = restServer.getServer();
+		Peer peer = s.getPeer();
+		
+		// Get the BlockResult for this block
+		convex.core.cpos.BlockResult blockResult = peer.getBlockResult(blockNum);
+		
+		if (blockResult == null) {
+			// BlockResult not available (maybe too old, not stored)
+			return article(
+				details(
+					summary("Transaction Result"),
+					p(em("Result not available - block result may have been pruned from history"))
+				)
+			);
+		}
+		
+		// Get results vector from the block result
+		AVector<convex.core.Result> results = blockResult.getResults();
+		if (txNum >= results.count()) {
+			// Shouldn't happen but handle gracefully
+			return article(
+				details(
+					summary("Transaction Result"),
+					p(em("Transaction result not found in block"))
+				)
+			);
+		}
+		
+		convex.core.Result result = results.get(txNum);
+		ACell errorCode = result.getErrorCode();
+		boolean isError = errorCode != null;
+		ACell value = result.getValue();
+		AMap<convex.core.data.Keyword, ACell> info = result.getInfo();
+		
+		// Build rows dynamically based on available info
+		ArrayList<DomContent> rows = new ArrayList<>();
+		
+		// Status row
+		rows.add(row(
+			"Status",
+			code(isError ? "ERROR" : "SUCCESS").withClass(isError ? "error-text" : "success-text"),
+			isError ? "Transaction failed with error" : "Transaction executed successfully"
+		));
+		
+		// Return value / Error message
+		rows.add(row(
+			isError ? "Error Message" : "Return Value",
+			showCVX(value),
+			isError ? "Error message from failed transaction" : "Value returned by transaction"
+		));
+		
+		// Error code (if present)
+		if (isError) {
+			String errorDescription = convex.core.ErrorCodes.getDescription(errorCode);
+			if (errorDescription == null) errorDescription = "CVM error code indicating type of failure";
+			rows.add(row(
+				"Error Code",
+				showCVX(errorCode),
+				errorDescription
+			));
+		}
+		
+		// Info fields (juice, fees, memory, etc.)
+		if (info != null) {
+			ACell juice = info.get(Keywords.JUICE);
+			if (juice != null) {
+				rows.add(row("Juice Used", code(juice.toString()), "Computational cost in juice units"));
+			}
+			
+			ACell fees = info.get(Keywords.FEES);
+			if (fees != null) {
+				rows.add(row("Fees Paid", showBalance(RT.castLong(fees).longValue()), "Transaction fees paid in Convex Coins"));
+			}
+			
+			ACell mem = info.get(Keywords.MEM);
+			if (mem != null) {
+				rows.add(row("Memory Used", code(mem.toString()), "Memory allocated/deallocated (bytes)"));
+			}
+			
+			ACell trace = info.get(Keywords.TRACE);
+			if (trace != null) {
+				rows.add(row("Stack Trace", showCVX(trace), "Stack trace for error location"));
+			}
+		}
+		
+		return article(
+			details(
+				summary("Transaction Result"),
+				table(
+					thead(tr(th("Field"), th("Value"), th("Notes"))),
+					tbody(
+						each(rows, r -> r)
+					)
+				)
+			)
+		);
+	}
+	
+	/**
+	 * Build a view of transaction log entries
+	 */
+	private DomContent buildTransactionLogsView(long blockNum, long txNum, ATransaction trans) {
+		Server s = restServer.getServer();
+		Peer peer = s.getPeer();
+		
+		// Get the BlockResult for this block
+		convex.core.cpos.BlockResult blockResult = peer.getBlockResult(blockNum);
+		
+		if (blockResult == null) {
+			// BlockResult not available
+			return article(
+				details(
+					summary("Log Entries (0)"),
+					p(em("Logs not available - block result may have been pruned from history"))
+				)
+			);
+		}
+		
+		// Get results vector from the block result
+		AVector<convex.core.Result> results = blockResult.getResults();
+		if (txNum >= results.count()) {
+			return article(
+				details(
+					summary("Log Entries (0)"),
+					p(em("Transaction result not found in block"))
+				)
+			);
+		}
+		
+		convex.core.Result result = results.get(txNum);
+		AVector<AVector<ACell>> log = result.getLog();
+		
+		long logCount = (log == null) ? 0 : log.count();
+		
+		if (logCount == 0) {
+			return article(
+				details(
+					summary("Log Entries (0)"),
+					p(em("No log entries were generated during transaction execution"))
+				)
+			);
+		}
+		
+		// First pass: find the maximum number of values in any log entry
+		int maxValuesCount = 1; // At least 1 for the header
+
+		// Build log rows from the log vector
+		// Log entry format: [Address, Scope, Position, Values]
+		ArrayList<DomContent> logRows = new ArrayList<>();
+		if (log != null) {
+			for (long i = 0; i < logCount; i++) {
+				AVector<ACell> logEntry = log.get(i);
+				
+				// Expected format: [Address, Scope, Position, Values]
+				if (logEntry.count() >= 4) {
+					ACell address = logEntry.get(0);
+					ACell scope = logEntry.get(1);
+					ACell position = logEntry.get(2);
+					ACell valuesCell = logEntry.get(3);
+					
+					// Build row with dynamic number of value cells
+					ArrayList<DomContent> cells = new ArrayList<>();
+					cells.add(td(address != null ? showAddress((Address)address) : code("nil")));
+					cells.add(td(scope != null ? showCVX(scope) : code("nil")));
+					cells.add(td(showCVX(position)));
+					
+					// Add each value from the values vector as a separate cell
+					if (valuesCell instanceof AVector) {
+						@SuppressWarnings("unchecked")
+						AVector<ACell> values = (AVector<ACell>) valuesCell;
+						int valuesCount = (int) values.count();
+						maxValuesCount = Math.max(maxValuesCount, valuesCount);
+						for (long j = 0; j < valuesCount; j++) {
+							cells.add(td(showCVX(values.get(j))));
+						}
+					} else {
+						// If not a vector, just show the value as-is
+						cells.add(td(showCVX(valuesCell)));
+					}
+					
+					logRows.add(tr(cells.toArray(new DomContent[0])));
+				} 
+			}
+		}
+		
+		return article(
+			details(
+				summary("Log Entries (" + logCount + ")"),
+				table(
+					thead(tr(th("Address"), th("Scope"), th("Position"), th("Values ...").withCondColspan(maxValuesCount > 1, String.valueOf(maxValuesCount)))),
+					tbody(
+						each(logRows, row -> row)
+					)
+				)
 			)
 		);
 	}
@@ -454,7 +1010,7 @@ public class ExplorerAPI extends AWebSite {
 		long accountNum=Long.parseLong(ctx.pathParam("accountNum"));
 		
 		// Get current state from server
-		State state = s.getPeer().getConsensusState();
+		State state = s.getState();
 		Address address = Address.create(accountNum);
 		AccountStatus account = state.getAccount(address);
 		
@@ -613,8 +1169,8 @@ public class ExplorerAPI extends AWebSite {
 		Server s=restServer.getServer();
 		
 		// Get current state from server
-		State state = s.getPeer().getConsensusState();
-		Index<AccountKey, PeerStatus> peers = state.getPeers();
+		State state = s.getState();
+		Index<AArrayBlob, PeerStatus> peers = state.getPeers();
 		long npeers = peers.count();
 		
 		// Get pagination parameters
@@ -625,8 +1181,8 @@ public class ExplorerAPI extends AWebSite {
 		ArrayList<DomContent[]> rows = new ArrayList<>();
 		long totalStakeAllPeers = state.getPeers().reduceValues((Long acc, PeerStatus ps) -> acc + ps.getBalance(), 0L);
 		for (long i = start; i < end; i++) {
-			MapEntry<AccountKey, PeerStatus> entry = peers.entryAt(i);
-			AccountKey peerKey = entry.getKey();
+			MapEntry<AArrayBlob, PeerStatus> entry = peers.entryAt(i);
+			AccountKey peerKey = RT.ensureAccountKey(entry.getKey());
 			PeerStatus peerStatus = entry.getValue();
 			String peerLink = ABaseAPI.getExternalBaseUrl(ctx, ROUTE+"peers/"+peerKey.toHexString());
 			double percent = (totalStakeAllPeers>0)?(100.0*peerStatus.getBalance()/ (double)totalStakeAllPeers):0.0;
@@ -687,7 +1243,7 @@ public class ExplorerAPI extends AWebSite {
 		}
 		
 		// Get current state from server
-		State state = server.getPeer().getConsensusState();
+		State state = server.getState();
 		PeerStatus peerStatus = state.getPeer(peerKey);
 		
 		if (peerStatus == null) {
@@ -814,7 +1370,26 @@ public class ExplorerAPI extends AWebSite {
 					ctx.redirect(ROUTE+"peers/"+peerKey.toHexString());
 					return;
 				}
-	
+
+					Hash hash = Hash.wrap(blob);
+					if (hash!=null) {
+						// Try as block hash via PeerIndex
+						CVMLong blockIndexCell = peer.getBlockIndex(hash);
+						if (blockIndexCell!=null) {
+							ctx.redirect(ROUTE+"blocks/"+blockIndexCell.longValue());
+							return;
+						}
+
+						// Try as transaction hash
+						AVector<CVMLong> loc=peer.getTransactionLocation(hash);
+						if ((loc!=null)&&(loc.count()>=2)) {
+							long blockIndex=loc.get(0).longValue();
+							long txIndex=loc.get(1).longValue();
+							ctx.redirect(ROUTE+"blocks/"+blockIndex+"/txs/"+txIndex);
+							return;
+						}
+					}
+
 			}
 			
 		}

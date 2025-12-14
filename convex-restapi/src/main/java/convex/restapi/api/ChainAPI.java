@@ -24,6 +24,7 @@ import convex.core.crypto.IdenticonBuilder;
 import convex.core.cvm.AccountStatus;
 import convex.core.cvm.Address;
 import convex.core.cvm.Keywords;
+import convex.core.cvm.Peer;
 import convex.core.cvm.PeerStatus;
 import convex.core.cvm.Symbols;
 import convex.core.cvm.transactions.ATransaction;
@@ -32,6 +33,7 @@ import convex.core.data.AArrayBlob;
 import convex.core.data.ABlob;
 import convex.core.data.ACell;
 import convex.core.data.AMap;
+import convex.core.data.AString;
 import convex.core.data.AVector;
 import convex.core.data.AccountKey;
 import convex.core.data.Blob;
@@ -41,8 +43,10 @@ import convex.core.data.Format;
 import convex.core.data.Hash;
 import convex.core.data.Keyword;
 import convex.core.data.Lists;
+import convex.core.data.Maps;
 import convex.core.data.Ref;
 import convex.core.data.SignedData;
+import convex.core.data.Strings;
 import convex.core.data.prim.AInteger;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
@@ -53,6 +57,7 @@ import convex.core.lang.RT;
 import convex.core.lang.Reader;
 import convex.core.util.JSON;
 import convex.restapi.RESTServer;
+import convex.restapi.handler.ConcurrentLimit;
 import convex.restapi.model.CreateAccountRequest;
 import convex.restapi.model.CreateAccountResponse;
 import convex.restapi.model.FaucetRequest;
@@ -87,30 +92,41 @@ public class ChainAPI extends ABaseAPI {
 
 	private static final String ROUTE = "/api/v1/";
 
+	private ConcurrentLimit faucetLimit=new ConcurrentLimit(10);
+	private ConcurrentLimit identiconLimit=new ConcurrentLimit(10);
+	private ConcurrentLimit transactLimit=new ConcurrentLimit(2);
+	
 	@Override
 	public void addRoutes(Javalin app) {
 		String prefix = ROUTE;
 
-		app.post(prefix + "createAccount", this::createAccount);
 		app.post(prefix + "query", this::query);
-
-		app.post(prefix + "faucet", this::faucetRequest);
 
 		app.post(prefix + "transaction/prepare", this::transactionPrepare);
 		app.post(prefix + "transaction/submit", this::transactionSubmit);
+		app.post(prefix + "transact", transactLimit.handler(this::transact));
 
-		app.post(prefix + "transact", this::transact);
+		app.post(prefix + "createAccount", faucetLimit.handler(this::createAccount));
+		app.post(prefix + "faucet",  faucetLimit.handler(this::faucetRequest));
+
 
 		app.get(prefix + "accounts/{addr}", this::queryAccount);
 		app.get(prefix + "peers/{addr}", this::queryPeer);
 
+	
 		app.get(prefix + "data/<hash>", this::getData);
+		app.post(prefix + "data/encode", this::encodeData);
+		app.post(prefix + "data/decode", this::decodeData);
+		
+		
 		app.get(prefix + "tx", this::getTransaction);
 		
 		app.get(prefix + "blocks", this::getBlocks);
 		app.get(prefix + "blocks/{blockNum}", this::getBlock);
 		
-		app.get("/identicon/{hex}", this::getIdenticon);
+		app.get(prefix + "status", this::getStatus);
+		
+		app.get("/identicon/{hex}", identiconLimit.handler(this::getIdenticon));
 		
 		convex = restServer.getConvex();
 
@@ -118,7 +134,7 @@ public class ChainAPI extends ABaseAPI {
 
 	@OpenApi(path = ROUTE + "data/{hash}", 
 			versions="peer-v1",
-			methods = HttpMethod.POST, 
+			methods = HttpMethod.GET, 
 			tags = { "Data Lattice"},
 			summary = "Get data from the server with the specified hash", 
 			operationId = "data", 
@@ -146,6 +162,113 @@ public class ChainAPI extends ABaseAPI {
 		}
 		setContent(ctx,d);
 	}
+	
+	@OpenApi(path = ROUTE + "data/encode", 
+			versions="peer-v1",
+			methods = HttpMethod.POST, 
+			tags = { "Data Lattice"},
+			summary = "Encode data in CAD3 multi-cell format", 
+			operationId = "encode",
+			requestBody = @OpenApiRequestBody(
+					description = "Encode request",
+					content= {@OpenApiContent(
+							from=QueryRequest.class,
+							type = "application/json", 
+							exampleObjects = {
+								@OpenApiExampleProperty(name = "data", value = "12")
+							}),
+							@OpenApiContent(
+								mimeType = "application/cvx",
+								from=String.class,
+								example="[1 2 3]"
+							)
+					}))
+	public void encodeData(Context ctx) {
+		String type=ctx.req().getContentType();
+		ACell value;
+		
+		if (ContentTypes.JSON.equals(type)) {
+			ACell body=this.readJSONBody(ctx);
+			AString field=RT.ensureString(RT.getIn(body, Strings.DATA));
+			if (field==null) throw new BadRequestResponse("Encode requires 'data' field");
+			value=Reader.read(field.toString());
+		} else if (ContentTypes.CVX.equals(type)||ContentTypes.TEXT.equals(type)) {
+			try {
+				value=Reader.read(ctx.bodyInputStream());
+			} catch (Exception e) {
+				throw new BadRequestResponse("Could not parse CVX content: "+e.getMessage());
+			}
+		} else {
+			throw new BadRequestResponse("Expected JSON request or plain CVX data to encode");
+		}
+		
+		Blob b=Format.encodeMultiCell(value, true);
+
+		ctx.status(200);
+		String rtype=this.calcResponseContentType(ctx);
+		if (ContentTypes.CVX_RAW.equals(rtype)||ContentTypes.BYTES.equals(type)) {
+			ctx.result(b.getInputStream());
+		} else {
+			AMap<AString, ACell> result = Maps.of(
+				Strings.create("cad3"), Strings.create(b.toCVMHexString()),
+				Strings.create("hash"), Strings.create(Ref.get(value).getEncoding().toCVMHexString())
+			);
+			this.setContent(ctx, result);
+		}
+		
+	}
+	
+	@OpenApi(path = ROUTE + "data/decode", 
+			versions="peer-v1",
+			methods = HttpMethod.POST, 
+			tags = { "Data Lattice"},
+			summary = "Decode CAD3 data", 
+			operationId = "decode",
+			requestBody = @OpenApiRequestBody(
+					description = "Decode request",
+					content= {@OpenApiContent(
+							from=QueryRequest.class,
+							type = "application/json", 
+							exampleObjects = {
+								@OpenApiExampleProperty(name = "cad3", value = "0x110c")
+							})
+					}))
+	public void decodeData(Context ctx) {
+		String type=ctx.req().getContentType();
+		ABlob value;
+		
+		if (ContentTypes.JSON.equals(type)) {
+			ACell body=this.readJSONBody(ctx);
+			AString field=RT.ensureString(RT.getIn(body, Strings.create("cad3")));
+			if (field==null) throw new BadRequestResponse("Decode requires 'cad3' field");
+			value=Blob.parse(field);
+		} else if (ContentTypes.CVX.equals(type)||ContentTypes.BYTES.equals(type)) {
+			try {
+				value=Blobs.fromStream(ctx.bodyInputStream());
+			} catch (Exception e) {
+				throw new BadRequestResponse("Could not read CAD3 content: "+e.getMessage());
+			}
+		} else {
+			throw new BadRequestResponse("Expected CAD3 data to decode");
+		}
+		
+		ACell r;
+		try {
+			r = Format.decodeMultiCell(value.toFlatBlob());
+		} catch (BadFormatException e) {
+			this.failBadRequest("Error decoding CAD3 data - bad format");
+			return;
+		}
+
+		ctx.status(200);
+		String rtype=this.calcResponseContentType(ctx);
+		if (ContentTypes.CVX_RAW.equals(rtype)) {
+			ctx.result(RT.print(r).getInputStream());
+		} else if (ContentTypes.JSON.equals(rtype)) {
+			this.setContent(ctx, Maps.of("cvx",RT.print(r)));
+		}
+		
+	}
 
 	@OpenApi(path = ROUTE + "tx", 
 			versions="peer-v1",
@@ -156,7 +279,7 @@ public class ChainAPI extends ABaseAPI {
 			queryParams = {
 					@OpenApiParam(
 							name = "hash", 
-							description = "Transaction hash as a hex string. Leading '0x' is optional but discouraged.", 
+							description = "Transaction hash as a hex string. Leading '0x' is optional.", 
 							required = true, 
 							type = String.class, 
 							example = "0x1234567812345678123456781234567812345678123456781234567812345678") },
@@ -185,12 +308,24 @@ public class ChainAPI extends ABaseAPI {
 			throw new BadRequestResponse("Invalid hash: " + hashParam);
 		}
 
-		SignedData<ATransaction> transaction = server.getPeer().getTransaction(h);
+		Peer peer=server.getPeer();
+		
+		SignedData<ATransaction> transaction = peer.getTransaction(h);
 		if (transaction == null) {
 			throw new NotFoundResponse("Transaction not found: " + hashParam);
 		}
+		
+		AVector<CVMLong> pos=peer.getTransactionLocation(h);
 
-		ctx.result(JSON.toStringPretty(transaction));
+		Result txResult=peer.getTransactionResult(pos);
+		
+		AMap<AString,ACell> result=Maps.of(
+			Keywords.TX, transaction,
+			Keywords.POSITION, pos,
+			Keywords.RESULT, txResult
+		);
+		
+		setContent(ctx,result);
 	}
 
 	@OpenApi(path = ROUTE + "blocks", 
@@ -338,8 +473,10 @@ public class ChainAPI extends ABaseAPI {
 			throw new BadRequestResponse("Invalid block number format: must be a number");
 		}
 		
+		Peer peer=server.getPeer();
+		
 		// Get blocks from peer order
-		Order peerOrder = server.getPeer().getPeerOrder();
+		Order peerOrder = peer.getPeerOrder();
 		AVector<SignedData<Block>> blocks = peerOrder.getBlocks();
 		long totalBlocks = blocks.count();
 		
@@ -349,7 +486,7 @@ public class ChainAPI extends ABaseAPI {
 		}
 		
 		// Get finality point for determining if block is finalised
-		long finalityPoint = server.getPeer().getFinalityPoint();
+		long finalityPoint = peer.getFinalityPoint();
 		
 		// Get the specific block
 		SignedData<Block> signedBlock = blocks.get(blockNum);
@@ -358,6 +495,25 @@ public class ChainAPI extends ABaseAPI {
 		blockData.put("finalised", blockNum < finalityPoint);
 		
 		ctx.result(JSON.toStringPretty(blockData));
+	}
+
+	@OpenApi(path = ROUTE + "status", 
+			versions="peer-v1",
+			methods = HttpMethod.GET, 
+			tags = { "Peer"},
+			summary = "Get the status map from the peer server. Can be used as a heartbeat check to ensure the peer is still running.", 
+			operationId = "getStatus", 
+			responses = {
+				@OpenApiResponse(
+						status = "200", 
+						description = "Status retrieved successfully", 
+						content = {
+							@OpenApiContent(
+									type = "application/json") }),
+			})
+	public void getStatus(Context ctx) {
+		AMap<Keyword,ACell> statusMap = server.getStatusMap();
+		setContent(ctx, statusMap);
 	}
 
 	@OpenApi(path = ROUTE + "createAccount", 
@@ -387,10 +543,11 @@ public class ChainAPI extends ABaseAPI {
 						description = "Bad request, probably a missing or invalid accountKey")
 				})
 	public void createAccount(Context ctx) throws InterruptedException {
-		checkFaucetAllowed();
+		Convex faucetClient=restServer.getFaucet();
+		if (faucetClient==null) throw new ForbiddenResponse("Faucet use not authorised on this server");
 
-		Map<String, Object> req = getJSONBody(ctx);
-		Object key = req.get("accountKey");
+		AMap<AString, ACell> req = readJSONBody(ctx);
+		AString key = req.getIn("accountKey");
 		if (key == null)
 			throw new BadRequestResponse(jsonError("Expected JSON body containing 'accountKey' field"));
 
@@ -398,14 +555,14 @@ public class ChainAPI extends ABaseAPI {
 		if (pk == null)
 			throw new BadRequestResponse(jsonError("Unable to parse accountKey: " + key));
 
-		Object faucet = req.get("faucet");
+		ACell faucet = req.getIn("faucet");
 		AInteger amt = AInteger.parse(faucet);
 		
 		Address a;
 		try {
-			a = convex.createAccountSync(pk);
+			a = faucetClient.createAccountSync(pk);
 			if (amt != null) {
-				convex.transferSync(a, amt.longValue());
+				faucetClient.transferSync(a, amt.longValue());
 			}
 		} catch (ResultException e) {
 			setContent(ctx,e.getResult());
@@ -461,6 +618,12 @@ public class ChainAPI extends ABaseAPI {
 			return;
 		}
 
+		String jsonAccountInfo = JSON.toString(getAccountInfo(addr, as));
+		
+		ctx.result(jsonAccountInfo);
+	}
+
+	public static HashMap<String, Object> getAccountInfo(Address addr, AccountStatus as) {
 		boolean isUser = !as.isActor();
 		AccountKey publicKey=as.getAccountKey();
 
@@ -472,10 +635,10 @@ public class ChainAPI extends ABaseAPI {
 		hm.put("memorySize", as.getMemorySize());
 		hm.put("sequence", as.getSequence());
 		hm.put("type", isUser ? "user" : "actor");
-
-		ctx.result(JSON.toString(hm));
+		return hm;
 	}
 
+	
 	public void queryPeer(Context ctx) throws InterruptedException {
 		AccountKey addr = null;
 		String addrParam = ctx.pathParam("addr");
@@ -500,7 +663,7 @@ public class ChainAPI extends ABaseAPI {
 		ctx.result(JSON.toString(as));
 	}
 
-	private static Keyword K_FAUCET=Keyword.create("faucet");
+	public static final Keyword K_FAUCET=Keyword.intern("faucet");
 	
 	@OpenApi(path = ROUTE + "faucet", 
 			versions="peer-v1",
@@ -540,13 +703,14 @@ public class ChainAPI extends ABaseAPI {
 						description = "Faucet request forbidden, probably Server is not accepting faucet requests")
 				})
 	public void faucetRequest(Context ctx) throws InterruptedException {
-		checkFaucetAllowed();
-		
-		Map<String, Object> req = getJSONBody(ctx);
-		Address addr = Address.parse(req.get("address"));
+		Convex faucetClient=restServer.getFaucet();
+		if (faucetClient==null) throw new ForbiddenResponse("Faucet use not authorised on this server");
+
+		AMap<AString, ACell> req = readJSONBody(ctx);
+		Address addr = Address.parse(req.getIn("address"));
 		if (addr == null) failBadRequest("Expected JSON body containing valid 'address' field");
 
-		Object o = req.get("amount");
+		ACell o = req.getIn("amount");
 		CVMLong l = CVMLong.parse(o);
 		if (l == null) {failBadRequest("Faucet requires an 'amount' field containing a long value."); return;}
 
@@ -557,15 +721,14 @@ public class ChainAPI extends ABaseAPI {
 
 		// SECURITY: Make sure this is not subject to injection attack
 		// Optional: pre-compile to Op
-		Result r = convex.transactSync("(transfer " + addr + " " + amt + ")");
+		Result r = faucetClient.transactSync("(transfer " + addr + " " + amt + ")");
 		if (r.isError()) {
-			HashMap<String, Object> hm = r.toJSON();
-			ctx.result(JSON.toString(hm));
+			setContent(ctx,r);
 			ctx.status(422);
 		} else {
-			req.put("address", RT.castLong(addr).longValue());
-			req.put("amount", r.getValue());
-			ctx.result(JSON.toString(req));
+			req=req.assoc(Strings.ADDRESS, RT.castLong(addr));
+			req=req.assoc(Strings.AMOUNT, r.getValue());
+			setContent(ctx,req);
 		}
 	}
 
@@ -584,14 +747,9 @@ public class ChainAPI extends ABaseAPI {
 		throw new BadRequestResponse(JSON.toString(result));
 	}
 
-	private void checkFaucetAllowed() {
-		boolean faucet=isFaucetEnabled();
-		if (!faucet) throw new ForbiddenResponse("Faucet use not authorised on this server");
-	}
 
-	private boolean isFaucetEnabled() {
-		return RT.bool(restServer.getConfig().get(K_FAUCET));
-	}
+
+
 
 	@OpenApi(path = ROUTE+"transaction/prepare",
 			versions="peer-v1",
@@ -621,7 +779,8 @@ public class ChainAPI extends ABaseAPI {
 											@OpenApiExampleProperty(name = "sequence", value = "14"),
 											@OpenApiExampleProperty(name = "address", value = "12"),
 											@OpenApiExampleProperty(name = "source", value = "(* 2 3)"),
-											@OpenApiExampleProperty(name = "hash", value = "d00c0e81031103110232012a")
+											@OpenApiExampleProperty(name = "hash", value = "d00c0e81031103110232012a"),
+											@OpenApiExampleProperty(name = "data", value = "d00c0e81031103110232012a")
 										}
 										)}),
 					@OpenApiResponse(status = "503", 
@@ -653,11 +812,13 @@ public class ChainAPI extends ABaseAPI {
 		}
 
 		ATransaction trans = Invoke.create(addr, sequence, code);
+		trans=Cells.persist(trans); // persist data so we have a full copy if needed
 		Ref<ATransaction> ref = Cells.persist(trans).getRef();
 		HashMap<String, Object> rmap = new HashMap<>();
 		rmap.put("source", srcValue);
 		rmap.put("address", JSON.json(addr));
 		rmap.put("hash", SignedData.getMessageForRef(ref).toHexString());
+		rmap.put("data", Format.encodeMultiCell(trans, true).toHexString());
 		rmap.put("sequence", sequence);
 		ctx.status(200);
 		ctx.result(JSON.toString(rmap));
@@ -927,12 +1088,12 @@ public class ChainAPI extends ABaseAPI {
 				addr=Address.parse(RT.get(req, Keywords.ADDRESS));
 				form=RT.get(req, Keywords.SOURCE);
 			} else {
-				Map<String, Object> req = getJSONBody(ctx);
+				AMap<AString, ACell> req = readJSONBody(ctx);
 				// System.out.println("query data: "+req+ " of type "+Utils.getClassName(req));
-				addr = Address.parse(req.get("address"));
-				Object srcValue = req.get("source");
+				addr = Address.parse(req.get(Strings.ADDRESS));
+				AString srcValue = RT.ensureString(req.get(Strings.SOURCE));
 				// System.out.println("query source: "+srcValue);
-				form = readCode(srcValue);
+				form = Reader.read(srcValue);
 			}
 	
 			Result r = convex.querySync(form, addr);

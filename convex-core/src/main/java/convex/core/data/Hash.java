@@ -45,6 +45,7 @@ public class Hash extends AArrayBlob {
 	public static final Hash TRUE_HASH = Hashing.sha3(new byte[] { CVMTag.TRUE });
 	public static final Hash FALSE_HASH = Hashing.sha3(new byte[] { CVMTag.FALSE });
 	public static final Hash EMPTY_HASH = Hashing.sha3(new byte[0]);
+	public static final Hash ZERO = Hashing.sha3(Utils.ZERO_BYTES_32);
 
 
 	/**
@@ -74,21 +75,23 @@ public class Hash extends AArrayBlob {
     /**
      * Wraps the specified blob data as a Hash, sharing the underlying byte array.
      * @param data Blob data of correct size for a Hash. Must have at least enough bytes for a Hash
-     * @return Wrapped data as a Hash
+     * @return Wrapped data as a Hash, or null if data is of wrong length
      */
 	public static Hash wrap(AArrayBlob data) {
 		if (data instanceof Hash) return (Hash)data;
+		if (LENGTH!=data.count()) return null;
+	
 		return wrap(data.getInternalArray(),data.getInternalOffset());
 	}
 	
 	/**
      * Wraps the specified blob data as a Hash, sharing the underlying byte array.
      * @param data Blob data of correct size for a Hash. Must have at least enough bytes for a Hash
-	 * @param pos Position ib Blob to read from
-     * @return Wrapped data as a Hash, or null if insufficent bytes in source Blob
+	 * @param pos Position in Blob to start from
+     * @return Wrapped data as a Hash, or null if insufficient bytes in source Blob
      */
 	public static Hash wrap(AArrayBlob data, int pos) {
-		if ((pos==0) &&(data instanceof Hash)) return (Hash)data;
+		if ((pos==0) && (data instanceof Hash)) return (Hash)data;
 		if (pos+LENGTH>data.count()) return null;
 		return wrap(data.getInternalArray(),Utils.checkedInt(data.getInternalOffset()+pos));
 	}

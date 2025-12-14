@@ -3,6 +3,7 @@ package convex.core.data;
 import java.util.function.Function;
 
 import convex.core.lang.RT;
+import convex.core.util.Utils;
 
 /**
  * Abstract base class for Persistent data structures. Each can be regarded as a
@@ -117,7 +118,7 @@ public abstract class ADataStructure<E extends ACell> extends ACountable<E> {
 	 * @param keys Keys to look up in data structures
 	 * @return Value from collection, or null if not found
 	 */
-	public ACell getIn(Object... keys) {
+	public <T extends ACell> T getIn(Object... keys) {
 		return RT.getIn(this, keys);
 	}
 	
@@ -127,7 +128,7 @@ public abstract class ADataStructure<E extends ACell> extends ACountable<E> {
 	 * @param keys Keys to look up in data structures
 	 * @return Value from collection, or null if not found
 	 */
-	public ACell getIn(ACell... keys) {
+	public <T extends ACell> T getIn(ACell... keys) {
 		return RT.getIn(this, keys);
 	}
 	
@@ -137,8 +138,9 @@ public abstract class ADataStructure<E extends ACell> extends ACountable<E> {
 	 * @param key Key to look up in data structures. 
 	 * @return Value from collection, or null if not found
 	 */
-	public ACell getIn(Object key) {
-		return get(RT.cvm(key));
+	@SuppressWarnings("unchecked")
+	public <T extends ACell> T getIn(Object key) {
+		return (T) get(RT.cvm(key));
 	}
 	
 	/**
@@ -147,8 +149,9 @@ public abstract class ADataStructure<E extends ACell> extends ACountable<E> {
 	 * @param key Key to look up in data structures
 	 * @return Value from collection, or null if not found
 	 */
-	public ACell getIn(ACell key) {
-		return get(key);
+	@SuppressWarnings("unchecked")
+	public <T extends ACell> T getIn(ACell key) {
+		return (T) get(key);
 	}
 	
 	/**
@@ -185,5 +188,27 @@ public abstract class ADataStructure<E extends ACell> extends ACountable<E> {
 	 * @return Collection after function applied to each element
 	 */
 	public abstract <R extends ACell> ADataStructure<R> map(Function<E, R> mapper);
+
+	/**
+	 * Gets the element at the specified element index in this data structure
+	 * 
+	 * @param index Index of element to get
+	 * @return Element at the specified index
+	 */
+	@Override
+	public abstract E get(long index);
+
+	/**
+	 * Converts this data structure to a new Cell array
+	 * @return A new cell array containing the elements of this data structure
+	 */
+	public ACell[] toCellArray() {
+		int n=Utils.checkedInt(count());
+		ACell[] cells=new ACell[n];
+		for (int i=0; i<n; i++) {
+			cells[i]=get(i);
+		}
+		return cells;
+	}
 
 }

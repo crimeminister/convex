@@ -194,6 +194,7 @@ public abstract class AMap<K extends ACell, V extends ACell> extends ADataStruct
 	 * @param i Index of entry to get
 	 * @return map entry
 	 */
+	@Override
 	public final MapEntry<K, V> get(long i) {
 		checkIndex(i);
 		return entryAt(i);
@@ -356,7 +357,7 @@ public abstract class AMap<K extends ACell, V extends ACell> extends ADataStruct
 
 	/**
 	 * Gets a vector of keys for this Map. 
-	 * O(n) in general.
+	 * O(n) in general, but may admit faster implementations
 	 * 
 	 * @return Vector of Keys
 	 */

@@ -8,6 +8,12 @@ import java.net.http.HttpResponse;
 
 import org.junit.jupiter.api.Test;
 
+import convex.core.cpos.Block;
+import convex.core.cpos.Order;
+import convex.core.data.AVector;
+import convex.core.data.Hash;
+import convex.core.data.SignedData;
+
 /**
  * Test class for Explorer API endpoints.
  * Tests that each main explorer endpoint returns appropriate HTTP status codes.
@@ -51,6 +57,12 @@ public class ExplorerTest extends ARESTTest {
         HttpResponse<String> response = get(EXPLORER_PATH + "/");
         assertEquals(200, response.statusCode());
         assertTrue(isValidHtmlResponse(response, "Peer Explorer"));
+    }
+    
+    @Test
+    public void testLLMs() throws IOException, InterruptedException {
+        HttpResponse<String> response = get(HOST_PATH+"/llms.txt");
+        assertEquals(200, response.statusCode());
     }
     
     @Test
@@ -163,7 +175,7 @@ public class ExplorerTest extends ARESTTest {
         // Extract a peer key from the response (this is a simplified approach)
         // In a real test, you might want to parse the HTML to extract actual peer keys
         // For now, we'll test with a known format that should exist
-        var peers = server.getServer().getPeer().getConsensusState().getPeers();
+        var peers = server.getServer().getState().getPeers();
         if (peers.count() > 0) {
             String peerKey = peers.entryAt(0).getKey().toHexString();
             HttpResponse<String> response = get(EXPLORER_PATH + "/peers/" + peerKey);
@@ -213,4 +225,31 @@ public class ExplorerTest extends ARESTTest {
                   response.body().contains("search") || 
                   response.body().contains("invalidquery123"));
     }
+
+	@Test
+	public void testExplorerSearchBlockHash() throws IOException, InterruptedException {
+		// Obtain first block hash if available
+		Order order = server.getServer().getPeer().getPeerOrder();
+		AVector<SignedData<Block>> blocks = order.getBlocks();
+		if (blocks.isEmpty()) return; // nothing to test
+		SignedData<Block> firstBlock = blocks.get(0);
+		Hash blockHash = firstBlock.getHash();
+		String hashHex = blockHash.toHexString();
+
+		HttpResponse<String> response = post(EXPLORER_PATH + "/search", "q=" + hashHex);
+
+		assertEquals(302, response.statusCode());
+		assertTrue(response.headers().firstValue("Location")
+				.map(loc -> loc.equals("/explorer/blocks/0") || loc.endsWith("/explorer/blocks/0"))
+				.orElse(false));
+	}
+
+	@Test
+	public void testExplorerSearchBlockHashNotFound() throws IOException, InterruptedException {
+		String fakeHash = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+		HttpResponse<String> response = post(EXPLORER_PATH + "/search", "q=" + fakeHash);
+
+		assertEquals(200, response.statusCode());
+		assertTrue(response.body().contains("Couldn't find") || response.body().contains(fakeHash));
+	}
 }

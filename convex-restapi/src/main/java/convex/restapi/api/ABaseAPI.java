@@ -1,14 +1,33 @@
 package convex.restapi.api;
 
 import convex.peer.Server;
+import convex.core.cvm.Address;
+import convex.core.data.AString;
+import convex.core.data.ACell;
+import convex.core.lang.Reader;
 import convex.restapi.RESTServer;
+import convex.core.lang.RT;
 import io.javalin.http.BadRequestResponse;
 import io.javalin.http.Context;
+import convex.core.data.AVector;
+import convex.core.cvm.State;
+import convex.core.data.Symbol;
 
 /**
- * BAse class for API based services
+ * Base class for API based services
  */
 public abstract class ABaseAPI extends AGenericAPI {
+	
+	/**
+	 * Default busy timeout for simultaneous requests
+	 */
+	public static final long BUSY_TIMEOUT = 5000;
+
+	
+	/**
+	 * Default pagination limit
+	 */
+	private static final long DEFAULT_LIMIT = 10;
 	
 	protected final RESTServer restServer;
 	protected final Server server;
@@ -101,7 +120,7 @@ public abstract class ABaseAPI extends AGenericAPI {
 	    return baseUrl.toString();
 	}
 	
-	private static final long DEFAULT_LIMIT = 10;
+
 
 	/**
 	 * Get a pagination range from query params as an [start,end, fullLimit] array
@@ -132,5 +151,42 @@ public abstract class ABaseAPI extends AGenericAPI {
 		return range;
 	}
 
+	/**
+	 * Attempt to resolve an address from an arbitrary object, including possible CNS lookups.
+	 * @param o Object to resolve an address from.
+	 * @return Address instance, or null if not a valid address.
+	 */
+	protected Address resolveAddress(ACell o) {
+		if (o==null) return null;
 
+		if (o instanceof Address a) {
+			return a;
+		}
+
+		if (o instanceof Symbol sym) {
+			State state=server.getState();
+			ACell cnsValue=state.lookupCNS(sym);
+			return resolveAddress(cnsValue);
+		}
+
+		if (o instanceof AVector v) {
+			if (v.count() !=2) return null; // must be a scoped address
+			return resolveAddress(v.get(0)); // resolve the base address
+		}
+
+		try {
+			// If it's a String, try to parse it as an address
+			AString s = RT.ensureString(o);
+			if (s != null) {
+				// remove the @ prefix if it exists
+				if (s.startsWith("@")) s=s.slice(1);
+				return resolveAddress(Reader.read(s));
+			}
+
+			// If it's a Keyword, try to parse it as an address
+			return null;
+		} catch (Exception e) {
+			throw new IllegalArgumentException("Unable to resolve address from object: "+o+" cause: "+e.getMessage(), e);
+		}
+	}
 }

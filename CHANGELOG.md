@@ -1,10 +1,19 @@
 # Changelog
+
 Notable changes to Convex core modules will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.8.2] - Unreleased
+## [0.8.3-SNAPSHOT] - Unreleased
+
+### Added
+
+### Changed
+
+### Fixed
+
+## [0.8.2] - 2025-11-21
 
 ### Added
 
@@ -14,16 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved JSON Functionality
 - New string handling functions
 - Base58 encoding support
+- Experimental MCP Server support
 
 ### Changed
 
 - Better AString interning
+- Improved REST API for transactions / block details
 
 ### Fixed
 
 - Potential synchronisation issue with ConvexLocal
+- BIP39 paths for CLI key import
 
-## [0.8.1] - 2024-03-14
+## [0.8.1] - 2025-03-14
 
 ### Added
 
