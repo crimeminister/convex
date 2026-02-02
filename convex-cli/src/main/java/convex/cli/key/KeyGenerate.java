@@ -52,7 +52,6 @@ public class KeyGenerate extends AKeyCommand {
 			defaultValue=convex.core.Constants.DEFAULT_BIP39_PATH,
 			description="Derivation path for SLIP-0010 when using BIP39. Default: ${DEFAULT-VALUE}")
 	private String path;
-
 	
 	@Option(names="--passphrase",
 			description="BIP39 passphrase. If not provided, will be requested from user (or assumed blank in non-interactive mode).")
@@ -127,9 +126,17 @@ public class KeyGenerate extends AKeyCommand {
 			inform("Generated key pair with public key: 0x"+kp.getAccountKey().toChecksumHex());
 
 			if (keyPassword==null) {
-				keyPassword=readPassword("Enter password for generated key: ");
+				if (isInteractive()) {
+					keyPassword=readPassword("Enter password for generated key: ");
+				} else if (isParanoid()) {
+					throw new CLIError(ExitCodes.USAGE,
+						"Password required in strict security mode. Use --keypass or CONVEX_KEY_PASSWORD environment variable.");
+				} else {
+					informWarning("No password provided - using empty password for key encryption.");
+					keyPassword = new char[0];
+				}
 			}
-			
+
 			storeMixin.addKeyPairToStore(kp, keyPassword); 
 			println(publicKeyHexString); // Output generated public key		
 			Arrays.fill(keyPassword, 'p');

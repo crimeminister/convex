@@ -1,6 +1,9 @@
  package convex.observer;
 
-import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.concurrent.TimeUnit;
@@ -8,42 +11,20 @@ import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
-import org.apache.hc.client5.http.async.methods.SimpleHttpRequest;
-import org.apache.hc.client5.http.async.methods.SimpleHttpResponse;
-import org.apache.hc.client5.http.async.methods.SimpleRequestBuilder;
-import org.apache.hc.client5.http.impl.async.CloseableHttpAsyncClient;
-import org.apache.hc.client5.http.impl.async.HttpAsyncClients;
-import org.apache.hc.core5.concurrent.FutureCallback;
-import org.apache.hc.core5.http.ContentType;
-import org.json.simple.JSONValue;
-
 import convex.core.cpos.Order;
 import convex.core.cvm.transactions.ATransaction;
 import convex.core.Result;
+import convex.core.data.AString;
 import convex.core.data.SignedData;
 import convex.core.lang.RT;
 import convex.core.util.JSON;
-import convex.core.util.Shutdown;
 import convex.core.util.Utils;
 import convex.peer.Server;
 
 public class StrimziKafka extends AObserverQueue<Object> {
 	
-	private static final CloseableHttpAsyncClient httpasyncclient = HttpAsyncClients.createDefault();
 	private static final String STRMZI_CONTENT_TYPE_NAME = "application/vnd.kafka.json.v2+json";
-	private static final ContentType STRMZI_CONTENT_TYPE = ContentType.create(STRMZI_CONTENT_TYPE_NAME);
-
-	static {
-		httpasyncclient.start();
-		Shutdown.addHook(Shutdown.CLIENTHTTP, ()->{
-			try {
-				httpasyncclient.close();
-			} catch (IOException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
-		});
-	}
+	private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder().build();
 
 	public String topic;
 	public String url;
@@ -176,32 +157,22 @@ public class StrimziKafka extends AObserverQueue<Object> {
 		HashMap<String,Object> json=new HashMap<>();
 		json.put("records", recs);
 		
-		String jsonBody=JSONValue.toJSONString(json);
+		AString js=JSON.toAString(json);
 		// System.out.println(jsonBody);
 		
-		SimpleHttpRequest post=SimpleRequestBuilder.post(url+topic)
-				.setBody(jsonBody, STRMZI_CONTENT_TYPE)
-				.setHeader("content-type", STRMZI_CONTENT_TYPE_NAME)
-				.build();
-		
-		// System.out.println(post);
-		
-		httpasyncclient.execute(post, new FutureCallback<SimpleHttpResponse>() {
-			@Override
-			public void completed(SimpleHttpResponse result) {
-				// System.err.println(result);
-			}
+		HttpRequest request = HttpRequest.newBuilder(URI.create(url + topic))
+			.header("content-type", STRMZI_CONTENT_TYPE_NAME)
+			.POST(HttpRequest.BodyPublishers.ofByteArray(js.getBytes()))
+			.build();
 
-			@Override
-			public void failed(Exception ex) {
-				// System.err.println(ex);
-			}
-
-			@Override
-			public void cancelled() {
-				// System.err.println("Observation Cancelled");
-			};
-		});
+		HTTP_CLIENT.sendAsync(request, HttpResponse.BodyHandlers.discarding())
+			.thenAccept(response -> {
+				// optional success handling
+			})
+			.exceptionally(ex -> {
+				// optional error handling
+				return null;
+			});
 	}
 
 

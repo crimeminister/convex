@@ -14,14 +14,16 @@ import convex.lattice.ALattice;
  */
 public class DataLattice extends ALattice<Index<Hash,ACell>> {
 
+	public static DataLattice INSTANCE=new DataLattice();
 
 	@Override
 	public Index<Hash, ACell> merge(Index<Hash, ACell> ownValue, Index<Hash, ACell> otherValue) {
 		Index<Hash,ACell> result=ownValue;
 		if (result==null) result=zero();
+		if (otherValue==null) return result;
 		
 		ArrayList<ACell> newValues=new ArrayList<>();
-		result.mergeDifferences(result, (a,b)->{
+		result.mergeDifferences(otherValue, (a,b)->{
 			if (a!=null) return a; // keep own value
 			newValues.add(b);
 			return a;
@@ -44,6 +46,21 @@ public class DataLattice extends ALattice<Index<Hash,ACell>> {
 	@Override
 	public Index<Hash, ACell> zero() {
 		return (Index<Hash, ACell>) Index.EMPTY;
+	}
+
+	@SuppressWarnings("unchecked")
+	@Override
+	protected <T extends ACell> ALattice<T> path(ACell[] path,int pos) {
+		int d=path.length;
+		if (d==pos) return (ALattice<T>) this;
+		// no child lattices
+		return null;
+	}
+
+	@Override
+	public <T extends ACell> ALattice<T> path(ACell childKey) {
+		// No child lattices
+		return null;
 	}
 
 }

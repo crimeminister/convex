@@ -83,6 +83,12 @@ public final class SignedData<T extends ACell> extends ACVMRecord {
 		return sd;
 	}
 
+	/**
+	 * Gets the message bytes (as signed in this SignedData)
+	 * @param <T> Type of value to sign
+	 * @param ref Ref to the data for signing
+	 * @return Message bytes
+	 */
 	public static <T extends ACell> Blob getMessageForRef(Ref<T> ref) {
 		return ref.getEncoding();
 	}
@@ -248,7 +254,7 @@ public final class SignedData<T extends ACell> extends ACVMRecord {
 	/**
 	 * Validates the signature in this SignedData instance. Caches result
 	 *
-	 * @return true if valid, false otherwise
+	 * @return true if valid, false otherwise. No key considered invalid.
 	 */
 	public boolean checkSignature() {
 		if (pubKey==null) return false;
@@ -262,7 +268,9 @@ public final class SignedData<T extends ACell> extends ACVMRecord {
 	 * @return true if valid, false otherwise
 	 */
 	public boolean checkSignature(AccountKey publicKey) {
+		// Key must be consistent with this signature if key present
 		if ((this.pubKey!=null)&&!(this.pubKey.equals(publicKey))) return false;
+		
 		return checkSignatureImpl(publicKey);
 	}
 	

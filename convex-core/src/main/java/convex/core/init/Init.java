@@ -11,7 +11,7 @@ import convex.core.cvm.Address;
 import convex.core.cvm.Context;
 import convex.core.cvm.PeerStatus;
 import convex.core.cvm.State;
-import convex.core.data.ABlob;
+import convex.core.data.AArrayBlob;
 import convex.core.data.ACell;
 import convex.core.data.AList;
 import convex.core.data.AVector;
@@ -63,10 +63,6 @@ public class Init {
 	// First user of Protonet, i.e. @mikera
 	public static final Address FIRST_USER_ADDRESS = Address.create(13);
 	public static final AccountKey FIRST_USER_KEY = AccountKey.fromHex("89b5142678bfef7a2245af5ae5b9ab1e10c282b375fa297c5aaeccc48ac97cac");
-
-	// Constants
-	private static final Index<AccountKey, PeerStatus> EMPTY_PEERS = Index.none();
-	private static final Index<ABlob, AVector<ACell>> EMPTY_SCHEDULE = Index.none();
 	
 	/**
 	 * Number of coins issued at genesis (one million)
@@ -90,7 +86,7 @@ public class Init {
 	public static State createBaseState(AccountKey governanceKey, AccountKey genesisKey, List<AccountKey> peerKeys) {
 		
 		// accumulators for initial state maps
-		Index<AccountKey, PeerStatus> peers = EMPTY_PEERS;
+		Index<AArrayBlob, PeerStatus> peers = State.EMPTY_PEERS;
 		AVector<AccountStatus> accts = Vectors.empty();
 
 		long supply = Constants.MAX_SUPPLY;
@@ -178,7 +174,7 @@ public class Init {
 
 		// Create the initial state with static libraries and memory allowances. 
 		// We now have a functional CVM State!
-		State s = State.create(accts, peers, globals, EMPTY_SCHEDULE);
+		State s = State.create(accts, peers, globals, State.EMPTY_SCHEDULE);
 		{
 			supply-=s.getGlobalMemoryValue().longValue();
 			
@@ -541,7 +537,7 @@ public class Init {
 		return GENESIS_ADDRESS.offset(index+1);
 	}
 
-	private static Index<AccountKey, PeerStatus> addPeer(Index<AccountKey, PeerStatus> peers, AccountKey peerKey,
+	private static Index<AArrayBlob, PeerStatus> addPeer(Index<AArrayBlob, PeerStatus> peers, AccountKey peerKey,
 			Address owner, long initialStake) {
 		PeerStatus ps = PeerStatus.create(owner, initialStake, null);
 		if (peers.containsKey(peerKey)) throw new IllegalArgumentException("Duplicate peer key");

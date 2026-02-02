@@ -625,8 +625,12 @@ public class RT {
 		}
 
 		if (a instanceof APrimitive) {
-			if (a instanceof CVMBool)
-				return null; // disallow boolean -> long cast
+			// disallow boolean -> long cast since (long false) would still be truthy
+			if (a instanceof CVMBool) {
+				return null; 
+			}
+			
+			// Other primitives are OK as a long
 			return CVMLong.create(((APrimitive) a).longValue());
 		}
 
@@ -2032,6 +2036,18 @@ public class RT {
 		return result;
 	}
 
-
-
+	/**
+	 * Finds the first non-nil argument 
+	 * @param <T> Type of return value
+	 * @param values Arguments which may be nil
+	 * @return Non-nil value, or nil if all arguments were nil
+	 */
+	@SuppressWarnings("unchecked")
+	public static <T extends ACell> T fnil(ACell... values) {
+		ACell result=null;
+		for (int i=0; (result==null)&&(i<values.length);i++) {
+			result=values[i];
+		}
+		return (T) result;
+	}
 }

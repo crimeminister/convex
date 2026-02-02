@@ -6,6 +6,8 @@ import java.io.InputStream;
 import convex.core.cvm.Syntax;
 import convex.core.data.ACell;
 import convex.core.data.AList;
+import convex.core.data.AString;
+import convex.core.exceptions.ParseException;
 import convex.core.lang.reader.AntlrReader;
 import convex.core.util.Utils;
 
@@ -73,6 +75,23 @@ public class Reader {
 	@SuppressWarnings("unchecked")
 	public static <R extends ACell> R read(String source) {
 		return (R) AntlrReader.read(source);
+	}
+
+	/**
+	 * Parses an expression and returns a canonical Cell representing a form
+	 * 
+	 * @param source Java source string to read
+	 * @return Parsed form (may be nil)
+	 */
+	@SuppressWarnings("unchecked")
+	public static <R extends ACell> R read(AString source) {
+		try {
+			return (R) read(source.getInputStream());
+		} catch (ParseException e) {
+			throw e;
+		} catch (Exception e) {
+			throw new ParseException("Could not read string input: "+e.getMessage(), e);
+		}
 	}
 
 

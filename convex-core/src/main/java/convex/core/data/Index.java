@@ -47,7 +47,7 @@ public final class Index<K extends ABlobLike<?>, V extends ACell> extends AIndex
 	/**
 	 * Empty Index singleton
 	 */
-	public static final Index<?, ?> EMPTY = Cells.intern(new Index<ABlob, ACell>(0, null, EMPTY_CHILDREN,(short) 0, 0L));
+	public static final Index<?, ?> EMPTY = Cells.intern(new Index<ABlobLike<?>, ACell>(0, null, EMPTY_CHILDREN,(short) 0, 0L));
 	
 	/**
 	 * Entry for this node of the radix tree. Invariant assumption that the prefix
@@ -951,6 +951,11 @@ public final class Index<K extends ABlobLike<?>, V extends ACell> extends AIndex
 	public <R extends ACell> ADataStructure<R> map(Function<MapEntry<K, V>, R> mapper) {
 		// Index result=EMPTY;
 		// return result;
+		throw new TODOException();
+	}
+
+	@Override
+	public long seek(ABlobLike<?> key) {
 		throw new TODOException();
 	}
 

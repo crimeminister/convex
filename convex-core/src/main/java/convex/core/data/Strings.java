@@ -78,10 +78,35 @@ public class Strings {
 
 	public static final StringShort NULL = StringShort.intern("null");
 
+	public static final StringShort TX = StringShort.intern("tx");
+	
+	public static final StringShort DATA = StringShort.intern("data");
+
+	public static final StringShort HASH = StringShort.intern("hash");
+	
+	public static final StringShort ADDRESS = StringShort.intern("address");
+
+	public static final StringShort AMOUNT = StringShort.intern("amount");
+	
+	public static final StringShort CAD3 = StringShort.intern("cad3");
+
+	public static final StringShort SYMBOL = StringShort.intern("symbol");
+
+	public static final StringShort SOURCE = StringShort.intern("source");
+
 	
 	public static final Comparator<AString> lengthComparator = (a,b)->{
 		return Long.signum(a.count()-b.count());
 	};
+
+
+	public static AString wrap(byte[] utfBytes) {
+		if (utfBytes.length<=StringShort.MAX_LENGTH) {
+			return StringShort.wrap(utfBytes);
+		} else {
+			return StringTree.create(Blob.wrap(utfBytes));
+		}
+	}
 
 
 
@@ -311,6 +336,8 @@ public class Strings {
 	public static AString fromStream(InputStream inputStream) throws IOException {
 		return create(Blobs.fromStream(inputStream));
 	}
+
+
 
 
 
