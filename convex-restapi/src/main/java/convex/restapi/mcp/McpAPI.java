@@ -102,6 +102,7 @@ public class McpAPI extends ABaseAPI {
 	public static final StringShort ARG_CVX = Strings.intern("cvx");
 	public static final StringShort ARG_PUBLIC_KEY = Strings.intern("publicKey");
 	public static final StringShort ARG_SIGNATURE = Strings.intern("signature");
+	public static final StringShort ARG_SIG = Strings.intern("sig");
 	public static final StringShort ARG_BYTES = Strings.intern("bytes");
 	public static final StringShort ARG_ACCOUNT_KEY = Strings.intern("accountKey");
 	public static final StringShort ARG_FAUCET = Strings.intern("faucet");
@@ -366,6 +367,7 @@ public class McpAPI extends ABaseAPI {
 		registerTool(new EncodeTool());
 		registerTool(new DecodeTool());
 		registerTool(new SubmitTool());
+		registerTool(new SignAndSubmitTool());
 		registerTool(new HashTool());
 		registerTool(new SignTool());
 		registerTool(new PeerStatusTool());
@@ -375,6 +377,7 @@ public class McpAPI extends ABaseAPI {
 		registerTool(new DescribeAccountTool());
 		registerTool(new LookupTool());
 		registerTool(new ResolveCNSTool());
+		registerTool(new GetTransactionTool());
 	}
 
 	private void registerTool(McpTool tool) {
@@ -629,7 +632,11 @@ public class McpAPI extends ABaseAPI {
 				if (accountKey == null) {
 					return toolError("Invalid account key");
 				}
-				AString signatureCell = RT.ensureString(arguments.get(ARG_SIGNATURE));
+				// Accept both 'sig' and 'signature' for backwards compatibility
+				AString signatureCell = RT.ensureString(arguments.get(ARG_SIG));
+				if (signatureCell == null) {
+					signatureCell = RT.ensureString(arguments.get(ARG_SIGNATURE));
+				}
 				if (signatureCell == null) {
 					return protocolError(-32602, "Submit requires 'sig' string with Ed25519 signature");
 				}
@@ -643,6 +650,41 @@ public class McpAPI extends ABaseAPI {
 				return toolResult(result);
 			} catch (Exception e) {
 				return toolError("Submit failed: " + e.getMessage());
+			}
+		}
+	}
+
+	private class SignAndSubmitTool extends McpTool {
+		SignAndSubmitTool() {
+			super(McpTool.loadMetadata("convex/restapi/mcp/tools/signAndSubmit.json"));
+		}
+
+		@Override
+		public AMap<AString, ACell> handle(AMap<AString, ACell> arguments) {
+			AString hashCell = RT.ensureString(arguments.get(ARG_HASH));
+			if (hashCell == null) {
+				return protocolError(-32602, "signAndSubmit requires 'hash' string");
+			}
+			Blob hashBlob = Blob.parse(hashCell);
+			if (hashBlob == null) {
+				return toolError("hash must be valid hex");
+			}
+			AString seedCell = RT.ensureString(arguments.get(ARG_SEED));
+			if (seedCell == null) {
+				return protocolError(-32602, "signAndSubmit requires 'seed' string");
+			}
+			Blob seedBlob = Blob.parse(seedCell);
+			if (seedBlob == null || seedBlob.count() != AKeyPair.SEED_LENGTH) {
+				return toolError("seed must be a 32-byte hex string (64 hex characters)");
+			}
+			try {
+				ATransaction transaction = decodeTransaction(hashBlob);
+				AKeyPair keyPair = AKeyPair.create(seedBlob);
+				SignedData<ATransaction> signed = keyPair.signData(transaction);
+				Result result = restServer.getConvex().transactSync(signed);
+				return toolResult(result);
+			} catch (Exception e) {
+				return toolError("signAndSubmit failed: " + e.getMessage());
 			}
 		}
 	}
@@ -1053,13 +1095,13 @@ public class McpAPI extends ABaseAPI {
 				if (nameCell.startsWith("@")) {
 					nameCell = nameCell.slice(1);
 				}
-				
+
 				// Treat as Symbol
 				Symbol symbol=Symbol.create(nameCell);
 				if (symbol == null) {
 					return toolError("Invalid CNS name: "+nameCell);
 				}
-				
+
 				// Look up CNS record
 				AVector<ACell> record = server.getState().lookupCNSRecord(symbol);
 				if (record == null) {
@@ -1069,13 +1111,13 @@ public class McpAPI extends ABaseAPI {
 				if (record.count() != 4) {
 					return toolError("CNS record has unexpected length, got "+record);
 				}
-				
+
 				// Extract elements from vector: [value controller meta child]
 				ACell value = record.get(0);
 				ACell controller = record.get(1);
 				ACell meta = record.get(2);
 				ACell child = record.get(3);
-				
+
 				// Build result map
 				AMap<AString, ACell> resultMap = Maps.of(
 					"value", RT.print(value),
@@ -1090,7 +1132,48 @@ public class McpAPI extends ABaseAPI {
 			}
 		}
 	}
-	
+
+	private class GetTransactionTool extends McpTool {
+		GetTransactionTool() {
+			super(McpTool.loadMetadata("convex/restapi/mcp/tools/getTransaction.json"));
+		}
+
+		@Override
+		public AMap<AString, ACell> handle(AMap<AString, ACell> arguments) {
+			AString hashCell = RT.ensureString(arguments.get(ARG_HASH));
+			if (hashCell == null) {
+				return protocolError(-32602, "getTransaction requires 'hash' string");
+			}
+
+			Hash h = Hash.parse(hashCell.toString());
+			if (h == null) {
+				return toolError("Invalid hash format: " + hashCell);
+			}
+
+			try {
+				Peer peer = server.getPeer();
+
+				SignedData<ATransaction> transaction = peer.getTransaction(h);
+				if (transaction == null) {
+					return toolSuccess(Maps.of("found", CVMBool.FALSE));
+				}
+
+				AVector<CVMLong> pos = peer.getTransactionLocation(h);
+				Result txResult = peer.getTransactionResult(pos);
+
+				AMap<AString, ACell> resultMap = Maps.of(
+					"found", CVMBool.TRUE,
+					"tx", RT.print(transaction),
+					"position", pos,
+					"result", RT.print(txResult)
+				);
+				return toolSuccess(resultMap);
+			} catch (Exception e) {
+				return toolError("getTransaction failed: " + e.getMessage());
+			}
+		}
+	}
+
 	private AMap<AString,ACell> WELL_KNOWN=JSON.parse("""
 		{	
 			"mcp_version": "1.0",

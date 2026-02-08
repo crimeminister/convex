@@ -1,37 +1,39 @@
 package convex.restapi.test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import java.io.IOException;
 import java.net.http.HttpResponse;
 
 import org.junit.jupiter.api.Test;
 
-import convex.core.init.Init;
+import convex.core.crypto.AKeyPair;
+import convex.core.crypto.ASignature;
+import convex.core.cvm.Address;
 import convex.core.data.ACell;
 import convex.core.data.AHashMap;
 import convex.core.data.AMap;
 import convex.core.data.AString;
 import convex.core.data.AVector;
+import convex.core.data.AccountKey;
 import convex.core.data.Blob;
 import convex.core.data.Maps;
 import convex.core.data.Strings;
 import convex.core.data.Symbol;
+import convex.core.data.prim.ANumeric;
 import convex.core.data.prim.CVMBool;
 import convex.core.data.prim.CVMLong;
-import convex.core.crypto.AKeyPair;
-import convex.core.crypto.ASignature;
+import convex.core.init.Init;
 import convex.core.lang.RT;
 import convex.core.lang.Reader;
 import convex.core.util.JSON;
 import convex.restapi.mcp.McpAPI;
-import convex.core.data.AccountKey;
-import convex.core.cvm.Address;
+import convex.restapi.mcp.McpTool;
 
 /**
  * Integration tests for the MCP HTTP endpoint.
@@ -48,6 +50,9 @@ public class McpTest extends ARESTTest {
 	private static final AString SEED_TEST = Strings.create("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
 	private static final AString VALUE_HELLO = Strings.create("68656c6c6f");
 	private static final AString VALUE_WORLD = Strings.create("776f726c64");
+
+	/** Tracks the last tool name called by makeToolCall, used for schema validation in expectResult */
+	private String lastToolName;
 
 	/**
 	 * Happy-path sanity check that the MCP server exposes the required tool list.
@@ -239,6 +244,182 @@ public class McpTest extends ARESTTest {
 		AMap<AString, ACell> submitResponse = makeToolCall("submit", submitArgs);
 		AMap<AString, ACell> submitResult = expectResult(submitResponse);
 		assertEquals(CVMLong.create(6), RT.getIn(submitResult, "value"));
+	}
+
+	/**
+	 * Two-step flow: prepare -> signAndSubmit should execute the transaction successfully.
+	 * This is the recommended pattern for agents.
+	 */
+	@Test
+	public void testPrepareSignAndSubmit() throws IOException, InterruptedException {
+		AString source = Strings.create("(+ 10 20)");
+		AString addressString = Strings.create(Init.GENESIS_ADDRESS.toString());
+		AMap<AString, ACell> prepareArgs = Maps.of(
+			"source", source,
+			"address", addressString
+		);
+
+		AMap<AString, ACell> prepareResponse = makeToolCall("prepare", prepareArgs);
+		AMap<AString, ACell> prepared = expectResult(prepareResponse);
+		AString hashCell = RT.getIn(prepared, "hash");
+		assertNotNull(hashCell, "Prepare should return a hash");
+
+		AString seedHex = Strings.create(KP.getSeed().toHexString());
+		AMap<AString, ACell> signAndSubmitArgs = Maps.of(
+			"hash", hashCell,
+			"seed", seedHex
+		);
+		AMap<AString, ACell> signAndSubmitResponse = makeToolCall("signAndSubmit", signAndSubmitArgs);
+		AMap<AString, ACell> result = expectResult(signAndSubmitResponse);
+		assertEquals(CVMLong.create(30), RT.getIn(result, "value"), "Result should be 30 for (+ 10 20)");
+	}
+
+	/**
+	 * signAndSubmit should fail gracefully with invalid hash.
+	 */
+	@Test
+	public void testSignAndSubmitInvalidHash() throws IOException, InterruptedException {
+		AString seedHex = Strings.create(KP.getSeed().toHexString());
+		AMap<AString, ACell> args = Maps.of(
+			"hash", "0xDEADBEEF",
+			"seed", seedHex
+		);
+		AMap<AString, ACell> response = makeToolCall("signAndSubmit", args);
+		AMap<AString, ACell> structured = expectError(response);
+		assertNotNull(structured, "Invalid hash should return a structured error");
+	}
+
+	/**
+	 * signAndSubmit should fail gracefully with invalid seed.
+	 */
+	@Test
+	public void testSignAndSubmitInvalidSeed() throws IOException, InterruptedException {
+		// First prepare a valid transaction
+		AString source = Strings.create("(* 2 3)");
+		AString addressString = Strings.create(Init.GENESIS_ADDRESS.toString());
+		AMap<AString, ACell> prepareArgs = Maps.of(
+			"source", source,
+			"address", addressString
+		);
+		AMap<AString, ACell> prepareResponse = makeToolCall("prepare", prepareArgs);
+		AMap<AString, ACell> prepared = expectResult(prepareResponse);
+		AString hashCell = RT.getIn(prepared, "hash");
+
+		// Try with invalid seed (too short)
+		AMap<AString, ACell> args = Maps.of(
+			"hash", hashCell,
+			"seed", "0x1234"
+		);
+		AMap<AString, ACell> response = makeToolCall("signAndSubmit", args);
+		AMap<AString, ACell> structured = expectError(response);
+		assertNotNull(structured, "Invalid seed should return a structured error");
+	}
+
+	/**
+	 * signAndSubmit should fail with missing hash parameter.
+	 */
+	@Test
+	public void testSignAndSubmitMissingHash() throws IOException, InterruptedException {
+		AString seedHex = Strings.create(KP.getSeed().toHexString());
+		AMap<AString, ACell> args = Maps.of("seed", seedHex);
+		AMap<AString, ACell> response = makeToolCall("signAndSubmit", args);
+
+		// Should return a protocol error for missing required parameter
+		ACell errorCell = response.get(McpAPI.FIELD_ERROR);
+		assertNotNull(errorCell, "Missing hash should return a protocol error");
+	}
+
+	/**
+	 * signAndSubmit should fail with missing seed parameter.
+	 */
+	@Test
+	public void testSignAndSubmitMissingSeed() throws IOException, InterruptedException {
+		AMap<AString, ACell> args = Maps.of("hash", "0x1234567890abcdef");
+		AMap<AString, ACell> response = makeToolCall("signAndSubmit", args);
+
+		// Should return a protocol error for missing required parameter
+		ACell errorCell = response.get(McpAPI.FIELD_ERROR);
+		assertNotNull(errorCell, "Missing seed should return a protocol error");
+	}
+
+	/**
+	 * GetTransaction tool should retrieve a transaction after it's been submitted.
+	 * This is an e2e test that runs a transaction then verifies it can be looked up by hash.
+	 */
+	@Test
+	public void testGetTransaction() throws IOException, InterruptedException {
+		// First, run a transaction using signAndSubmit
+		AString source = Strings.create("(def test-var-for-get-tx 42)");
+		AString addressString = Strings.create(Init.GENESIS_ADDRESS.toString());
+		AMap<AString, ACell> prepareArgs = Maps.of(
+			"source", source,
+			"address", addressString
+		);
+
+		AMap<AString, ACell> prepareResponse = makeToolCall("prepare", prepareArgs);
+		AMap<AString, ACell> prepared = expectResult(prepareResponse);
+		AString hashCell = RT.getIn(prepared, "hash");
+		assertNotNull(hashCell, "Prepare should return a hash");
+
+		AString seedHex = Strings.create(KP.getSeed().toHexString());
+		AMap<AString, ACell> signAndSubmitArgs = Maps.of(
+			"hash", hashCell,
+			"seed", seedHex
+		);
+		AMap<AString, ACell> signAndSubmitResponse = makeToolCall("signAndSubmit", signAndSubmitArgs);
+		AMap<AString, ACell> txResult = expectResult(signAndSubmitResponse);
+		assertEquals(CVMLong.create(42), RT.getIn(txResult, "value"), "Transaction result should be 42");
+
+		// Get the transaction hash from info.tx (info has string keys with hex string values)
+		ACell infoCell = RT.getIn(txResult, "info");
+		assertNotNull(infoCell, "Transaction result should have info, got result: " + txResult);
+		AString txHashString = RT.ensureString(RT.getIn(infoCell, "tx"));
+		assertNotNull(txHashString, "Transaction info should contain tx hash");
+
+		// Now use getTransaction to look up the transaction by hash
+		AMap<AString, ACell> getTransactionArgs = Maps.of("hash", txHashString);
+		AMap<AString, ACell> getTransactionResponse = makeToolCall("getTransaction", getTransactionArgs);
+		AMap<AString, ACell> getTxResult = expectResult(getTransactionResponse);
+
+		// Verify it was found
+		assertEquals(CVMBool.TRUE, RT.getIn(getTxResult, "found"), "Transaction should be found");
+		assertNotNull(RT.getIn(getTxResult, "tx"), "Transaction data should be returned");
+		assertNotNull(RT.getIn(getTxResult, "position"), "Transaction position should be returned");
+		assertNotNull(RT.getIn(getTxResult, "result"), "Transaction result should be returned");
+	}
+
+	/**
+	 * GetTransaction tool should return found=false for a non-existent hash.
+	 */
+	@Test
+	public void testGetTransactionNotFound() throws IOException, InterruptedException {
+		// Use a valid but non-existent hash
+		AMap<AString, ACell> args = Maps.of("hash", "0x0000000000000000000000000000000000000000000000000000000000000000");
+		AMap<AString, ACell> response = makeToolCall("getTransaction", args);
+		AMap<AString, ACell> result = expectResult(response);
+
+		assertEquals(CVMBool.FALSE, RT.getIn(result, "found"), "Non-existent transaction should have found=false");
+	}
+
+	/**
+	 * GetTransaction tool should return error for invalid hash format.
+	 */
+	@Test
+	public void testGetTransactionInvalidHash() throws IOException, InterruptedException {
+		AMap<AString, ACell> args = Maps.of("hash", "not-a-valid-hash");
+		AMap<AString, ACell> response = makeToolCall("getTransaction", args);
+		AMap<AString, ACell> error = expectError(response);
+		assertNotNull(error, "Invalid hash should return an error");
+	}
+
+	/**
+	 * GetTransaction tool should return protocol error for missing hash parameter.
+	 */
+	@Test
+	public void testGetTransactionMissingHash() throws IOException, InterruptedException {
+		AMap<AString, ACell> response = makeToolCall("getTransaction", Maps.empty());
+		ACell errorCell = response.get(McpAPI.FIELD_ERROR);
+		assertNotNull(errorCell, "Missing hash should return a protocol error");
 	}
 
 	/**
@@ -692,6 +873,7 @@ public class McpTest extends ARESTTest {
 		if (arguments == null) {
 			arguments = Maps.empty();
 		}
+		this.lastToolName = toolName;
 		String id = "test-" + toolName;
 		AMap<AString, ACell> params = Maps.of(
 			"name", toolName,
@@ -714,10 +896,71 @@ public class McpTest extends ARESTTest {
 	}
 
 	/**
+	 * Validates that the structured content of a tool response matches the
+	 * declared outputSchema in the tool's JSON definition. Checks that each
+	 * property's actual type matches the schema type (string, object, boolean,
+	 * integer, number, array).
+	 */
+	private void validateOutputSchema(String toolName, AMap<AString, ACell> structured) {
+		String resourcePath = "convex/restapi/mcp/tools/" + toolName + ".json";
+		AMap<AString, ACell> metadata = McpTool.loadMetadata(resourcePath);
+
+		AMap<AString, ACell> outputSchema = RT.ensureMap(metadata.get(Strings.create("outputSchema")));
+		if (outputSchema == null) return; // no schema to validate
+
+		AMap<AString, ACell> properties = RT.ensureMap(outputSchema.get(Strings.create("properties")));
+		if (properties == null) return; // no properties declared
+
+		long n = properties.count();
+		for (long i = 0; i < n; i++) {
+			var entry = properties.entryAt(i);
+			String fieldName = entry.getKey().toString();
+			AMap<AString, ACell> fieldSchema = RT.ensureMap(entry.getValue());
+			if (fieldSchema == null) continue;
+
+			AString typeCell = RT.ensureString(fieldSchema.get(Strings.create("type")));
+			if (typeCell == null) continue; // no type constraint
+
+			String expectedType = typeCell.toString();
+			ACell actualValue = structured.get(Strings.create(fieldName));
+
+			// Field may be absent (not required) - only validate if present
+			if (actualValue == null) continue;
+
+			switch (expectedType) {
+				case "string":
+					assertTrue(actualValue instanceof AString,
+						() -> "Tool '" + toolName + "' field '" + fieldName + "': expected string but got " + RT.getType(actualValue) + " = " + actualValue);
+					break;
+				case "object":
+					assertTrue(actualValue instanceof AMap,
+						() -> "Tool '" + toolName + "' field '" + fieldName + "': expected object but got " + RT.getType(actualValue) + " = " + actualValue);
+					break;
+				case "boolean":
+					assertTrue(actualValue instanceof CVMBool,
+						() -> "Tool '" + toolName + "' field '" + fieldName + "': expected boolean but got " + RT.getType(actualValue) + " = " + actualValue);
+					break;
+				case "integer":
+				case "number":
+					assertTrue(actualValue instanceof ANumeric,
+						() -> "Tool '" + toolName + "' field '" + fieldName + "': expected " + expectedType + " but got " + RT.getType(actualValue) + " = " + actualValue);
+					break;
+				case "array":
+					assertTrue(actualValue instanceof AVector,
+						() -> "Tool '" + toolName + "' field '" + fieldName + "': expected array but got " + RT.getType(actualValue) + " = " + actualValue);
+					break;
+				default:
+					// Unknown type in schema, skip validation
+					break;
+			}
+		}
+	}
+
+	/**
 	 * Common assertion path for successful tool calls. Ensures the result wrapper
 	 * is present, marks {@code isError == false}, checks that a text payload was
 	 * produced for backward compatibility, and returns the structured content map
-	 * for further inspection.
+	 * for further inspection. Also validates the output against the declared schema.
 	 */
 	private AMap<AString, ACell> expectResult(AMap<AString, ACell> responseMap) {
 		assertNull(responseMap.get(McpAPI.FIELD_ERROR));
@@ -732,6 +975,12 @@ public class McpTest extends ARESTTest {
 		assertNotNull(textEntry.get(McpAPI.FIELD_TEXT));
 		AMap<AString, ACell> structured =RT.ensureMap(result.get(McpAPI.FIELD_STRUCTURED_CONTENT));
 		assertNotNull(structured);
+
+		// Validate structured content against the tool's declared outputSchema
+		if (lastToolName != null) {
+			validateOutputSchema(lastToolName, structured);
+		}
+
 		return structured;
 	}
 
@@ -875,8 +1124,329 @@ public class McpTest extends ARESTTest {
 		AMap<AString, ACell> args = Maps.of("name", "fictitious.cns.name");
 		AMap<AString, ACell> responseMap = makeToolCall("resolveCNS", args);
 		AMap<AString, ACell> structured = expectResult(responseMap);
-		
+
 		ACell exists = RT.getIn(structured, "exists");
 		assertEquals(CVMBool.FALSE, exists, "fictitious.cns.name should not exist");
+	}
+
+	/**
+	 * Hash tool should compute SHA256 hash by default.
+	 */
+	@Test
+	public void testHashToolSha256Default() throws IOException, InterruptedException {
+		AMap<AString, ACell> args = Maps.of("value", "hello");
+		AMap<AString, ACell> responseMap = makeToolCall("hash", args);
+		AMap<AString, ACell> structured = expectResult(responseMap);
+
+		AString hash = RT.getIn(structured, "hash");
+		assertNotNull(hash, "Hash tool should return a hash value");
+		assertEquals(64, hash.toString().length(), "SHA256 hash should be 32 bytes (64 hex chars)");
+
+		AString algorithm = RT.getIn(structured, "algorithm");
+		assertEquals(Strings.create("sha256"), algorithm, "Default algorithm should be sha256");
+	}
+
+	/**
+	 * Hash tool should compute SHA3 when algorithm is specified.
+	 */
+	@Test
+	public void testHashToolSha3() throws IOException, InterruptedException {
+		AMap<AString, ACell> args = Maps.of(
+			"value", "hello",
+			"algorithm", "sha3"
+		);
+		AMap<AString, ACell> responseMap = makeToolCall("hash", args);
+		AMap<AString, ACell> structured = expectResult(responseMap);
+
+		AString hash = RT.getIn(structured, "hash");
+		assertNotNull(hash, "Hash tool should return a hash value");
+		assertEquals(64, hash.toString().length(), "SHA3 hash should be 32 bytes (64 hex chars)");
+
+		AString algorithm = RT.getIn(structured, "algorithm");
+		assertEquals(Strings.create("sha3"), algorithm, "Algorithm should be sha3");
+	}
+
+	/**
+	 * Hash tool should produce different results for sha3 vs sha256.
+	 */
+	@Test
+	public void testHashToolDifferentAlgorithms() throws IOException, InterruptedException {
+		AMap<AString, ACell> sha256Args = Maps.of("value", "test data");
+		AMap<AString, ACell> sha256Response = makeToolCall("hash", sha256Args);
+		AMap<AString, ACell> sha256Structured = expectResult(sha256Response);
+		AString sha256Hash = RT.getIn(sha256Structured, "hash");
+
+		AMap<AString, ACell> sha3Args = Maps.of(
+			"value", "test data",
+			"algorithm", "sha3"
+		);
+		AMap<AString, ACell> sha3Response = makeToolCall("hash", sha3Args);
+		AMap<AString, ACell> sha3Structured = expectResult(sha3Response);
+		AString sha3Hash = RT.getIn(sha3Structured, "hash");
+
+		assertNotNull(sha256Hash, "SHA256 hash should not be null");
+		assertNotNull(sha3Hash, "SHA3 hash should not be null");
+		assertFalse(sha3Hash.equals(sha256Hash), "SHA3 and SHA256 should produce different hashes");
+	}
+
+	/**
+	 * Hash tool should return an error when value is missing.
+	 */
+	@Test
+	public void testHashToolMissingValue() throws IOException, InterruptedException {
+		AMap<AString, ACell> args = Maps.of("algorithm", "sha3");
+		AMap<AString, ACell> responseMap = makeToolCall("hash", args);
+
+		// Should return a protocol error for missing required parameter
+		ACell errorCell = responseMap.get(McpAPI.FIELD_ERROR);
+		assertNotNull(errorCell, "Missing value should return a protocol error");
+	}
+
+	/**
+	 * PeerStatus tool should return peer information including state and network details.
+	 */
+	@Test
+	public void testPeerStatusTool() throws IOException, InterruptedException {
+		AMap<AString, ACell> responseMap = makeToolCall("peerStatus", Maps.empty());
+		AMap<AString, ACell> structured = expectResult(responseMap);
+
+		ACell status = RT.getIn(structured, "status");
+		assertNotNull(status, "PeerStatus should return a status map");
+		assertTrue(status instanceof AMap, "Status should be a map");
+	}
+
+	/**
+	 * Submit tool should accept 'sig' parameter (primary) for signature.
+	 */
+	@Test
+	public void testSubmitToolWithSigParameter() throws IOException, InterruptedException {
+		AString source = Strings.create("(* 3 4)");
+		AString addressString = Strings.create(Init.GENESIS_ADDRESS.toString());
+		AMap<AString, ACell> prepareArgs = Maps.of(
+			"source", source,
+			"address", addressString
+		);
+
+		AMap<AString, ACell> prepareResponse = makeToolCall("prepare", prepareArgs);
+		AMap<AString, ACell> prepared = expectResult(prepareResponse);
+		AString hashCell = RT.getIn(prepared, "hash");
+		assertNotNull(hashCell);
+
+		AString seedHex = Strings.create(KP.getSeed().toHexString());
+		AMap<AString, ACell> signArgs = Maps.of(
+			"value", hashCell,
+			"seed", seedHex
+		);
+		AMap<AString, ACell> signResponse = makeToolCall("sign", signArgs);
+		AMap<AString, ACell> signed = expectResult(signResponse);
+		AString signatureHex = RT.getIn(signed, "signature");
+		AString accountKeyHex = RT.getIn(signed, "accountKey");
+
+		// Use 'sig' parameter instead of 'signature'
+		AMap<AString, ACell> submitArgs = Maps.of(
+			"hash", hashCell,
+			"sig", signatureHex,
+			"accountKey", accountKeyHex
+		);
+		AMap<AString, ACell> submitResponse = makeToolCall("submit", submitArgs);
+		AMap<AString, ACell> submitResult = expectResult(submitResponse);
+		assertEquals(CVMLong.create(12), RT.getIn(submitResult, "value"));
+	}
+
+	// =============================================================================
+	// Adversarial / Bad Input Tests
+	// =============================================================================
+
+	/**
+	 * Query tool should handle malformed Convex Lisp code gracefully.
+	 */
+	@Test
+	public void testQueryMalformedCode() throws IOException, InterruptedException {
+		AMap<AString, ACell> args = Maps.of("source", "(def x");  // Missing closing paren
+		AMap<AString, ACell> responseMap = makeToolCall("query", args);
+		AMap<AString, ACell> structured = expectError(responseMap);
+		assertNotNull(structured, "Malformed code should return a structured error");
+	}
+
+	/**
+	 * Query tool should handle SQL injection attempts gracefully.
+	 */
+	@Test
+	public void testQuerySQLInjection() throws IOException, InterruptedException {
+		AMap<AString, ACell> args = Maps.of("source", "'; DROP TABLE users; --");
+		AMap<AString, ACell> responseMap = makeToolCall("query", args);
+		AMap<AString, ACell> structured = expectError(responseMap);
+		assertNotNull(structured, "SQL injection attempt should return a structured error");
+	}
+
+	/**
+	 * Query tool should handle extremely long input.
+	 */
+	@Test
+	public void testQueryExtremelyLongInput() throws IOException, InterruptedException {
+		StringBuilder sb = new StringBuilder("(+ 1");
+		for (int i = 0; i < 1000; i++) {
+			sb.append(" 1");
+		}
+		sb.append(")");
+		AMap<AString, ACell> args = Maps.of("source", sb.toString());
+		AMap<AString, ACell> responseMap = makeToolCall("query", args);
+		// Should either succeed or fail gracefully
+		ACell result = responseMap.get(McpAPI.FIELD_RESULT);
+		ACell error = responseMap.get(McpAPI.FIELD_ERROR);
+		assertTrue(result != null || error != null, "Long input should return result or error");
+	}
+
+	/**
+	 * Query tool should handle null bytes in input.
+	 */
+	@Test
+	public void testQueryNullBytes() throws IOException, InterruptedException {
+		AMap<AString, ACell> args = Maps.of("source", "test\u0000value");
+		AMap<AString, ACell> responseMap = makeToolCall("query", args);
+		// Should handle gracefully - either succeed or return structured error
+		ACell result = responseMap.get(McpAPI.FIELD_RESULT);
+		ACell error = responseMap.get(McpAPI.FIELD_ERROR);
+		assertTrue(result != null || error != null, "Null bytes should be handled gracefully");
+	}
+
+	/**
+	 * CreateAccount tool should handle invalid hex for account key.
+	 */
+	@Test
+	public void testCreateAccountInvalidHex() throws IOException, InterruptedException {
+		AMap<AString, ACell> args = Maps.of("accountKey", "not-valid-hex!");
+		AMap<AString, ACell> responseMap = makeToolCall("createAccount", args);
+		AMap<AString, ACell> structured = expectError(responseMap);
+		assertNotNull(structured, "Invalid hex should return a structured error");
+	}
+
+	/**
+	 * Encode tool should handle deeply nested structures.
+	 */
+	@Test
+	public void testEncodeDeeplyNested() throws IOException, InterruptedException {
+		StringBuilder nested = new StringBuilder();
+		for (int i = 0; i < 50; i++) {
+			nested.append("[");
+		}
+		nested.append("1");
+		for (int i = 0; i < 50; i++) {
+			nested.append("]");
+		}
+		AMap<AString, ACell> args = Maps.of("cvx", nested.toString());
+		AMap<AString, ACell> responseMap = makeToolCall("encode", args);
+		// Should either succeed or fail gracefully
+		ACell result = responseMap.get(McpAPI.FIELD_RESULT);
+		ACell error = responseMap.get(McpAPI.FIELD_ERROR);
+		assertTrue(result != null || error != null, "Deeply nested input should be handled");
+	}
+
+	/**
+	 * Decode tool should handle garbage/invalid CAD3 data.
+	 */
+	@Test
+	public void testDecodeInvalidCAD3() throws IOException, InterruptedException {
+		AMap<AString, ACell> args = Maps.of("cad3", "0xDEADBEEF");  // Not valid CAD3
+		AMap<AString, ACell> responseMap = makeToolCall("decode", args);
+		AMap<AString, ACell> structured = expectError(responseMap);
+		assertNotNull(structured, "Invalid CAD3 should return a structured error");
+	}
+
+	/**
+	 * Sign tool should handle empty seed.
+	 */
+	@Test
+	public void testSignEmptySeed() throws IOException, InterruptedException {
+		AMap<AString, ACell> args = Maps.of(
+			"value", VALUE_HELLO,
+			"seed", ""
+		);
+		AMap<AString, ACell> responseMap = makeToolCall("sign", args);
+		AMap<AString, ACell> structured = expectError(responseMap);
+		assertNotNull(structured, "Empty seed should return a structured error");
+	}
+
+	/**
+	 * Validate tool should handle empty signature.
+	 */
+	@Test
+	public void testValidateEmptySignature() throws IOException, InterruptedException {
+		AString publicKeyHex = generateKeyPair(SEED_TEST);
+		AMap<AString, ACell> args = Maps.of(
+			"publicKey", publicKeyHex,
+			"signature", "",
+			"bytes", VALUE_HELLO
+		);
+		AMap<AString, ACell> responseMap = makeToolCall("validate", args);
+		AMap<AString, ACell> structured = expectError(responseMap);
+		assertNotNull(structured, "Empty signature should return a structured error");
+	}
+
+	/**
+	 * Prepare tool should handle invalid address format.
+	 */
+	@Test
+	public void testPrepareInvalidAddress() throws IOException, InterruptedException {
+		AMap<AString, ACell> args = Maps.of(
+			"source", "(* 2 3)",
+			"address", "not-an-address"
+		);
+		AMap<AString, ACell> responseMap = makeToolCall("prepare", args);
+		AMap<AString, ACell> structured = expectError(responseMap);
+		assertNotNull(structured, "Invalid address should return a structured error");
+	}
+
+	/**
+	 * Invalid JSON-RPC request should return Parse Error.
+	 */
+	@Test
+	public void testInvalidJson() throws IOException, InterruptedException {
+		HttpResponse<String> response = post(MCP_PATH, "{invalid json}");
+		assertEquals(200, response.statusCode());
+
+		ACell parsed = JSON.parse(response.body());
+		assertTrue(parsed instanceof AMap, "Expected map response");
+		AMap<AString, ACell> responseMap = RT.ensureMap(parsed);
+
+		AMap<AString, ACell> error = RT.ensureMap(responseMap.get(McpAPI.FIELD_ERROR));
+		assertNotNull(error, "Invalid JSON should return an error");
+		assertEquals(CVMLong.create(-32700), error.get(McpAPI.FIELD_CODE), "Should be Parse Error (-32700)");
+	}
+
+	/**
+	 * Request without jsonrpc version field should still be processed (lenient).
+	 * MCP doesn't strictly validate jsonrpc version for interoperability.
+	 */
+	@Test
+	public void testMissingJsonrpcVersion() throws IOException, InterruptedException {
+		String request = "{\"method\": \"initialize\", \"params\": {}, \"id\": \"test\"}";
+		HttpResponse<String> response = post(MCP_PATH, request);
+		assertEquals(200, response.statusCode());
+
+		ACell parsed = JSON.parse(response.body());
+		AMap<AString, ACell> responseMap = RT.ensureMap(parsed);
+
+		// Should still succeed with result (lenient parsing)
+		ACell result = responseMap.get(McpAPI.FIELD_RESULT);
+		assertNotNull(result, "Initialize should succeed even without jsonrpc version field");
+	}
+
+	/**
+	 * Request with wrong jsonrpc version should still be processed (lenient).
+	 * MCP doesn't strictly validate jsonrpc version for interoperability.
+	 */
+	@Test
+	public void testWrongJsonrpcVersion() throws IOException, InterruptedException {
+		String request = "{\"jsonrpc\": \"1.0\", \"method\": \"initialize\", \"params\": {}, \"id\": \"test\"}";
+		HttpResponse<String> response = post(MCP_PATH, request);
+		assertEquals(200, response.statusCode());
+
+		ACell parsed = JSON.parse(response.body());
+		AMap<AString, ACell> responseMap = RT.ensureMap(parsed);
+
+		// Should still succeed with result (lenient parsing)
+		ACell result = responseMap.get(McpAPI.FIELD_RESULT);
+		assertNotNull(result, "Initialize should succeed even with wrong jsonrpc version");
 	}
 }

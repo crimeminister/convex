@@ -88,6 +88,7 @@ public class ChainAPI extends ABaseAPI {
 
 	public ChainAPI(RESTServer restServer) {
 		super(restServer);
+		this.convex = restServer.getConvex();
 	}
 
 	private static final String ROUTE = "/api/v1/";
@@ -114,7 +115,7 @@ public class ChainAPI extends ABaseAPI {
 		app.get(prefix + "peers/{addr}", this::queryPeer);
 
 	
-		app.get(prefix + "data/<hash>", this::getData);
+		app.get(prefix + "data/{hash}", this::getData);
 		app.post(prefix + "data/encode", this::encodeData);
 		app.post(prefix + "data/decode", this::decodeData);
 		
@@ -127,9 +128,6 @@ public class ChainAPI extends ABaseAPI {
 		app.get(prefix + "status", this::getStatus);
 		
 		app.get("/identicon/{hex}", identiconLimit.handler(this::getIdenticon));
-		
-		convex = restServer.getConvex();
-
 	}
 
 	@OpenApi(path = ROUTE + "data/{hash}", 
@@ -205,8 +203,8 @@ public class ChainAPI extends ABaseAPI {
 		Blob b=Format.encodeMultiCell(value, true);
 
 		ctx.status(200);
-		String rtype=this.calcResponseContentType(ctx);
-		if (ContentTypes.CVX_RAW.equals(rtype)||ContentTypes.BYTES.equals(type)) {
+		String responseType=this.calcResponseContentType(ctx);
+		if (ContentTypes.CVX_RAW.equals(responseType)||ContentTypes.BYTES.equals(type)) {
 			ctx.result(b.getInputStream());
 		} else {
 			AMap<AString, ACell> result = Maps.of(
@@ -582,7 +580,7 @@ public class ChainAPI extends ABaseAPI {
 			},
 			responses = {
 				@OpenApiResponse(status = "200", 
-						description = "Account queried sucecssfully", 
+						description = "Account queried successfully", 
 						content = {
 							@OpenApiContent(
 									from=QueryAccountResponse.class,
@@ -647,7 +645,7 @@ public class ChainAPI extends ABaseAPI {
 		if (addr == null) {
 			throw new BadRequestResponse(jsonError("Invalid peer key: " + addrParam));
 		}
-
+ 
 		Result r = convex.querySync(Reader.read("(get-in *state* [:peers " + addr + "])"));
 
 		if (r.isError()) {
@@ -670,7 +668,7 @@ public class ChainAPI extends ABaseAPI {
 			methods = HttpMethod.POST, 
 			operationId = "faucetRequest", 
 			tags = { "Account"},
-			summary = "Request coins from a Faucet provider. Requires a peer winning to accept faucet requests.", 
+			summary = "Request coins from a Faucet provider. Requires a peer willing to accept faucet requests.", 
 			requestBody = @OpenApiRequestBody(
 				description = "Faucet request, must provide an address for coins to be deposited in", 
 				content = {@OpenApiContent(
@@ -739,7 +737,7 @@ public class ChainAPI extends ABaseAPI {
 	protected void failBadRequest(String message) {
 		HashMap<String, Object> hm = new HashMap<>();
 		hm.put("errorCode","FAILED");
-		hm.put("value","message");
+		hm.put("value", message);
 		failBadRequest(hm);
 	}
 	
@@ -813,15 +811,15 @@ public class ChainAPI extends ABaseAPI {
 
 		ATransaction trans = Invoke.create(addr, sequence, code);
 		trans=Cells.persist(trans); // persist data so we have a full copy if needed
-		Ref<ATransaction> ref = Cells.persist(trans).getRef();
-		HashMap<String, Object> rmap = new HashMap<>();
-		rmap.put("source", srcValue);
-		rmap.put("address", JSON.json(addr));
-		rmap.put("hash", SignedData.getMessageForRef(ref).toHexString());
-		rmap.put("data", Format.encodeMultiCell(trans, true).toHexString());
-		rmap.put("sequence", sequence);
+		Ref<ATransaction> ref = trans.getRef();
+		HashMap<String, Object> result = new HashMap<>();
+		result.put("source", srcValue);
+		result.put("address", JSON.json(addr));
+		result.put("hash", SignedData.getMessageForRef(ref).toHexString());
+		result.put("data", Format.encodeMultiCell(trans, true).toHexString());
+		result.put("sequence", sequence);
 		ctx.status(200);
-		ctx.result(JSON.toString(rmap));
+		ctx.result(JSON.toString(result));
 	}
 
 
@@ -932,10 +930,14 @@ public class ChainAPI extends ABaseAPI {
 
 	/**
 	 * Read code on best efforts basis, expecting a String
-	 * @param srcValue
+	 * @param srcValue Source value to read
 	 * @return Object to interpret as code
+	 * @throws BadRequestResponse if srcValue is not a valid String
 	 */
 	private static ACell readCode(Object srcValue) {
+		if (!(srcValue instanceof String)) {
+			throw new BadRequestResponse("Source code must be a string");
+		}
 		return Reader.read((String) srcValue);
 	}
 
@@ -1079,12 +1081,12 @@ public class ChainAPI extends ABaseAPI {
 			String type=ctx.req().getContentType();
 			
 			if (ContentTypes.CVX.equals(type)) {
-				ACell rbody=getCVXBody(ctx);
-				if (!(rbody instanceof AMap)) {
+				ACell body=getCVXBody(ctx);
+				if (!(body instanceof AMap)) {
 					throw new BadRequestResponse("query body is not a map.");
 				}
 				@SuppressWarnings("unchecked")
-				AMap<Keyword,ACell> req=(AMap<Keyword, ACell>) rbody;
+				AMap<Keyword,ACell> req=(AMap<Keyword, ACell>) body;
 				addr=Address.parse(RT.get(req, Keywords.ADDRESS));
 				form=RT.get(req, Keywords.SOURCE);
 			} else {
@@ -1145,9 +1147,9 @@ public class ChainAPI extends ABaseAPI {
 			image.setRGB(0, 0, IdenticonBuilder.SIZE, IdenticonBuilder.SIZE, identiconData, 0, IdenticonBuilder.SIZE);
 			
 			// Convert to PNG bytes
-			ByteArrayOutputStream baos = new ByteArrayOutputStream();
-			ImageIO.write(image, "PNG", baos);
-			byte[] pngBytes = baos.toByteArray();
+			ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
+			ImageIO.write(image, "PNG", byteStream);
+			byte[] pngBytes = byteStream.toByteArray();
 			
 			// Set response headers for caching and content type
 			ctx.header("Content-Type", "image/png");
