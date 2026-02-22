@@ -91,6 +91,15 @@ public class AccountStatus extends ARecordGeneric {
 	}
 
 	/**
+	 * Creates an AccountStatus from decoded vector data.
+	 * @param values Decoded record fields
+	 * @return AccountStatus instance
+	 */
+	public static AccountStatus create(AVector<ACell> values) {
+		return new AccountStatus(values);
+	}
+
+	/**
 	 * Create a regular account, with the specified balance and zero memory allowance
 	 * 
 	 * @param sequence Sequence number
@@ -141,22 +150,6 @@ public class AccountStatus extends ARecordGeneric {
 		return balance;
 	}
 	
-	/**
-	 * Decode AccountStatus from Blob
-	 * @param b Blob to read from
-	 * @param pos start position in Blob 
-	 * @return AccountStatus instance
-	 * @throws BadFormatException in case of any encoding error
-	 */
-	public static AccountStatus read(Blob b, int pos) throws BadFormatException {
-		AVector<ACell> values=Vectors.read(b, pos);
-		int epos=pos+values.getEncodingLength();
-		
-		AccountStatus result=new AccountStatus(values);
-		result.attachEncoding(b.slice(pos,epos));
-		return result;
-	}
-
 	@Override
 	public int estimatedEncodingSize() {
 		return 30+Format.estimateEncodingSize(environment)+Format.estimateEncodingSize(holdings)+Format.estimateEncodingSize(controller)+33;

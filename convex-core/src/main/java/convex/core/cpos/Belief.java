@@ -61,6 +61,15 @@ public class Belief extends ARecordGeneric {
 		super(CVMTag.BELIEF,BELIEF_FORMAT,newValues);
 	}
 
+	/**
+	 * Creates a Belief from decoded vector data.
+	 * @param values Decoded record fields
+	 * @return Belief instance
+	 */
+	public static Belief create(AVector<ACell> values) {
+		return new Belief(values);
+	}
+
 	@Override
 	public ACell get(Keyword k) {
 		if (Keywords.ORDERS.equals(k)) return getOrders();
@@ -140,17 +149,6 @@ public class Belief extends ARecordGeneric {
 	public Belief withOrders(Index<AccountKey, SignedData<Order>> newOrders) {
 		if (newOrders == getOrders()) return this;
 		return Belief.create(newOrders);
-	}
-	
-	public static Belief read(Blob b, int pos) throws BadFormatException {
-		AVector<ACell> values=Vectors.read(b, pos);
-		int epos=pos+values.getEncodingLength();
-
-		if (values.count()!=1) throw new BadFormatException("Wrong number of values for Belief");
-
-		Belief result=new Belief(values);
-		result.attachEncoding(b.slice(pos,epos));
-		return result;
 	}
 	
 	/**

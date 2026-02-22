@@ -82,6 +82,15 @@ public class Multi extends ATransaction {
 		if (!isValidMode(mode)) throw new IllegalArgumentException("Bad mode");
 	}
 
+	/**
+	 * Creates a Multi transaction from decoded vector data.
+	 * @param values Decoded record fields
+	 * @return Multi instance
+	 */
+	public static Multi create(AVector<ACell> values) {
+		return new Multi(values);
+	}
+
 	public static Multi create(Address origin, long sequence, int mode, ATransaction... txs) {
 		AVector<ATransaction> v= Vectors.create(txs);
 		return new Multi(origin,sequence,mode,v);
@@ -89,17 +98,6 @@ public class Multi extends ATransaction {
 
 	public int getMode() {
 		return mode;
-	}
-
-	public static Multi read(Blob b, int pos) throws BadFormatException {
-		AVector<ACell> values=Vectors.read(b, pos);
-		int epos=pos+values.getEncodingLength();
-
-		if (values.count()!=KEYS.length) throw new BadFormatException(ErrorMessages.RECORD_VALUE_NUMBER);
-
-		Multi result=new Multi(values);
-		result.attachEncoding(b.slice(pos,epos));
-		return result;
 	}
 
 	private static boolean isValidMode(long mode) {
@@ -198,7 +196,7 @@ public class Multi extends ATransaction {
 	@Override
 	protected ARecordGeneric withValues(AVector<ACell> newValues) {
 		if (values==newValues) return this;
-		return new Multi(values);
+		return new Multi(newValues);
 	}
 
 

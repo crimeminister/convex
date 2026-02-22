@@ -1,5 +1,6 @@
 package convex.test;
 
+import java.io.IOException;
 import java.util.Random;
 import java.util.stream.Stream;
 
@@ -59,12 +60,28 @@ import convex.core.exceptions.InvalidDataException;
 import convex.core.exceptions.ValidationException;
 import convex.core.init.Init;
 import convex.core.lang.RT;
+import convex.core.store.AStore;
+import convex.etch.EtchStore;
 
 /**
  * Miscellaneous value objects for testing purposes
  *
  */
 public class Samples {
+
+	/**
+	 * Shared test store for tests that need to persist data.
+	 * Uses a temp EtchStore so tests don't depend on a global thread-local store.
+	 */
+	public static final AStore TEST_STORE = createTestStore();
+
+	private static AStore createTestStore() {
+		try {
+			return EtchStore.createTemp("test-store");
+		} catch (IOException e) {
+			throw new Error("Failed to create test store", e);
+		}
+	}
 
 	public static Hash BAD_HASH = Hash.fromHex("1234000012340000123400001234000012340000123400001234000012340000");
 	
@@ -164,7 +181,12 @@ public class Samples {
 	public static final CVMBigInteger MIN_BIGINT;
 
 	public static final ACell NIL = null;
-	
+
+	// CVM type samples for cross-encoder testing
+	public static final Invoke INVOKE_TRANSACTION = Invoke.create(Address.create(1), 0, Lists.of(Symbols.PLUS, 1L, 2L));
+	public static final convex.core.cvm.transactions.Transfer TRANSFER_TRANSACTION = convex.core.cvm.transactions.Transfer.create(Address.create(1), 0, Address.create(2), 1000);
+	public static final convex.core.cpos.Order EMPTY_ORDER = convex.core.cpos.Order.create();
+
 	static {
 		// we should be able to actually build these, thanks to structural sharing.
 		DIABOLICAL_VECTOR_30_30 = createNastyNestedVector(30, 30);

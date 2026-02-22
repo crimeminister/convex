@@ -77,7 +77,7 @@ public class LatticeDemo {
 				// - Takes the lattice definition (what data structure to use)
 				// - Takes a store (where to persist data)
 				// - Takes a port number (how other nodes can connect to it)
-				NodeServer<?> server = new NodeServer<>(lattice, store, BASE_PORT + i);
+				NodeServer<?> server = new NodeServer<>(lattice, store, NodeConfig.port(BASE_PORT + i));
 				server.launch();  // This automatically starts the LatticePropagator
 				servers.add(server);
 
@@ -99,7 +99,7 @@ public class LatticeDemo {
 
 						// Add this peer to the node's peer list
 						// Now this node can send broadcasts to this peer
-						server.addPeer(peer);
+						server.getPropagator().addPeer(peer);
 					}
 				}
 				System.out.println("Node " + (i + 1) + " connected to " + (NUM_NODES - 1) + " peers");
@@ -147,13 +147,10 @@ public class LatticeDemo {
 					dataIndex = dataIndex.assoc(valueHash, cellValue);
 				}
 
-				// Update node 1's lattice with the new data
-				// This triggers the LatticePropagator to:
-				// 1. Detect the change
-				// 2. Compute what's new (delta)
-				// 3. Broadcast the delta to all connected peers
-				// All of this happens automatically in the background!
-				node1.updateLocalPath(dataIndex, dataKeyword);
+				// Update node 1's lattice with the new data and sync.
+				// cursor.sync() announces the value and triggers broadcast to all peers.
+				node1.getCursor().assoc(dataKeyword, dataIndex);
+				node1.getCursor().sync();
 
 				if ((merge + 1) % 10 == 0) {
 					System.out.println("Completed " + (merge + 1) + " merges (" + ((merge + 1) * MODS) + " total modifications)");
@@ -172,11 +169,11 @@ public class LatticeDemo {
 			for (int i = 0; i < NUM_NODES; i++) {
 				NodeServer<?> server = servers.get(i);
 
-				// sync() queries all peers for their current state and merges it locally
+				// pull() queries all peers for their current state and merges it locally
 				// This ensures this node has the latest data from everyone
 				// In production, this happens automatically - we're just being explicit here
-				boolean syncResult = server.sync();
-				System.out.println("Node " + (i + 1) + " sync: " + (syncResult ? "SUCCESS" : "FAILED"));
+				boolean pullResult = server.pull();
+				System.out.println("Node " + (i + 1) + " pull: " + (pullResult ? "SUCCESS" : "FAILED"));
 			}
 			long syncTime = System.currentTimeMillis() - syncStart;
 			System.out.println("Synchronization completed in " + syncTime + "ms");
@@ -232,7 +229,7 @@ public class LatticeDemo {
 				// This is because the propagator intelligently batches and only sends deltas
 				System.out.println("\nPropagator Statistics (how automatic sync worked):");
 				for (int i = 0; i < NUM_NODES; i++) {
-					LatticePropagator<?> propagator = servers.get(i).getPropagator();
+					LatticePropagator propagator = servers.get(i).getPropagator();
 					System.out.println("  Node " + (i + 1) + ": " +
 						propagator.getBroadcastCount() + " delta broadcasts, " +
 						propagator.getRootSyncCount() + " root syncs");

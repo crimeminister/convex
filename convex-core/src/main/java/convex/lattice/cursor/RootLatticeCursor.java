@@ -2,6 +2,7 @@ package convex.lattice.cursor;
 
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BinaryOperator;
+import java.util.function.Function;
 import java.util.function.UnaryOperator;
 
 import convex.core.data.ACell;
@@ -19,6 +20,7 @@ import convex.lattice.LatticeContext;
 public class RootLatticeCursor<V extends ACell> extends ALatticeCursor<V> {
 
 	private final AtomicReference<V> value;
+	private Function<V, V> syncCallback;
 
 	/**
 	 * Creates a root lattice cursor.
@@ -40,6 +42,30 @@ public class RootLatticeCursor<V extends ACell> extends ALatticeCursor<V> {
 	 */
 	public RootLatticeCursor(ALattice<V> lattice, V initialValue) {
 		this(lattice, initialValue, LatticeContext.EMPTY);
+	}
+
+	/**
+	 * Sets a callback invoked by {@link #sync()}. The callback receives the
+	 * current value and returns the synced result (e.g. with store-backed refs).
+	 *
+	 * @param callback Function from current value to synced value, or null to clear
+	 */
+	public void onSync(Function<V, V> callback) {
+		this.syncCallback = callback;
+	}
+
+	@Override
+	public V sync() {
+		if (syncCallback != null) {
+			V current = get();
+			V synced = syncCallback.apply(current);
+			// Fast path: no concurrent writes, CAS succeeds
+			if (compareAndSet(current, synced)) return synced;
+			// Concurrent write: fall back to lattice merge
+			if (lattice == null) throw new IllegalStateException("Concurrent write during sync with no lattice to resolve merge");
+			return merge(synced);
+		}
+		return get();
 	}
 
 	// ===== Standard cursor operations =====

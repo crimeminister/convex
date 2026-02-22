@@ -35,6 +35,18 @@ public class Query<T extends ACell> extends ACodedOp<T,ACell,AVector<AOp<ACell>>
 		super(CVMTag.OP_CODED,code,ops);
 	}
 
+	/**
+	 * Creates a Query op from decoded refs.
+	 * @param <T> Result type
+	 * @param code Code ref (opcode ByteFlag)
+	 * @param value Value ref (ops vector)
+	 * @return Query instance
+	 */
+	@SuppressWarnings("unchecked")
+	public static <T extends ACell> Query<T> createFromRefs(Ref<ACell> code, Ref<ACell> value) {
+		return new Query<>(code, (Ref<AVector<AOp<ACell>>>)(Ref<?>)value);
+	}
+
 	protected Query(Ref<AVector<AOp<ACell>>> ops) {
 		this(CODE,ops);
 	}
@@ -91,22 +103,4 @@ public class Query<T extends ACell> extends ACodedOp<T,ACell,AVector<AOp<ACell>>
 		return bb.check(limit);
 	}
 
-	/**
-	 * Read a Query Op from a Blob encoding
-	 * @param <T> Type of Query result
-	 * @param b Blob to read from
-	 * @param pos Start position in Blob (location of tag byte)
-	 * @return New decoded instance
-	 * @throws BadFormatException In the event of any encoding error
-	 */
-	public static <T extends ACell> Query<T> read(Blob b, int pos) throws BadFormatException {
-		int epos=pos+Ops.OP_DATA_OFFSET; // skip tag and opcode to get to data
-
-		Ref<AVector<AOp<ACell>>> ops = Format.readRef(b,epos);
-		epos+=ops.getEncodingLength();
-		
-		Query<T> result= new Query<>(CODE,ops);
-		result.attachEncoding(b.slice(pos, epos));
-		return result;
-	}
 }

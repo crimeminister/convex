@@ -8,6 +8,7 @@ import java.util.function.Predicate;
 import convex.core.ErrorCodes;
 import convex.core.Result;
 import convex.core.SourceCodes;
+import convex.core.data.Strings;
 import convex.core.crypto.AKeyPair;
 import convex.core.cvm.AccountStatus;
 import convex.core.cvm.Address;
@@ -23,7 +24,6 @@ import convex.core.exceptions.MissingDataException;
 import convex.core.message.Message;
 import convex.core.message.MessageType;
 import convex.core.store.AStore;
-import convex.core.store.Stores;
 import convex.core.util.ThreadUtils;
 import convex.peer.Server;
 
@@ -49,15 +49,26 @@ public class ConvexLocal extends Convex {
 	}
 
 	@Override
+	public AStore getStore() {
+		if (store!=null) return store; // client override
+		return server.getStore();
+	}
+
+	@Override
 	public boolean isConnected() {
 		return server.isLive();
+	}
+
+	@Override
+	public <T extends ACell> CompletableFuture<T> acquire(Hash hash) {
+		return acquire(hash, server.getStore());
 	}
 
 	@SuppressWarnings("unchecked")
 	@Override
 	public <T extends ACell> CompletableFuture<T> acquire(Hash hash, AStore store) {
 		CompletableFuture<T> f = new CompletableFuture<T>();
-		ThreadUtils.runVirtual(()-> {
+		ThreadUtils.runVirtual("local-acquire", ()-> {
 			AStore peerStore=server.getStore();
 			Ref<ACell> ref=peerStore.refForHash(hash);
 			if (ref==null) {
@@ -110,30 +121,30 @@ public class ConvexLocal extends Convex {
 			Result r=Result.error(ErrorCodes.CONNECT, "Disconnected").withSource(SourceCodes.CLIENT);
 			return CompletableFuture.completedFuture(r);
 		}
-		
+
 		CompletableFuture<Result> cf=new CompletableFuture<>();
 		Predicate<Message> resultHandler=makeResultHandler(cf);
 		Message ml=message.withResultHandler(resultHandler);
-		server.getReceiveAction().accept(ml);
+
+		// Deliver directly to server. If queue is full, block caller's thread.
+		Predicate<Message> retry = server.deliverMessage(ml);
+		if (retry != null) {
+			if (!retry.test(ml)) {
+				cf.complete(Result.create(ml.getID(), Strings.SERVER_LOADED,
+					ErrorCodes.LOAD).withSource(SourceCodes.PEER));
+			}
+		}
 		return cf;
 	}
 
 	private Predicate<Message> makeResultHandler(CompletableFuture<Result> cf) {
-		AStore senderStore=Stores.current();
 		return m->{
-			// Protect message reading in sender store
-			AStore savedStore=Stores.current();
-			try {
-				Stores.setCurrent(senderStore);
-				Result r=m.toResult();
-				if (r.getErrorCode()!=null) {
-					sequence=null;
-				}
-				cf.complete(r);
-				return true;
-			} finally {
-				Stores.setCurrent(savedStore);
+			Result r=m.toResult();
+			if (r.getErrorCode()!=null) {
+				sequence=null;
 			}
+			cf.complete(r);
+			return true;
 		};
 	}
 	
@@ -141,6 +152,7 @@ public class ConvexLocal extends Convex {
 	public CompletableFuture<Result> messageRaw(Blob rawData) {
 		try {
 			Message m=Message.create(rawData);
+			m.getPayload(null); // decode payload for type inference and ID extraction
 			return message(m);
 		} catch (Exception e) {
 			return CompletableFuture.completedFuture(Result.fromException(e).withSource(SourceCodes.CLIENT));
@@ -151,12 +163,19 @@ public class ConvexLocal extends Convex {
 	public CompletableFuture<Result> message(Message message) {
 		ACell id=message.getRequestID();
 		if (id==null) {
-			// directly forward message to Server
-			server.getReceiveAction().accept(message);
+			// Directly forward message to Server, blocking if queue full
+			Predicate<Message> retry = server.deliverMessage(message);
+			if (retry != null) {
+				if (!retry.test(message)) {
+					return CompletableFuture.completedFuture(
+						Result.create(null, Strings.SERVER_LOADED, ErrorCodes.LOAD)
+							.withSource(SourceCodes.PEER));
+				}
+			}
 			return CompletableFuture.completedFuture(Result.SENT_MESSAGE);
 		}
-			
-		// We are expecting a return message, so build a completable future for it	
+
+		// We are expecting a return message, so build a completable future for it
 		return makeMessageFuture(message);
 	}
 

@@ -252,7 +252,7 @@ public class ChainAPI extends ABaseAPI {
 		
 		ACell r;
 		try {
-			r = Format.decodeMultiCell(value.toFlatBlob());
+			r = server.getStore().decodeMultiCell(value.toFlatBlob());
 		} catch (BadFormatException e) {
 			this.failBadRequest("Error decoding CAD3 data - bad format");
 			return;
@@ -713,9 +713,9 @@ public class ChainAPI extends ABaseAPI {
 		if (l == null) {failBadRequest("Faucet requires an 'amount' field containing a long value."); return;}
 
 		long amt = l.longValue();
-		// Do any limits on faucet issue here
-		if (amt > Coin.GOLD)
-			amt = Coin.GOLD;
+		long max = restServer.getFaucetMax();
+		if (amt > max)
+			amt = max;
 
 		// SECURITY: Make sure this is not subject to injection attack
 		// Optional: pre-compile to Op
@@ -810,7 +810,7 @@ public class ChainAPI extends ABaseAPI {
 		}
 
 		ATransaction trans = Invoke.create(addr, sequence, code);
-		trans=Cells.persist(trans); // persist data so we have a full copy if needed
+		trans=Cells.persist(trans, server.getStore()); // persist data so we have a full copy if needed
 		Ref<ATransaction> ref = trans.getRef();
 		HashMap<String, Object> result = new HashMap<>();
 		result.put("source", srcValue);
@@ -886,7 +886,7 @@ public class ChainAPI extends ABaseAPI {
 		
 		if (ContentTypes.CVX_RAW.equals(type)) {
 			// Can accept a raw convex signed transaction
-			ACell c=getRawBody(ctx);
+			ACell c=getRawBody(ctx, server.getStore());
 			if ((c instanceof SignedData)&&(((SignedData<?>) c).getValue() instanceof ATransaction)) {
 				sd=(SignedData<ATransaction>) c;
 				// System.out.println("tx enc: "+sd.getEncoding());
@@ -988,8 +988,7 @@ public class ChainAPI extends ABaseAPI {
 
 		ATransaction trans = null;
 		try {
-			Ref<?> ref = Format.readRef(h, 0);
-			ACell maybeTrans = ref.getValue();
+			ACell maybeTrans = server.getStore().decodeRef(h).getValue();
 			if (!(maybeTrans instanceof ATransaction))
 				throw new BadFormatException("Value with hash " + h + " is not a transaction: can't submit it!");
 			trans = (ATransaction) maybeTrans;

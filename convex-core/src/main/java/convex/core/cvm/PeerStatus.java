@@ -90,14 +90,14 @@ public class PeerStatus extends ARecordGeneric {
 		this.balance=balance;
 	}
 
-	@SuppressWarnings("unchecked")
 	public PeerStatus(AVector<ACell> values) {
 		super(CVMTag.PEER_STATUS,FORMAT,values);
 		this.controller = RT.ensureAddress(values.get(IX_CONTROLLER));
 		this.peerStake = RT.ensureLong(values.get(IX_STAKE)).longValue();
-		this.stakes = RT.ensureIndex(values.get(IX_STAKES));
+		// stakes and metadata may be non-embedded — defer to lazy getters
+		this.stakes = null;
 		this.delegatedStake = RT.ensureLong(values.get(IX_DEL_STAKE)).longValue();
-		this.metadata = (AHashMap<ACell,ACell>)(values.get(IX_METADATA));
+		this.metadata = null;
 		this.timestamp = RT.ensureLong(values.get(IX_TIMESTAMP)).longValue();
 		this.balance = RT.ensureLong(values.get(IX_BALANCE)).longValue();
 	}
@@ -216,24 +216,6 @@ public class PeerStatus extends ARecordGeneric {
 		return metadata;
 	}
 
-	/**
-	 * Decodes a PeerStatus from a Blob.
-	 * 
-	 * @param b Blob to read from
-	 * @param pos Start position in Blob (location of tag byte)
-	 * @return New decoded instance
-	 * @throws BadFormatException In the event of any encoding error
-	 */
-	public static PeerStatus read(Blob b, int pos) throws BadFormatException{
-		AVector<ACell> values=Vectors.read(b, pos);
-		int epos=pos+values.getEncodingLength();
-		
-		PeerStatus result=new PeerStatus(values);
-		result.attachEncoding(b.slice(pos,epos));
-		return result;
-
-	}
-
 	@Override
 	public boolean isCanonical() {
 		return true;
@@ -296,7 +278,7 @@ public class PeerStatus extends ARecordGeneric {
 	}
 
 	public PeerStatus withPeerData(AHashMap<ACell,ACell> newMeta) {
-		if (metadata==newMeta) return this;	
+		if (getMetadata()==newMeta) return this;
 		return new PeerStatus(controller, peerStake, getStakes(), delegatedStake, newMeta,timestamp,balance);
     }
 	
@@ -315,9 +297,9 @@ public class PeerStatus extends ARecordGeneric {
 		
 		if (Keywords.CONTROLLER.equals(key)) return controller;
 		if (Keywords.STAKE.equals(key)) return values.get(IX_STAKE); // already a CVMLong
-		if (Keywords.STAKES.equals(key)) return stakes;
+		if (Keywords.STAKES.equals(key)) return values.get(IX_STAKES);
 		if (Keywords.DELEGATED_STAKE.equals(key)) return values.get(IX_DEL_STAKE); // already a CVMLong
-		if (Keywords.METADATA.equals(key)) return metadata;
+		if (Keywords.METADATA.equals(key)) return values.get(IX_METADATA);
 		if (Keywords.TIMESTAMP.equals(key)) return values.get(IX_TIMESTAMP); // already a CVMLong
 		if (Keywords.BALANCE.equals(key)) return values.get(IX_BALANCE); // already a CVMLong
 

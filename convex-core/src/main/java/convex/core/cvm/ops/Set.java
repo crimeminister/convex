@@ -32,6 +32,18 @@ public class Set<T extends ACell> extends ACodedOp<T,CVMLong,AOp<T>> {
 		super(CVMTag.OP_CODED,code,value);
 		this.position = code.getValue().longValue(); // safe because always embedded
 	}
+
+	/**
+	 * Creates a Set op from decoded refs.
+	 * @param <R> Result type
+	 * @param code Code ref (CVMLong position)
+	 * @param value Value ref (op)
+	 * @return Set instance
+	 */
+	@SuppressWarnings("unchecked")
+	public static <R extends ACell> Set<R> createFromRefs(Ref<ACell> code, Ref<ACell> value) {
+		return new Set<>((Ref<CVMLong>)(Ref<?>)code, (Ref<AOp<R>>)(Ref<?>)value);
+	}
 	
 	private Set(long position, Ref<AOp<T>> op) {
 		this(CVMLong.create(position).getRef(),op);
@@ -64,29 +76,6 @@ public class Set<T extends ACell> extends ACodedOp<T,CVMLong,AOp<T>> {
 		AVector<ACell> newEnv = env.assoc(position, value);
 		ctx = ctx.withLocalBindings(newEnv);
 		return ctx.consumeJuice(Juice.SET_BANG);
-	}
-
-	/**
-	 * Reads a Set Op from a Blob encoding
-	 * 
-	 * @param <R> Type of Set result
-	 * @param b Blob to read from
-	 * @param pos Start position in Blob (location of tag byte)
-	 * @return New decoded instance
-	 * @throws BadFormatException In the event of any encoding error
-	 */
-	public static <R extends ACell> Set<R> read(Blob b, int pos) throws BadFormatException{
-		int epos=pos+1; // skip tag to get to data
-		
-		Ref<CVMLong> index=Format.readRef(b, epos);
-		epos+=index.getEncodingLength();
-		
-		Ref<AOp<R>> op=Format.readRef(b, epos);
-		epos+=op.getEncodingLength();
-		
-		Set<R> result= new Set<R>(index,op);
-		result.attachEncoding(b.slice(pos, epos));
-		return result;
 	}
 
 	@Override

@@ -88,7 +88,7 @@ public class LatticeNetworkTest {
 			stores.add(store);
 
 			Integer port = BASE_PORT + i;
-			NodeServer<?> server = new NodeServer<>(commonLattice, store, port);
+			NodeServer<?> server = new NodeServer<>(commonLattice, store, NodeConfig.port(port));
 			nodeServers.add(server);
 
 			server.launch();
@@ -111,7 +111,7 @@ public class LatticeNetworkTest {
 
 				try {
 					Convex peerConnection = ConvexRemote.connect(otherAddress);
-					server.addPeer(peerConnection);
+					server.getPropagator().addPeer(peerConnection);
 				} catch (Exception e) {
 					throw new RuntimeException(
 							"Failed to create Convex peer connection from server " + i + " to server " + j, e);
@@ -158,14 +158,14 @@ public class LatticeNetworkTest {
 		// For each node, sync with all its peers
 		for (int i = 0; i < NETWORK_SIZE; i++) {
 			NodeServer<?> server = nodeServers.get(i);
-			Set<Convex> peers = server.getPeerNodes();
+			Set<Convex> peers = server.getPropagator().getPeers();
 			
-			// For each peer, create a sync future
+			// For each peer, create a pull future
 			for (Convex peer : peers) {
 				if (peer != null && peer.isConnected()) {
-					// Use the sync method which returns a CompletableFuture
-					CompletableFuture<?> syncFuture = server.sync(peer);
-					allSyncFutures.add(syncFuture);
+					// Use the pull method which returns a CompletableFuture
+					CompletableFuture<?> pullFuture = server.pull(peer);
+					allSyncFutures.add(pullFuture);
 				}
 			}
 		}

@@ -78,6 +78,19 @@ public final class Syntax extends ACell {
 	 * @param meta Metadata to merge, may be null
 	 * @return Syntax instance
 	 */
+	/**
+	 * Creates a Syntax object from a datum Ref and metadata.
+	 * Used by decoder to preserve refs without unwrapping/rewrapping.
+	 *
+	 * @param datumRef Ref to the datum value
+	 * @param meta Metadata map (null treated as empty)
+	 * @return Syntax instance
+	 */
+	public static Syntax createRef(Ref<ACell> datumRef, AHashMap<ACell, ACell> meta) {
+		if (meta==null) meta=Maps.empty();
+		return new Syntax(datumRef, meta);
+	}
+
 	public static Syntax create(ACell value, AHashMap<ACell, ACell> meta) {
 		if (value instanceof Syntax) {
 			Syntax stx=((Syntax) value);
@@ -165,34 +178,6 @@ public final class Syntax extends ACell {
 	
 	@Override public final boolean isCVMValue() {
 		return true;
-	}
-
-	/**
-	 * Decodes a Syntax object from a Blob encoding
-	 * 
-	 * @param b Blob to read from
-	 * @param pos Start position in Blob (location of tag byte)
-	 * @return New decoded instance
-	 * @throws BadFormatException In the event of any encoding error
-	 */
-	public static Syntax read(Blob b, int pos) throws BadFormatException {
-		int epos=pos+1; // read position after tag
-		Ref<ACell> datum = Format.readRef(b,epos);
-		
-		epos+=datum.getEncodingLength();
-		AHashMap<ACell, ACell> props = Format.read(b,epos);
-		epos+=Cells.getEncodingLength(props);
-		
-		if (props == null) {
-			props = Maps.empty(); // we encode empty props as null for efficiency
-		} else {
-			if (props.isEmpty()) {
-				throw new BadFormatException("Empty Syntax metadata should be encoded as nil");
-			}
-		}
-		Syntax result=new Syntax(datum,props);
-		result.attachEncoding(b.slice(pos,epos));
-		return result;
 	}
 
 

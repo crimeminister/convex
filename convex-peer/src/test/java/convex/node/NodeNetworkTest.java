@@ -96,7 +96,7 @@ public class NodeNetworkTest {
 			
 			// Create NodeServer with the common lattice
 			Integer port = BASE_PORT + i;
-			NodeServer<?> server = new NodeServer<>(commonLattice, store, port);
+			NodeServer<?> server = new NodeServer<>(commonLattice, store, NodeConfig.port(port));
 			nodeServers.add(server);
 			
 			// Launch the server
@@ -119,7 +119,7 @@ public class NodeNetworkTest {
 					InetSocketAddress otherAddress = otherServer.getHostAddress();
 					try {
 						Convex peerConnection = ConvexRemote.connect(otherAddress);
-						server.addPeer(peerConnection);
+						server.getPropagator().addPeer(peerConnection);
 					} catch (Exception e) {
 						throw new RuntimeException("Failed to create peer connection from server " + i + " to server " + j, e);
 					}
@@ -193,9 +193,12 @@ public class NodeNetworkTest {
 		Index<Hash, ACell> updatedDataIndex = dataIndex.assoc(valueHash, testValue);
 		
 		// Update the :data path with the updated Index
-		server0.getCursor().set(updatedDataIndex, dataKeyword);
-		// System.out.println("Server0 value: "+server0.getCursor().get());
-		
+		server0.getCursor().assoc(dataKeyword, updatedDataIndex);
+
+		// Sync so the propagator has the value for LATTICE_QUERY responses
+		server0.getCursor().sync();
+		Thread.sleep(100);
+
 		// Create the query path [:data valueHash] for reuse
 		AVector<ACell> queryPath = Vectors.create(dataKeyword, valueHash);
 		
@@ -230,7 +233,7 @@ public class NodeNetworkTest {
 		// Peer connections should already be established by setUpNetwork
 		
 		// Call sync on the last server to sync with server 0
-		assertTrue(lastServer.sync(), "Sync should succeed");
+		assertTrue(lastServer.pull(), "Pull should succeed");
 		
 		// Verify the last server has the new data value at [:data valueHash] path via LATTICE_QUERY
 		InetSocketAddress lastServerAddress = lastServer.getHostAddress();

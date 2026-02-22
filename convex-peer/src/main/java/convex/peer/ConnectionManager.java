@@ -134,7 +134,7 @@ public class ConnectionManager extends AThreadedComponent {
 			server.queueBelief(Message.createBelief(sb));
 		} catch (Exception t) {
 			if (server.isLive()) {
-				log.warn("Belief Polling failed: {}",t.getClass().toString()+" : "+t.getMessage());
+				log.info("Belief Polling failed: {}",t.getClass().toString()+" : "+t.getMessage());
 			}
 		}
 	}
@@ -405,14 +405,10 @@ public class ConnectionManager extends AThreadedComponent {
 	 * @param m
 	 * @param thisPeer
 	 * @return
+	 * @throws BadFormatException 
 	 */
-	AccountKey processResponse(Message m, Peer thisPeer) {
-		SignedData<ACell> signedData;
-		try {
-			signedData = m.getPayload();
-		} catch (BadFormatException e) {
-			return null;
-		}
+	AccountKey processResponse(Message m, Peer thisPeer) throws BadFormatException {
+		SignedData<ACell> signedData = m.getPayload(getStore());
 
 		log.debug( "Processing response request");
 
@@ -592,6 +588,7 @@ public class ConnectionManager extends AThreadedComponent {
 	public Convex connectToPeer(InetSocketAddress hostAddress) throws InterruptedException, IOException, TimeoutException {
 		try {
 			Convex convex=Convex.connect(hostAddress);
+			convex.setStore(server.getStore());
 			Result result = convex.requestStatusSync(Config.DEFAULT_CLIENT_TIMEOUT);
 			if (result.isError()) {
 				log.info("Bad status message from remote Peer: "+result);

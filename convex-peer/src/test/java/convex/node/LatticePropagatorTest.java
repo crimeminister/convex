@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,8 +44,8 @@ public class LatticePropagatorTest {
 		store1 = new MemoryStore();
 		store2 = new MemoryStore();
 
-		server1 = new NodeServer<>(lattice, store1, 19600);
-		server2 = new NodeServer<>(lattice, store2, 19601);
+		server1 = new NodeServer<>(lattice, store1, NodeConfig.port(19600));
+		server2 = new NodeServer<>(lattice, store2, NodeConfig.port(19601));
 
 		// Launch both servers
 		server1.launch();
@@ -60,10 +59,10 @@ public class LatticePropagatorTest {
 			InetSocketAddress server2Address = server2.getHostAddress();
 
 			Convex peer1to2 = ConvexRemote.connect(server2Address);
-			server1.addPeer(peer1to2);
+			server1.getPropagator().addPeer(peer1to2);
 
 			Convex peer2to1 = ConvexRemote.connect(server1Address);
-			server2.addPeer(peer2to1);
+			server2.getPropagator().addPeer(peer2to1);
 		} catch (Exception e) {
 			throw new RuntimeException("Failed to establish peer connections", e);
 		}
@@ -124,10 +123,12 @@ public class LatticePropagatorTest {
 			dataIndex = emptyIndex;
 		}
 		Index<Hash, ACell> updatedDataIndex = dataIndex.assoc(valueHash, testValue);
-		server2.updateLocalPath(updatedDataIndex, dataKeyword);
+		server2.getCursor().assoc(dataKeyword, updatedDataIndex);
+		server2.getCursor().sync();
+		Thread.sleep(100); // Let propagator process the sync
 
-		// Sync server1 to ensure it has received the broadcast from server2
-		assertTrue(server1.sync(), "Sync should complete successfully");
+		// Pull from server2 into server1
+		assertTrue(server1.pull(), "Pull should complete successfully");
 
 		// Verify server1 received the value from server2
 		assertEquals(testValue, RT.getIn(server1.getLocalValue(), dataKeyword, valueHash),
@@ -154,10 +155,12 @@ public class LatticePropagatorTest {
 				dataIndex = emptyIndex;
 			}
 			Index<Hash, ACell> updatedDataIndex = dataIndex.assoc(valueHash, testValue);
-			server1.updateLocalPath(updatedDataIndex, dataKeyword);
+			server1.getCursor().assoc(dataKeyword, updatedDataIndex);
+			server1.getCursor().sync();
+			Thread.sleep(100); // Let propagator process the sync
 
-			// Sync server2 to ensure it received the update from server1
-			assertTrue(server2.sync(), "Sync should complete successfully for update " + (i + 1));
+			// Pull from server1 into server2
+			assertTrue(server2.pull(), "Pull should complete successfully for update " + (i + 1));
 
 			// Verify server2 received this specific value
 			assertEquals(testValue, RT.getIn(server2.getLocalValue(), dataKeyword, valueHash),

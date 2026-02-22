@@ -32,6 +32,17 @@ public class Invoke<T extends ACell> extends AFlatMultiOp<T> {
 		super(CVMTag.OP_INVOKE,ops);
 	}
 
+	/**
+	 * Creates an Invoke op from decoded vector data.
+	 * @param <T> Result type
+	 * @param data Decoded record fields
+	 * @return Invoke instance
+	 */
+	@SuppressWarnings("unchecked")
+	public static <T extends ACell> Invoke<T> fromData(AVector<ACell> data) {
+		return new Invoke<>((AVector<AOp<ACell>>)(AVector<?>)data);
+	}
+
 	public static <T extends ACell> Invoke<T> create(ASequence<AOp<ACell>> ops) {
 		AVector<AOp<ACell>> vops = ops.toVector();
 		return new Invoke<T>(vops);
@@ -131,24 +142,6 @@ public class Invoke<T extends ACell> extends AFlatMultiOp<T> {
 		}
 		bb.append(')');
 		return bb.check(limit);
-	}
-
-	/**
-	 * Read an Invoke Op from a Blob encoding
-	 * 
-	 * @param b Blob to read from
-	 * @param pos Start position in Blob (location of tag byte)
-	 * @return New decoded instance
-	 * @throws BadFormatException In the event of any encoding error
-	 */
-	public static<T extends ACell> Invoke<T> read(Blob b, int pos) throws BadFormatException {
-		int epos=pos;
-		AVector<AOp<ACell>> ops = Vectors.read(b,epos);
-		epos+=Cells.getEncodingLength(ops);
-		
-		Invoke<T> result=create(ops);
-		result.attachEncoding(b.slice(pos, epos));
-		return result;
 	}
 
 }

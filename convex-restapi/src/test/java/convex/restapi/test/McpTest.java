@@ -33,6 +33,7 @@ import convex.core.lang.RT;
 import convex.core.lang.Reader;
 import convex.core.util.JSON;
 import convex.restapi.mcp.McpAPI;
+import convex.restapi.mcp.McpProtocol;
 import convex.restapi.mcp.McpTool;
 
 /**
@@ -74,9 +75,9 @@ public class McpTest extends ARESTTest {
 		assertTrue(parsed instanceof AMap, "Expected map response but got " + RT.getType(parsed));
 
 		AMap<AString, ACell> responseMap = RT.ensureMap(parsed);
-		assertEquals(Strings.create("init-1"), responseMap.get(McpAPI.FIELD_ID));
+		assertEquals(Strings.create("init-1"), responseMap.get(McpProtocol.FIELD_ID));
 
-		ACell resultCell = responseMap.get(McpAPI.FIELD_RESULT);
+		ACell resultCell = responseMap.get(McpProtocol.FIELD_RESULT);
 		assertNotNull(resultCell, "initialize should return result");
 		assertTrue(resultCell instanceof AMap);
 
@@ -107,9 +108,9 @@ public class McpTest extends ARESTTest {
 		assertTrue(parsed instanceof AMap, "Expected map response but got " + RT.getType(parsed));
 
 		AMap<AString, ACell> responseMap = RT.ensureMap(parsed);
-		assertEquals(Strings.create("bad-1"), responseMap.get(McpAPI.FIELD_ID));
+		assertEquals(Strings.create("bad-1"), responseMap.get(McpProtocol.FIELD_ID));
 
-		ACell errorCell = responseMap.get(McpAPI.FIELD_ERROR);
+		ACell errorCell = responseMap.get(McpProtocol.FIELD_ERROR);
 		assertNotNull(errorCell, "Unknown method should return error object");
 		assertTrue(errorCell instanceof AMap);
 
@@ -324,9 +325,10 @@ public class McpTest extends ARESTTest {
 		AMap<AString, ACell> args = Maps.of("seed", seedHex);
 		AMap<AString, ACell> response = makeToolCall("signAndSubmit", args);
 
-		// Should return a protocol error for missing required parameter
-		ACell errorCell = response.get(McpAPI.FIELD_ERROR);
-		assertNotNull(errorCell, "Missing hash should return a protocol error");
+		// Missing params → tool error (isError=true), not protocol error (per MCP 2025-11-25)
+		AMap<AString, ACell> result = RT.ensureMap(response.get(McpProtocol.FIELD_RESULT));
+		assertNotNull(result, "Missing hash should return a tool error result");
+		assertEquals(CVMBool.TRUE, result.get(McpProtocol.FIELD_IS_ERROR));
 	}
 
 	/**
@@ -337,9 +339,10 @@ public class McpTest extends ARESTTest {
 		AMap<AString, ACell> args = Maps.of("hash", "0x1234567890abcdef");
 		AMap<AString, ACell> response = makeToolCall("signAndSubmit", args);
 
-		// Should return a protocol error for missing required parameter
-		ACell errorCell = response.get(McpAPI.FIELD_ERROR);
-		assertNotNull(errorCell, "Missing seed should return a protocol error");
+		// Missing params → tool error (isError=true), not protocol error (per MCP 2025-11-25)
+		AMap<AString, ACell> result = RT.ensureMap(response.get(McpProtocol.FIELD_RESULT));
+		assertNotNull(result, "Missing seed should return a tool error result");
+		assertEquals(CVMBool.TRUE, result.get(McpProtocol.FIELD_IS_ERROR));
 	}
 
 	/**
@@ -418,8 +421,11 @@ public class McpTest extends ARESTTest {
 	@Test
 	public void testGetTransactionMissingHash() throws IOException, InterruptedException {
 		AMap<AString, ACell> response = makeToolCall("getTransaction", Maps.empty());
-		ACell errorCell = response.get(McpAPI.FIELD_ERROR);
-		assertNotNull(errorCell, "Missing hash should return a protocol error");
+
+		// Missing params → tool error (isError=true), not protocol error (per MCP 2025-11-25)
+		AMap<AString, ACell> result = RT.ensureMap(response.get(McpProtocol.FIELD_RESULT));
+		assertNotNull(result, "Missing hash should return a tool error result");
+		assertEquals(CVMBool.TRUE, result.get(McpProtocol.FIELD_IS_ERROR));
 	}
 
 	/**
@@ -766,8 +772,8 @@ public class McpTest extends ARESTTest {
 	@Test
 	public void testToolCallUnknownTool() throws IOException, InterruptedException {
 		AMap<AString, ACell> responseMap = makeToolCall("unknown-tool", Maps.empty());
-		assertEquals(Strings.create("test-unknown-tool"), responseMap.get(McpAPI.FIELD_ID));
-		ACell errorCell = responseMap.get(McpAPI.FIELD_ERROR);
+		assertEquals(Strings.create("test-unknown-tool"), responseMap.get(McpProtocol.FIELD_ID));
+		ACell errorCell = responseMap.get(McpProtocol.FIELD_ERROR);
 		assertNotNull(errorCell, "Unknown tool should return a JSON-RPC error");
 		assertTrue(errorCell instanceof AMap);
 
@@ -839,10 +845,10 @@ public class McpTest extends ARESTTest {
 		assertTrue(parsed instanceof AMap, "Expected map response but got " + RT.getType(parsed));
 		AMap<AString, ACell> responseMap = RT.ensureMap(parsed);
 
-		assertNull(responseMap.get(McpAPI.FIELD_ID));
-		AMap<AString, ACell> error = RT.ensureMap(responseMap.get(McpAPI.FIELD_ERROR));
+		assertNull(responseMap.get(McpProtocol.FIELD_ID));
+		AMap<AString, ACell> error = RT.ensureMap(responseMap.get(McpProtocol.FIELD_ERROR));
 		assertNotNull(error);
-		assertEquals(CVMLong.create(-32600), error.get(McpAPI.FIELD_CODE));
+		assertEquals(CVMLong.create(-32600), error.get(McpProtocol.FIELD_CODE));
 	}
 
 	/**
@@ -859,10 +865,10 @@ public class McpTest extends ARESTTest {
 		assertEquals(1, results.count());
 
 		AMap<AString, ACell> errorResponse = RT.ensureMap(results.get(0));
-		assertNull(errorResponse.get(McpAPI.FIELD_ID));
-		AMap<AString, ACell> error = RT.ensureMap(errorResponse.get(McpAPI.FIELD_ERROR));
+		assertNull(errorResponse.get(McpProtocol.FIELD_ID));
+		AMap<AString, ACell> error = RT.ensureMap(errorResponse.get(McpProtocol.FIELD_ERROR));
 		assertNotNull(error);
-		assertEquals(CVMLong.create(-32600), error.get(McpAPI.FIELD_CODE));
+		assertEquals(CVMLong.create(-32600), error.get(McpProtocol.FIELD_CODE));
 	}
 
 	/**
@@ -963,17 +969,17 @@ public class McpTest extends ARESTTest {
 	 * for further inspection. Also validates the output against the declared schema.
 	 */
 	private AMap<AString, ACell> expectResult(AMap<AString, ACell> responseMap) {
-		assertNull(responseMap.get(McpAPI.FIELD_ERROR));
-		AMap<AString, ACell> result = RT.ensureMap(responseMap.get(McpAPI.FIELD_RESULT));
+		assertNull(responseMap.get(McpProtocol.FIELD_ERROR));
+		AMap<AString, ACell> result = RT.ensureMap(responseMap.get(McpProtocol.FIELD_RESULT));
 		assertNotNull(result, ()->"RPC result missing in:" + responseMap);
-		assertEquals(CVMBool.FALSE, result.get(McpAPI.FIELD_IS_ERROR), ()->"Unexpcted failure in:" + responseMap);
+		assertEquals(CVMBool.FALSE, result.get(McpProtocol.FIELD_IS_ERROR), ()->"Unexpcted failure in:" + responseMap);
 
-		AVector<ACell> content = RT.ensureVector(result.get(McpAPI.FIELD_CONTENT));
+		AVector<ACell> content = RT.ensureVector(result.get(McpProtocol.FIELD_CONTENT));
 		assertNotNull(content);
 		assertTrue(content.count() > 0);
 		AMap<AString, ACell> textEntry = RT.ensureMap(content.get(0));
-		assertNotNull(textEntry.get(McpAPI.FIELD_TEXT));
-		AMap<AString, ACell> structured =RT.ensureMap(result.get(McpAPI.FIELD_STRUCTURED_CONTENT));
+		assertNotNull(textEntry.get(McpProtocol.FIELD_TEXT));
+		AMap<AString, ACell> structured =RT.ensureMap(result.get(McpProtocol.FIELD_STRUCTURED_CONTENT));
 		assertNotNull(structured);
 
 		// Validate structured content against the tool's declared outputSchema
@@ -989,11 +995,11 @@ public class McpTest extends ARESTTest {
 	 * but the structured content indicates an error payload that tests can read.
 	 */
 	private AMap<AString, ACell> expectError(AMap<AString, ACell> responseMap) {
-		assertNull(responseMap.get(McpAPI.FIELD_ERROR));
-		AMap<AString, ACell> result = RT.ensureMap(responseMap.get(McpAPI.FIELD_RESULT));
+		assertNull(responseMap.get(McpProtocol.FIELD_ERROR));
+		AMap<AString, ACell> result = RT.ensureMap(responseMap.get(McpProtocol.FIELD_RESULT));
 		assertNotNull(result);
-		assertEquals(CVMBool.TRUE, result.get(McpAPI.FIELD_IS_ERROR));
-		AMap<AString, ACell> structured = RT.ensureMap(result.get(McpAPI.FIELD_STRUCTURED_CONTENT));
+		assertEquals(CVMBool.TRUE, result.get(McpProtocol.FIELD_IS_ERROR));
+		AMap<AString, ACell> structured = RT.ensureMap(result.get(McpProtocol.FIELD_STRUCTURED_CONTENT));
 		assertNotNull(structured);
 		return structured;
 	}
@@ -1197,9 +1203,10 @@ public class McpTest extends ARESTTest {
 		AMap<AString, ACell> args = Maps.of("algorithm", "sha3");
 		AMap<AString, ACell> responseMap = makeToolCall("hash", args);
 
-		// Should return a protocol error for missing required parameter
-		ACell errorCell = responseMap.get(McpAPI.FIELD_ERROR);
-		assertNotNull(errorCell, "Missing value should return a protocol error");
+		// Missing params → tool error (isError=true), not protocol error (per MCP 2025-11-25)
+		AMap<AString, ACell> result = RT.ensureMap(responseMap.get(McpProtocol.FIELD_RESULT));
+		assertNotNull(result, "Missing value should return a tool error result");
+		assertEquals(CVMBool.TRUE, result.get(McpProtocol.FIELD_IS_ERROR));
 	}
 
 	/**
@@ -1292,8 +1299,8 @@ public class McpTest extends ARESTTest {
 		AMap<AString, ACell> args = Maps.of("source", sb.toString());
 		AMap<AString, ACell> responseMap = makeToolCall("query", args);
 		// Should either succeed or fail gracefully
-		ACell result = responseMap.get(McpAPI.FIELD_RESULT);
-		ACell error = responseMap.get(McpAPI.FIELD_ERROR);
+		ACell result = responseMap.get(McpProtocol.FIELD_RESULT);
+		ACell error = responseMap.get(McpProtocol.FIELD_ERROR);
 		assertTrue(result != null || error != null, "Long input should return result or error");
 	}
 
@@ -1305,8 +1312,8 @@ public class McpTest extends ARESTTest {
 		AMap<AString, ACell> args = Maps.of("source", "test\u0000value");
 		AMap<AString, ACell> responseMap = makeToolCall("query", args);
 		// Should handle gracefully - either succeed or return structured error
-		ACell result = responseMap.get(McpAPI.FIELD_RESULT);
-		ACell error = responseMap.get(McpAPI.FIELD_ERROR);
+		ACell result = responseMap.get(McpProtocol.FIELD_RESULT);
+		ACell error = responseMap.get(McpProtocol.FIELD_ERROR);
 		assertTrue(result != null || error != null, "Null bytes should be handled gracefully");
 	}
 
@@ -1337,8 +1344,8 @@ public class McpTest extends ARESTTest {
 		AMap<AString, ACell> args = Maps.of("cvx", nested.toString());
 		AMap<AString, ACell> responseMap = makeToolCall("encode", args);
 		// Should either succeed or fail gracefully
-		ACell result = responseMap.get(McpAPI.FIELD_RESULT);
-		ACell error = responseMap.get(McpAPI.FIELD_ERROR);
+		ACell result = responseMap.get(McpProtocol.FIELD_RESULT);
+		ACell error = responseMap.get(McpProtocol.FIELD_ERROR);
 		assertTrue(result != null || error != null, "Deeply nested input should be handled");
 	}
 
@@ -1409,9 +1416,9 @@ public class McpTest extends ARESTTest {
 		assertTrue(parsed instanceof AMap, "Expected map response");
 		AMap<AString, ACell> responseMap = RT.ensureMap(parsed);
 
-		AMap<AString, ACell> error = RT.ensureMap(responseMap.get(McpAPI.FIELD_ERROR));
+		AMap<AString, ACell> error = RT.ensureMap(responseMap.get(McpProtocol.FIELD_ERROR));
 		assertNotNull(error, "Invalid JSON should return an error");
-		assertEquals(CVMLong.create(-32700), error.get(McpAPI.FIELD_CODE), "Should be Parse Error (-32700)");
+		assertEquals(CVMLong.create(-32700), error.get(McpProtocol.FIELD_CODE), "Should be Parse Error (-32700)");
 	}
 
 	/**
@@ -1428,7 +1435,7 @@ public class McpTest extends ARESTTest {
 		AMap<AString, ACell> responseMap = RT.ensureMap(parsed);
 
 		// Should still succeed with result (lenient parsing)
-		ACell result = responseMap.get(McpAPI.FIELD_RESULT);
+		ACell result = responseMap.get(McpProtocol.FIELD_RESULT);
 		assertNotNull(result, "Initialize should succeed even without jsonrpc version field");
 	}
 
@@ -1446,7 +1453,449 @@ public class McpTest extends ARESTTest {
 		AMap<AString, ACell> responseMap = RT.ensureMap(parsed);
 
 		// Should still succeed with result (lenient parsing)
-		ACell result = responseMap.get(McpAPI.FIELD_RESULT);
+		ACell result = responseMap.get(McpProtocol.FIELD_RESULT);
 		assertNotNull(result, "Initialize should succeed even with wrong jsonrpc version");
+	}
+
+	// ===== SSE and Session tests =====
+
+	/**
+	 * Helper to send a POST to /mcp with custom Accept header.
+	 */
+	private HttpResponse<String> postWithAccept(String url, String jsonBody, String accept) throws IOException, InterruptedException {
+		java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+				.uri(java.net.URI.create(url))
+				.header("Content-Type", "application/json")
+				.header("Accept", accept)
+				.POST(java.net.http.HttpRequest.BodyPublishers.ofString(jsonBody))
+				.build();
+		return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+	}
+
+	/**
+	 * POST with Accept: text/event-stream (SSE-only) should return SSE response.
+	 */
+	@Test
+	public void testSseResponseOnPost() throws IOException, InterruptedException {
+		String request = "{\"jsonrpc\": \"2.0\", \"method\": \"initialize\", \"params\": {}, \"id\": \"sse-1\"}";
+		HttpResponse<String> response = postWithAccept(MCP_PATH, request, "text/event-stream");
+		assertEquals(200, response.statusCode());
+		assertTrue(response.headers().firstValue("Content-Type").orElse("").contains("text/event-stream"),
+				"Should return SSE content type");
+
+		String body = response.body();
+		assertTrue(body.contains("event: message"), "SSE response should contain event: message");
+		assertTrue(body.contains("data: "), "SSE response should contain data: prefix");
+		assertTrue(body.contains("\"protocolVersion\""), "SSE data should contain initialize result");
+	}
+
+	/**
+	 * POST with Accept: application/json should return JSON (not SSE).
+	 */
+	@Test
+	public void testJsonResponseOnPost() throws IOException, InterruptedException {
+		String request = "{\"jsonrpc\": \"2.0\", \"method\": \"initialize\", \"params\": {}, \"id\": \"json-1\"}";
+		HttpResponse<String> response = postWithAccept(MCP_PATH, request, "application/json");
+		assertEquals(200, response.statusCode());
+		assertTrue(response.headers().firstValue("Content-Type").orElse("").contains("application/json"),
+				"Should return JSON content type");
+
+		// Should be valid JSON (not SSE)
+		ACell parsed = JSON.parse(response.body());
+		assertNotNull(parsed, "Response body should be valid JSON");
+		AMap<AString, ACell> map = RT.ensureMap(parsed);
+		assertNotNull(map.get(McpProtocol.FIELD_RESULT), "Should have result");
+	}
+
+	/**
+	 * POST with Accept: application/json, text/event-stream should prefer JSON.
+	 */
+	@Test
+	public void testPreferJsonWhenBothAccepted() throws IOException, InterruptedException {
+		String request = "{\"jsonrpc\": \"2.0\", \"method\": \"initialize\", \"params\": {}, \"id\": \"both-1\"}";
+		HttpResponse<String> response = postWithAccept(MCP_PATH, request, "application/json, text/event-stream");
+		assertEquals(200, response.statusCode());
+		assertTrue(response.headers().firstValue("Content-Type").orElse("").contains("application/json"),
+				"Should prefer JSON when both are accepted");
+	}
+
+	/**
+	 * Initialize should return Mcp-Session-Id header.
+	 */
+	@Test
+	public void testInitializeReturnsSessionId() throws IOException, InterruptedException {
+		String request = "{\"jsonrpc\": \"2.0\", \"method\": \"initialize\", \"params\": {}, \"id\": \"sess-1\"}";
+		HttpResponse<String> response = post(MCP_PATH, request);
+		assertEquals(200, response.statusCode());
+
+		String sessionId = response.headers().firstValue("Mcp-Session-Id").orElse(null);
+		assertNotNull(sessionId, "Initialize should return Mcp-Session-Id header");
+		assertFalse(sessionId.isEmpty(), "Session ID should not be empty");
+	}
+
+	/**
+	 * DELETE /mcp with valid session should terminate the connection.
+	 */
+	@Test
+	public void testDeleteSession() throws Exception {
+		// Open a GET /mcp stream — this creates the McpConnection
+		try (SseSession session = openSseSession()) {
+			// Delete the session
+			java.net.http.HttpRequest deleteRequest = java.net.http.HttpRequest.newBuilder()
+					.uri(java.net.URI.create(MCP_PATH))
+					.header("Mcp-Session-Id", session.id())
+					.DELETE()
+					.build();
+			HttpResponse<String> deleteResponse = httpClient.send(deleteRequest, HttpResponse.BodyHandlers.ofString());
+			assertEquals(200, deleteResponse.statusCode());
+
+			// Deleting again should return 404 (already removed)
+			HttpResponse<String> secondDelete = httpClient.send(deleteRequest, HttpResponse.BodyHandlers.ofString());
+			assertEquals(404, secondDelete.statusCode());
+		}
+	}
+
+	/**
+	 * DELETE /mcp without session ID should return 400.
+	 */
+	@Test
+	public void testDeleteWithoutSessionId() throws IOException, InterruptedException {
+		java.net.http.HttpRequest deleteRequest = java.net.http.HttpRequest.newBuilder()
+				.uri(java.net.URI.create(MCP_PATH))
+				.DELETE()
+				.build();
+		HttpResponse<String> response = httpClient.send(deleteRequest, HttpResponse.BodyHandlers.ofString());
+		assertEquals(400, response.statusCode());
+	}
+
+	/**
+	 * GET /mcp without Accept: text/event-stream should return 405.
+	 */
+	@Test
+	public void testGetWithoutSseAccept() throws IOException, InterruptedException {
+		HttpResponse<String> response = get(MCP_PATH);
+		assertEquals(405, response.statusCode());
+	}
+
+	/**
+	 * GET /mcp with SSE Accept but no session should generate a session ID
+	 * and open a connection.
+	 */
+	@Test
+	public void testGetSseOpensConnection() throws Exception {
+		try (SseSession session = openSseSession()) {
+			assertNotNull(session.id(), "GET /mcp should return Mcp-Session-Id");
+			assertFalse(session.id().isEmpty(), "Session ID should not be empty");
+		}
+	}
+
+	/**
+	 * Notification should return 202 with application/json content type.
+	 */
+	@Test
+	public void testNotificationReturns202() throws IOException, InterruptedException {
+		// Notification has no "id" field
+		String request = "{\"jsonrpc\": \"2.0\", \"method\": \"notifications/initialized\", \"params\": {}}";
+		HttpResponse<String> response = post(MCP_PATH, request);
+		assertEquals(202, response.statusCode());
+	}
+
+	// ===== watchState / unwatchState tests =====
+
+	/**
+	 * Record holding an SSE-backed session: the session ID and the background thread
+	 * that keeps the SSE connection alive.
+	 */
+	private record SseSession(String id, Thread thread) implements AutoCloseable {
+		@Override public void close() { thread.interrupt(); }
+	}
+
+	/**
+	 * Open an SSE connection (GET /mcp) in a background thread and return the
+	 * session ID from the response header. The session lives until {@link SseSession#close()}.
+	 */
+	private SseSession openSseSession() throws Exception {
+		var sessionIdHolder = new java.util.concurrent.CompletableFuture<String>();
+		Thread sseThread = Thread.ofVirtual().start(() -> {
+			try {
+				var req = java.net.http.HttpRequest.newBuilder()
+						.uri(java.net.URI.create(MCP_PATH))
+						.header("Accept", "text/event-stream")
+						.GET()
+						.build();
+				httpClient.send(req, responseInfo -> {
+					String sid = responseInfo.headers().firstValue("Mcp-Session-Id").orElse(null);
+					sessionIdHolder.complete(sid);
+					// Return a discarding subscriber that keeps the connection open
+					return HttpResponse.BodySubscribers.ofInputStream();
+				});
+			} catch (Exception e) {
+				sessionIdHolder.completeExceptionally(e);
+			}
+		});
+		String sessionId = sessionIdHolder.get(5, java.util.concurrent.TimeUnit.SECONDS);
+		assertNotNull(sessionId, "SSE response should include Mcp-Session-Id header");
+		return new SseSession(sessionId, sseThread);
+	}
+
+	/**
+	 * Open an SSE session and return the session ID for use in tool calls.
+	 * The background SSE thread keeps the connection alive.
+	 */
+	private String initSession() throws Exception {
+		return openSseSession().id();
+	}
+
+	/**
+	 * Helper to make a tool call with a session header.
+	 */
+	private AMap<AString, ACell> makeToolCallWithSession(String toolName, AMap<AString, ACell> arguments, String sessionId)
+			throws IOException, InterruptedException {
+		AMap<AString, ACell> params = Maps.of(
+			"name", toolName,
+			"arguments", (arguments != null) ? arguments : Maps.empty()
+		);
+		AMap<AString, ACell> request = Maps.of(
+			"jsonrpc", "2.0",
+			"method", "tools/call",
+			"params", params,
+			"id", "test-" + toolName
+		);
+		java.net.http.HttpRequest httpReq = java.net.http.HttpRequest.newBuilder()
+				.uri(java.net.URI.create(MCP_PATH))
+				.header("Content-Type", "application/json")
+				.header("Mcp-Session-Id", sessionId)
+				.POST(java.net.http.HttpRequest.BodyPublishers.ofString(JSON.toString(request)))
+				.build();
+		HttpResponse<String> response = httpClient.send(httpReq, HttpResponse.BodyHandlers.ofString());
+		assertEquals(200, response.statusCode());
+		ACell parsed = JSON.parse(response.body());
+		return RT.ensureMap(parsed);
+	}
+
+	// ===== queryState tool =====
+
+	@Test
+	public void testQueryStateBasic() throws Exception {
+		// Query a known path — accounts vector indexed by integer, not address
+		AMap<AString, ACell> args = Maps.of("path", "[:accounts 0 :balance]");
+		AMap<AString, ACell> responseMap = makeToolCall("queryState", args);
+
+		AMap<AString, ACell> structured = expectResult(responseMap);
+		assertEquals(CVMBool.TRUE, structured.get(Strings.create("exists")));
+		assertNotNull(structured.get(Strings.create("value")));
+	}
+
+	@Test
+	public void testQueryStateNonExistentPath() throws Exception {
+		AMap<AString, ACell> args = Maps.of("path", "[:accounts 999999999 :balance]");
+		AMap<AString, ACell> responseMap = makeToolCall("queryState", args);
+
+		AMap<AString, ACell> structured = expectResult(responseMap);
+		assertEquals(CVMBool.FALSE, structured.get(Strings.create("exists")));
+	}
+
+	@Test
+	public void testQueryStateInvalidPath() throws Exception {
+		// Empty vector
+		AMap<AString, ACell> args = Maps.of("path", "[]");
+		AMap<AString, ACell> responseMap = makeToolCall("queryState", args);
+		AMap<AString, ACell> result = RT.ensureMap(responseMap.get(McpProtocol.FIELD_RESULT));
+		assertEquals(CVMBool.TRUE, result.get(McpProtocol.FIELD_IS_ERROR));
+
+		// Not a vector
+		args = Maps.of("path", "42");
+		responseMap = makeToolCall("queryState", args);
+		result = RT.ensureMap(responseMap.get(McpProtocol.FIELD_RESULT));
+		assertEquals(CVMBool.TRUE, result.get(McpProtocol.FIELD_IS_ERROR));
+
+		// Missing path
+		responseMap = makeToolCall("queryState", null);
+		result = RT.ensureMap(responseMap.get(McpProtocol.FIELD_RESULT));
+		assertEquals(CVMBool.TRUE, result.get(McpProtocol.FIELD_IS_ERROR));
+	}
+
+	@Test
+	public void testQueryStateAdversarial() throws Exception {
+		// Navigate into a non-collection (balance is a number, can't key into it)
+		AMap<AString, ACell> args = Maps.of("path", "[:accounts 0 :balance :foo]");
+		AMap<AString, ACell> responseMap = makeToolCall("queryState", args);
+		AMap<AString, ACell> structured = expectResult(responseMap);
+		assertEquals(CVMBool.FALSE, structured.get(Strings.create("exists")));
+
+		// Very deep nonsense path
+		args = Maps.of("path", "[:accounts 0 :balance :a :b :c :d :e :f]");
+		responseMap = makeToolCall("queryState", args);
+		structured = expectResult(responseMap);
+		assertEquals(CVMBool.FALSE, structured.get(Strings.create("exists")));
+
+		// Path through non-existent intermediate key
+		args = Maps.of("path", "[:nonexistent :foo :bar]");
+		responseMap = makeToolCall("queryState", args);
+		structured = expectResult(responseMap);
+		assertEquals(CVMBool.FALSE, structured.get(Strings.create("exists")));
+
+		// Single key that doesn't exist in state
+		args = Maps.of("path", "[:nonexistent]");
+		responseMap = makeToolCall("queryState", args);
+		structured = expectResult(responseMap);
+		assertEquals(CVMBool.FALSE, structured.get(Strings.create("exists")));
+
+		// Malformed CVM expression
+		args = Maps.of("path", "[this is not valid {{{");
+		responseMap = makeToolCall("queryState", args);
+		AMap<AString, ACell> result = RT.ensureMap(responseMap.get(McpProtocol.FIELD_RESULT));
+		assertEquals(CVMBool.TRUE, result.get(McpProtocol.FIELD_IS_ERROR));
+
+		// String instead of vector
+		args = Maps.of("path", "\"hello\"");
+		responseMap = makeToolCall("queryState", args);
+		result = RT.ensureMap(responseMap.get(McpProtocol.FIELD_RESULT));
+		assertEquals(CVMBool.TRUE, result.get(McpProtocol.FIELD_IS_ERROR));
+	}
+
+	@Test
+	public void testQueryStateNoSessionRequired() throws Exception {
+		// queryState should work without a session (unlike watchState)
+		AMap<AString, ACell> args = Maps.of("path", "[:accounts 0 :balance]");
+		AMap<AString, ACell> responseMap = makeToolCall("queryState", args);
+
+		AMap<AString, ACell> structured = expectResult(responseMap);
+		assertEquals(CVMBool.TRUE, structured.get(Strings.create("exists")));
+	}
+
+	// ===== watchState / unwatchState tools =====
+
+	@Test
+	public void testWatchStateReturnsWatchId() throws Exception {
+		String sessionId = initSession();
+		assertNotNull(sessionId);
+
+		AMap<AString, ACell> args = Maps.of("path", "[:accounts #0 :balance]");
+		AMap<AString, ACell> responseMap = makeToolCallWithSession("watchState", args, sessionId);
+
+		AMap<AString, ACell> structured = expectResult(responseMap);
+		assertNotNull(structured.get(Strings.create("watchId")), "Should return watchId");
+	}
+
+	@Test
+	public void testWatchStateWithoutSession() throws Exception {
+		// Call without session header — should get tool error
+		AMap<AString, ACell> args = Maps.of("path", "[:accounts #0 :balance]");
+		AMap<AString, ACell> responseMap = makeToolCall("watchState", args);
+
+		AMap<AString, ACell> result = RT.ensureMap(responseMap.get(McpProtocol.FIELD_RESULT));
+		assertNotNull(result);
+		assertEquals(CVMBool.TRUE, result.get(McpProtocol.FIELD_IS_ERROR));
+	}
+
+	@Test
+	public void testWatchStateInvalidPath() throws Exception {
+		String sessionId = initSession();
+
+		// Empty vector
+		AMap<AString, ACell> args = Maps.of("path", "[]");
+		AMap<AString, ACell> responseMap = makeToolCallWithSession("watchState", args, sessionId);
+		AMap<AString, ACell> result = RT.ensureMap(responseMap.get(McpProtocol.FIELD_RESULT));
+		assertEquals(CVMBool.TRUE, result.get(McpProtocol.FIELD_IS_ERROR));
+
+		// Not a vector
+		args = Maps.of("path", ":not-a-vector");
+		responseMap = makeToolCallWithSession("watchState", args, sessionId);
+		result = RT.ensureMap(responseMap.get(McpProtocol.FIELD_RESULT));
+		assertEquals(CVMBool.TRUE, result.get(McpProtocol.FIELD_IS_ERROR));
+	}
+
+	@Test
+	public void testUnwatchStateRemoves() throws Exception {
+		String sessionId = initSession();
+
+		// Create a watch
+		AMap<AString, ACell> watchArgs = Maps.of("path", "[:accounts #0 :balance]");
+		AMap<AString, ACell> watchResponse = makeToolCallWithSession("watchState", watchArgs, sessionId);
+		AMap<AString, ACell> watchResult = expectResult(watchResponse);
+		String watchId = watchResult.get(Strings.create("watchId")).toString();
+		assertNotNull(watchId);
+
+		// Unwatch it
+		AMap<AString, ACell> unwatchArgs = Maps.of("watchId", watchId);
+		AMap<AString, ACell> unwatchResponse = makeToolCallWithSession("unwatchState", unwatchArgs, sessionId);
+		AMap<AString, ACell> unwatchResult = expectResult(unwatchResponse);
+		assertEquals(CVMLong.ONE, unwatchResult.get(Strings.create("removed")));
+
+		// Unwatch again — should be 0
+		unwatchResponse = makeToolCallWithSession("unwatchState", unwatchArgs, sessionId);
+		unwatchResult = expectResult(unwatchResponse);
+		assertEquals(CVMLong.ZERO, unwatchResult.get(Strings.create("removed")));
+	}
+
+	@Test
+	public void testUnwatchStateUnknownId() throws Exception {
+		String sessionId = initSession();
+
+		AMap<AString, ACell> args = Maps.of("watchId", "w-nonexistent");
+		AMap<AString, ACell> responseMap = makeToolCallWithSession("unwatchState", args, sessionId);
+		AMap<AString, ACell> result = expectResult(responseMap);
+		assertEquals(CVMLong.ZERO, result.get(Strings.create("removed")));
+	}
+
+	@Test
+	public void testUnwatchStateByPathPrefix() throws Exception {
+		String sessionId = initSession();
+
+		// Create watches under the same account
+		makeToolCallWithSession("watchState", Maps.of("path", "[:accounts #0 :balance]"), sessionId);
+		makeToolCallWithSession("watchState", Maps.of("path", "[:accounts #0 :environment]"), sessionId);
+		// And one under a different account
+		makeToolCallWithSession("watchState", Maps.of("path", "[:accounts #1 :balance]"), sessionId);
+
+		// Remove all watches for account #0 by path prefix vector
+		AMap<AString, ACell> unwatchResponse = makeToolCallWithSession("unwatchState",
+				Maps.of("path", "[:accounts #0]"), sessionId);
+		AMap<AString, ACell> unwatchResult = expectResult(unwatchResponse);
+		assertEquals(CVMLong.create(2), unwatchResult.get(Strings.create("removed")));
+
+		// Account #1 watch should still be there — remove by its prefix
+		unwatchResponse = makeToolCallWithSession("unwatchState",
+				Maps.of("path", "[:accounts #1]"), sessionId);
+		unwatchResult = expectResult(unwatchResponse);
+		assertEquals(CVMLong.ONE, unwatchResult.get(Strings.create("removed")));
+	}
+
+	@Test
+	public void testUnwatchStateRequiresParam() throws Exception {
+		String sessionId = initSession();
+
+		// Neither watchId nor path — should be protocol error
+		AMap<AString, ACell> responseMap = makeToolCallWithSession("unwatchState", Maps.empty(), sessionId);
+		AMap<AString, ACell> error = RT.ensureMap(responseMap.get(McpProtocol.FIELD_ERROR));
+		assertNotNull(error, "Should return protocol error when neither param provided");
+	}
+
+	@Test
+	public void testDeleteSessionCleansWatches() throws Exception {
+		// Open SSE session and create a watch
+		SseSession session = openSseSession();
+		AMap<AString, ACell> args = Maps.of("path", "[:accounts #0 :balance]");
+		AMap<AString, ACell> watchResponse = makeToolCallWithSession("watchState", args, session.id());
+		AMap<AString, ACell> watchResult = expectResult(watchResponse);
+		String watchId = watchResult.get(Strings.create("watchId")).toString();
+
+		// Delete session — should destroy the connection and all its watches
+		java.net.http.HttpRequest deleteRequest = java.net.http.HttpRequest.newBuilder()
+				.uri(java.net.URI.create(MCP_PATH))
+				.header("Mcp-Session-Id", session.id())
+				.DELETE()
+				.build();
+		HttpResponse<String> deleteResponse = httpClient.send(deleteRequest, HttpResponse.BodyHandlers.ofString());
+		assertEquals(200, deleteResponse.statusCode());
+		session.close();
+
+		// Open a new session and try to unwatch — should return 0 (already cleaned up)
+		String newSessionId = initSession();
+		AMap<AString, ACell> unwatchArgs = Maps.of("watchId", watchId);
+		AMap<AString, ACell> unwatchResponse = makeToolCallWithSession("unwatchState", unwatchArgs, newSessionId);
+		AMap<AString, ACell> unwatchResult = expectResult(unwatchResponse);
+		assertEquals(CVMLong.ZERO, unwatchResult.get(Strings.create("removed")));
 	}
 }

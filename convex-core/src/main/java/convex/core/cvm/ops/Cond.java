@@ -32,6 +32,17 @@ public class Cond<T extends ACell> extends AFlatMultiOp<T> {
 	}
 
 	/**
+	 * Creates a Cond op from decoded vector data.
+	 * @param <T> Result type
+	 * @param data Decoded record fields
+	 * @return Cond instance
+	 */
+	@SuppressWarnings("unchecked")
+	public static <T extends ACell> Cond<T> create(AVector<ACell> data) {
+		return new Cond<>((AVector<AOp<ACell>>)(AVector<?>)data);
+	}
+
+	/**
 	 * Create a Cond operation with the given nested operations
 	 * 
 	 * @param <T> Return type of Cond
@@ -90,25 +101,6 @@ public class Cond<T extends ACell> extends AFlatMultiOp<T> {
 		}
 		sb.append(')');
 		return sb.check(limit);
-	}
-
-	/**
-	 * Decodes a Cond op from a Blob encoding.
-	 * 
-	 * @param b Blob to read from
-	 * @param pos Start position in Blob (location of tag byte)
-	 * @return New decoded instance
-	 * @throws BadFormatException In the event of any encoding error
-	 */
-	public static <T extends ACell> Cond<T> read(Blob b, int pos) throws BadFormatException {
-		int epos=pos;
-
-		AVector<AOp<ACell>> ops = Vectors.read(b,epos);
-		epos+=Cells.getEncodingLength(ops);
-		
-		Cond<T> result=create(ops);
-		result.attachEncoding(b.slice(pos, epos));
-		return result;
 	}
 
 }

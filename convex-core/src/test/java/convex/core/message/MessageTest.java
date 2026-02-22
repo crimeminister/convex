@@ -29,7 +29,6 @@ import convex.core.data.AVector;
 import convex.core.data.Blob;
 import convex.core.data.Blobs;
 import convex.core.data.Cells;
-import convex.core.data.Format;
 import convex.core.data.Hash;
 import convex.core.data.SignedData;
 import convex.core.data.Vectors;
@@ -37,32 +36,37 @@ import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
 import convex.core.lang.RT;
 import convex.core.lang.Reader;
+import convex.core.store.AStore;
 import convex.core.store.Stores;
+import convex.test.Samples;
 
 public class MessageTest {
+
 	static Hash BAD_HASH=Hash.EMPTY_HASH;
 	static AKeyPair KP=AKeyPair.createSeeded(1567856);
 
 	@Test public void testMissingResponse() throws BadFormatException, IOException {
 		// non-embedded Blob which might be a missing branch
 		Blob b=Blobs.createRandom(400);
-		
+
 		Message mq=Message.createDataResponse(CVMLong.ONE, b);
 		assertEquals(MessageType.RESULT,mq.getType());
 		doMessageTest(mq);
-		
+
 		Blob enc=mq.getMessageData();
-		
+
+		// Decoding messages with non-embedded content requires a store
 		Message mr=Message.create(enc);
+		mr.getPayload(Samples.TEST_STORE);
 		AVector<ACell> v=mr.toResult().getValue();
-		
+
 		assertEquals(b,v.get(0));
-		Cells.persist(b);
-		
+		Cells.persist(b, Samples.TEST_STORE);
+
 		Message md=Message.createDataRequest(CVMLong.ONE, b.getHash());
 		doMessageTest(md);
-		
-		Message mdr=md.makeDataResponse(Stores.current());
+
+		Message mdr=md.makeDataResponse(Samples.TEST_STORE);
 		assertEquals(mq,mdr);
 		doMessageTest(mdr);
 	}
@@ -81,16 +85,17 @@ public class MessageTest {
 		
 		Blob enc=m.getMessageData();
 		
-		ACell b2=Format.decodeMultiCell(enc);
+		ACell b2=Samples.TEST_STORE.decodeMultiCell(enc);
 		assertEquals(belief.getHash(),b2.getHash());
 		
 		Message m2=Message.create(enc);
 		assertNull(m.getResultID());
 
 		assertEquals(MessageType.BELIEF,m2.getType());
+		m2.getPayload(Samples.TEST_STORE);
 		assertEquals(belief,m2.getPayload());
-		
-		
+
+
 	}
 	
 	@Test public void testBigMissingResponse() throws BadFormatException, IOException {
@@ -98,14 +103,16 @@ public class MessageTest {
 		Blob b=Blobs.createRandom(400);
 		Hash[] hashes=new Hash[CPoSConstants.MISSING_LIMIT];
 		Arrays.fill(hashes,b.getHash());
-		
+
 		Message mr=Message.createDataRequest(b,hashes);
 		assertEquals(MessageType.DATA_REQUEST,mr.getType());
 		doMessageTest(mr);
-		
+
 		Blob enc=mr.getMessageData();
-		
+
+		// Decoding messages with non-embedded content requires a store
 		Message mrs=Message.create(enc);
+		mrs.getPayload(Samples.TEST_STORE);
 		AVector<ACell> v=mrs.getPayload();
 		assertEquals(2+CPoSConstants.MISSING_LIMIT,v.count());
 		assertEquals(MessageType.DATA_REQUEST,mrs.getType());
@@ -119,7 +126,7 @@ public class MessageTest {
 		Message md=Message.createDataRequest(CVMLong.ONE, BAD_HASH);
 		assertEquals(Vectors.of(MessageTag.DATA_REQUEST,1,BAD_HASH),md.getPayload());
 		
-		Message mdr=md.makeDataResponse(Stores.current());
+		Message mdr=md.makeDataResponse(Samples.TEST_STORE);
 		assertEquals(Result.create(CVMLong.ONE, Vectors.of(Cells.NIL)),mdr.getPayload());
 	}
 	
@@ -132,12 +139,12 @@ public class MessageTest {
 		}
 	}
 	
-	@Test public void testQuery() {
+	@Test public void testQuery() throws BadFormatException {
 		Message m=Message.createQuery(0, Symbols.STAR_BALANCE, Address.ZERO);
 		doMessageTest(m);
 	}
 	
-	@Test public void testTransact() {
+	@Test public void testTransact() throws BadFormatException {
 		ATransaction tx=Invoke.create(Address.create(134564), 124334, Symbols.STAR_BALANCE);
 		SignedData<ATransaction> stx=KP.signData(tx);
 		Message m=Message.createTransaction(12, stx);
@@ -153,12 +160,12 @@ public class MessageTest {
 	@Test 
 	public void testDataMessages() throws BadFormatException, IOException {
 		Blob b=Blob.createRandom(new Random(1256785), 1000);
-		Cells.persist(b);
-		
+		Cells.persist(b, Samples.TEST_STORE);
+
 		Message m=Message.createDataRequest(CVMLong.ONE, b.getHash());
 		Message r=Message.createDataResponse(CVMLong.ONE, b);
-		
-		assertEquals(r,m.makeDataResponse(Stores.current()));
+
+		assertEquals(r,m.makeDataResponse(Samples.TEST_STORE));
 		
 		// Check Result
 		Result res=r.toResult();
@@ -171,7 +178,7 @@ public class MessageTest {
 	}
 	
 	@Test
-	public void testStatusMessage() {
+	public void testStatusMessage() throws BadFormatException {
 		Message m=Message.createStatusRequest(2);
 		assertEquals(RT.cvm(2),m.getID());
 		doMessageTest(m);
@@ -183,14 +190,89 @@ public class MessageTest {
 		doMessageTest(m);
 	}
 	
+	@Test public void testStorelessTransactDecode() throws BadFormatException {
+		// Create a transaction message with CVM-specific Invoke type
+		ATransaction tx=Invoke.create(Address.create(42), 1, Reader.read("(+ 1 2)"));
+		SignedData<ATransaction> stx=KP.signData(tx);
+		Message m=Message.createTransaction(7, stx);
+
+		// Encode to wire format
+		Blob data=m.getMessageData();
+		assertTrue(data.count()>0);
+
+		// Simulate receiving from network: raw data, no payload, no store
+		Message received=Message.create(data);
+		assertNull(received.getPayload()); // pure accessor, not yet decoded
+
+		// getRequestID() returns null before decode (no crash)
+		assertNull(received.getRequestID());
+
+		// Vector-based type is UNKNOWN until payload is decoded
+		assertEquals(MessageType.UNKNOWN,received.getType());
+
+		// Storeless decode via getPayload(null) — complete message, all branches present
+		ACell payload=received.getPayload(null);
+		assertNotNull(payload);
+		assertEquals(m.getPayload(),payload);
+
+		// After decode, type and IDs are available
+		assertEquals(MessageType.TRANSACT,received.getType());
+		assertEquals(RT.cvm(7),received.getRequestID());
+		assertEquals(RT.cvm(7),received.getID());
+
+		// Verify the CVM Invoke transaction survived the round-trip
+		AVector<?> v=RT.ensureVector(payload);
+		assertNotNull(v);
+		assertEquals(MessageTag.TRANSACT,v.get(0));
+		SignedData<?> decodedStx=(SignedData<?>)v.get(2);
+		ATransaction decodedTx=(ATransaction)decodedStx.getValue();
+		assertTrue(decodedTx instanceof Invoke);
+		assertEquals(Address.create(42),decodedTx.getOrigin());
+	}
+
+	@Test public void testStorelessResultDecode() throws BadFormatException {
+		// Create a Result message
+		Result res=Result.create(CVMLong.create(5), Reader.read("42"), null);
+		Message m=Message.createResult(res);
+
+		// Encode and simulate network receive
+		Blob data=m.getMessageData();
+		Message received=Message.create(data);
+
+		// Result type and ID inferrable from raw tag byte (no decode needed)
+		assertEquals(MessageType.RESULT,received.getType());
+		assertEquals(RT.cvm(5),received.getResultID());
+		assertEquals(RT.cvm(5),received.getID());
+
+		// Storeless decode via getPayload(null)
+		Result decoded=received.getPayload(null);
+		assertNotNull(decoded);
+		assertEquals(res,decoded);
+		assertEquals(RT.cvm(42),decoded.getValue());
+	}
+
+	@Test public void testStorelessQueryDecode() throws BadFormatException {
+		Message m=Message.createQuery(3, "(+ 1 2)", Address.create(12));
+
+		Blob data=m.getMessageData();
+		Message received=Message.create(data);
+
+		// Storeless decode via getPayload(null) recovers full payload
+		ACell payload=received.getPayload(null);
+		assertEquals(m.getPayload(),payload);
+		assertEquals(MessageType.QUERY,received.getType());
+		assertEquals(RT.cvm(3),received.getID());
+	}
+
 	/**
 	 * Generic tests for any valid message
 	 * @param m Message to test
+	 * @throws BadFormatException
 	 */
-	public void doMessageTest(Message m) {
+	public void doMessageTest(Message m) throws BadFormatException {
 		MessageType type=m.getType();
 		assertNotNull(type);
-		
+
 		ACell id=m.getID();
 		ACell reqID=m.getRequestID();
 		ACell resultID=m.getResultID();
@@ -198,26 +280,38 @@ public class MessageTest {
 			assertNull(resultID); // should be both a request and a result
 			assertEquals(id,reqID);
 		}
-		
+
 		if (resultID!=null) {
 			assertEquals(MessageType.RESULT,type);
 			assertNull(reqID);
 			assertEquals(id,resultID);
 		}
-		
+
 		try {
 			ACell payload=m.getPayload();
-			
+
 			Blob data=m.getMessageData();
 			assertTrue(data.count()>0);
-		
-			ACell dp=Format.decodeMultiCell(data);
+
+			// Test store-based decode round-trip
+			ACell dp=Samples.TEST_STORE.decodeMultiCell(data);
 			Message m2=Message.create(null, dp);
-			
+
 			assertEquals(type,m2.getType());
 			assertEquals(id,m2.getID());
 			assertEquals(payload,m2.getPayload());
-			
+
+			// Test storeless decode round-trip for complete messages.
+			// Partial messages (e.g. beliefs with external branches) would throw
+			// PartialMessageException — those require getPayload(store) instead.
+			if (type!=MessageType.BELIEF) {
+				Message m3=Message.create(data);
+				ACell storelessPayload=m3.getPayload(null);
+				assertEquals(payload,storelessPayload);
+				assertEquals(type,m3.getType());
+				assertEquals(id,m3.getID());
+			}
+
 		} catch (BadFormatException e) {
 			fail("Bad format: "+m,e);
 		}

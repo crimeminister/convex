@@ -59,6 +59,15 @@ public class Order extends ARecordGeneric {
 		this.timestamp = RT.ensureLong(values.get(IX_TIMESTAMP)).longValue();
 		this.consensusPoints = RT.toLongArray((AVector<ACell>)values.get(IX_CONSENSUS));
 	}
+
+	/**
+	 * Creates an Order from decoded vector data.
+	 * @param values Decoded record fields
+	 * @return Order instance
+	 */
+	public static Order create(AVector<ACell> values) {
+		return new Order(values);
+	}
 	
 	private Order(long timestamp, long[] consensusPoints, AVector<SignedData<Block>> blocks) {
 		super(CVMTag.ORDER,FORMAT,Vectors.create(CVMLong.create(timestamp),Vectors.createLongs(consensusPoints),blocks));
@@ -102,24 +111,6 @@ public class Order extends ARecordGeneric {
 	 */
 	public static Order create() {
 		return new Order(0, EMPTY_CONSENSUS_ARRAY,Vectors.empty());
-	}
-
-	/**
-	 * Decode an Order from a Blob encoding
-	 * 
-	 * @param b Blob to read from
-	 * @param pos Start position in Blob (location of tag byte)
-	 * @return New decoded instance
-	 * @throws BadFormatException In the event of any encoding error
-	 */
-	public static Order read(Blob b, int pos) throws BadFormatException {
-		AVector<ACell> values = Vectors.read(b, pos);
-		if (values.count()!=NUM_FIELDS) throw new BadFormatException("Wrong number of Order fields");
-		long epos=pos+values.getEncodingLength();
-		
-		Order result=new Order(values);
-		result.attachEncoding(b.slice(pos, epos));
-		return result;
 	}
 
 	/**
@@ -358,6 +349,7 @@ public class Order extends ARecordGeneric {
 
 	@Override
 	protected ARecordGeneric withValues(AVector<ACell> newValues) {
-		return new Order(values);
+		if (values==newValues) return this;
+		return new Order(newValues);
 	}
 }

@@ -17,14 +17,23 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import convex.core.Result;
+import convex.core.crypto.AKeyPair;
+import convex.core.cvm.Keywords;
 import convex.core.data.ACell;
+import convex.core.data.AHashMap;
 import convex.core.data.AVector;
 import convex.api.Convex;
 import convex.api.ConvexRemote;
 import convex.core.data.ASet;
+import convex.core.data.AString;
 import convex.core.data.Cells;
 import convex.core.data.Hash;
+import convex.core.data.Index;
+import convex.core.data.Keyword;
+import convex.core.data.Maps;
 import convex.core.data.Sets;
+import convex.core.data.SignedData;
+import convex.core.data.Strings;
 import convex.core.data.Vectors;
 import convex.core.data.prim.AInteger;
 import convex.core.data.prim.CVMLong;
@@ -34,7 +43,11 @@ import convex.core.message.MessageType;
 import convex.core.store.AStore;
 import convex.core.store.MemoryStore;
 import convex.lattice.ALattice;
+import convex.lattice.Lattice;
+import convex.lattice.LatticeContext;
+import convex.lattice.P2PLattice;
 import convex.lattice.cursor.ACursor;
+import convex.lattice.cursor.PathCursor;
 import convex.lattice.generic.MaxLattice;
 import convex.lattice.generic.SetLattice;
 
@@ -73,7 +86,7 @@ public class NodeServerTest {
 	@Test
 	public void testCreateMaxLatticeServer() {
 		ALattice<AInteger> lattice = MaxLattice.create();
-		maxNodeServer = new NodeServer<>(lattice, store, null);
+		maxNodeServer = new NodeServer<>(lattice, store);
 
 		assertNotNull(maxNodeServer);
 		assertNotNull(maxNodeServer.getLattice());
@@ -88,7 +101,7 @@ public class NodeServerTest {
 	@Test
 	public void testCreateSetLatticeServer() {
 		ALattice<ASet<ACell>> lattice = SetLattice.create();
-		setNodeServer = new NodeServer<>(lattice, store, null);
+		setNodeServer = new NodeServer<>(lattice, store);
 
 		assertNotNull(setNodeServer);
 		assertNotNull(setNodeServer.getLattice());
@@ -103,7 +116,7 @@ public class NodeServerTest {
 	@Test
 	public void testInitialValue() {
 		ALattice<AInteger> lattice = MaxLattice.create();
-		maxNodeServer = new NodeServer<>(lattice, store, null);
+		maxNodeServer = new NodeServer<>(lattice, store);
 
 		AInteger initialValue = maxNodeServer.getLocalValue();
 		assertNotNull(initialValue);
@@ -117,7 +130,7 @@ public class NodeServerTest {
 	@Test
 	public void testValueCursor() {
 		ALattice<AInteger> lattice = MaxLattice.create();
-		maxNodeServer = new NodeServer<>(lattice, store, null);
+		maxNodeServer = new NodeServer<>(lattice, store);
 
 		ACursor<AInteger> cursor = maxNodeServer.getCursor();
 		assertNotNull(cursor);
@@ -142,7 +155,7 @@ public class NodeServerTest {
 	@Test
 	public void testMergeValue() {
 		ALattice<AInteger> lattice = MaxLattice.create();
-		maxNodeServer = new NodeServer<>(lattice, store, null);
+		maxNodeServer = new NodeServer<>(lattice, store);
 
 		// Start with zero
 		assertEquals(CVMLong.ZERO, maxNodeServer.getLocalValue());
@@ -177,7 +190,7 @@ public class NodeServerTest {
 	@Test
 	public void testMergeSetValue() {
 		ALattice<ASet<ACell>> lattice = SetLattice.create();
-		setNodeServer = new NodeServer<>(lattice, store, null);
+		setNodeServer = new NodeServer<>(lattice, store);
 
 		// Start with empty set
 		assertTrue(setNodeServer.getLocalValue().isEmpty());
@@ -210,14 +223,16 @@ public class NodeServerTest {
 	}
 
 	/**
-	 * Test peer management with Convex connections
-	 * TODO: should be using full connection manager
+	 * Test peer management via the propagator
 	 */
 	@Test
 	public void testPeerManagement() throws IOException, InterruptedException, java.util.concurrent.TimeoutException {
 		ALattice<AInteger> lattice = MaxLattice.create();
-		maxNodeServer = new NodeServer<>(lattice, store, null);
+		maxNodeServer = new NodeServer<>(lattice, store);
 		maxNodeServer.launch();
+
+		LatticePropagator propagator = maxNodeServer.getPropagator();
+		assertNotNull(propagator);
 
 		// Create Convex connections to the server (using loopback addresses for testing)
 		InetSocketAddress serverAddress = maxNodeServer.getHostAddress();
@@ -225,21 +240,21 @@ public class NodeServerTest {
 		ConvexRemote peer2 = ConvexRemote.connect(serverAddress);
 
 		// Initially no peers
-		Set<Convex> peers = maxNodeServer.getPeerNodes();
+		Set<Convex> peers = propagator.getPeers();
 		assertTrue(peers.isEmpty());
 
 		// Add peers
-		maxNodeServer.addPeer(peer1);
-		maxNodeServer.addPeer(peer2);
+		propagator.addPeer(peer1);
+		propagator.addPeer(peer2);
 
-		peers = maxNodeServer.getPeerNodes();
+		peers = propagator.getPeers();
 		assertEquals(2, peers.size());
 		assertTrue(peers.contains(peer1));
 		assertTrue(peers.contains(peer2));
 
 		// Remove a peer
-		maxNodeServer.removePeer(peer1);
-		peers = maxNodeServer.getPeerNodes();
+		propagator.removePeer(peer1);
+		peers = propagator.getPeers();
 		assertEquals(1, peers.size());
 		assertTrue(peers.contains(peer2));
 		assertFalse(peers.contains(peer1));
@@ -250,12 +265,12 @@ public class NodeServerTest {
 	}
 
 	/**
-	 * Test syncWithPeer using Convex connection
+	 * Test pull(Convex) using Convex connection
 	 */
 	@Test
-	public void testSyncWithPeer() throws Exception {
+	public void testPullFromPeer() throws Exception {
 		ALattice<AInteger> lattice = MaxLattice.create();
-		maxNodeServer = new NodeServer<>(lattice, store, null);
+		maxNodeServer = new NodeServer<>(lattice, store);
 		maxNodeServer.launch();
 
 		// Create a Convex connection to the server
@@ -263,8 +278,8 @@ public class NodeServerTest {
 		ConvexRemote peer = ConvexRemote.connect(serverAddress);
 		
 		try {
-			// Sync with peer - should get the current value (zero initially)
-			CompletableFuture<AInteger> future = maxNodeServer.syncWithPeer(peer);
+			// Pull from peer - should get the current value (zero initially)
+			CompletableFuture<AInteger> future = maxNodeServer.pull(peer);
 			AInteger result = future.get(5, TimeUnit.SECONDS);
 			
 			assertNotNull(result);
@@ -280,7 +295,7 @@ public class NodeServerTest {
 	@Test
 	public void testLaunchTwice() throws IOException, InterruptedException {
 		ALattice<AInteger> lattice = MaxLattice.create();
-		maxNodeServer = new NodeServer<>(lattice, store, null);
+		maxNodeServer = new NodeServer<>(lattice, store);
 
 		// First launch should work (even though network server is stubbed)
 		maxNodeServer.launch();
@@ -298,7 +313,7 @@ public class NodeServerTest {
 	@Test
 	public void testClose() throws IOException, InterruptedException {
 		ALattice<AInteger> lattice = MaxLattice.create();
-		maxNodeServer = new NodeServer<>(lattice, store, null);
+		maxNodeServer = new NodeServer<>(lattice, store);
 
 		maxNodeServer.launch();
 		assertTrue(maxNodeServer.isRunning());
@@ -319,11 +334,11 @@ public class NodeServerTest {
 		ALattice<AInteger> lattice = MaxLattice.create();
 		
 		// Test with null port
-		maxNodeServer = new NodeServer<>(lattice, store, null);
+		maxNodeServer = new NodeServer<>(lattice, store);
 		assertEquals(null, maxNodeServer.getPort());
 
 		// Test with specific port
-		NodeServer<AInteger> server2 = new NodeServer<>(lattice, store, 19999);
+		NodeServer<AInteger> server2 = new NodeServer<>(lattice, store, NodeConfig.port(19999));
 		assertEquals(Integer.valueOf(19999), server2.getPort());
 		
 		try {
@@ -339,7 +354,7 @@ public class NodeServerTest {
 	@Test
 	public void testGetLocalValue() {
 		ALattice<AInteger> lattice = MaxLattice.create();
-		maxNodeServer = new NodeServer<>(lattice, store, null);
+		maxNodeServer = new NodeServer<>(lattice, store);
 
 		// Initial value
 		AInteger value1 = maxNodeServer.getLocalValue();
@@ -359,7 +374,7 @@ public class NodeServerTest {
 	@Test
 	public void testConvexRemoteConnection() throws IOException, InterruptedException, java.util.concurrent.TimeoutException {
 		ALattice<AInteger> lattice = MaxLattice.create();
-		maxNodeServer = new NodeServer<>(lattice, store, null);
+		maxNodeServer = new NodeServer<>(lattice, store);
 		
 		// Launch the server
 		maxNodeServer.launch();
@@ -385,7 +400,7 @@ public class NodeServerTest {
 	@Test
 	public void testPingRequest() throws IOException, InterruptedException, java.util.concurrent.TimeoutException, java.util.concurrent.ExecutionException {
 		ALattice<AInteger> lattice = MaxLattice.create();
-		maxNodeServer = new NodeServer<>(lattice, store, null);
+		maxNodeServer = new NodeServer<>(lattice, store);
 		
 		// Launch the server
 		maxNodeServer.launch();
@@ -426,14 +441,17 @@ public class NodeServerTest {
 	@Test
 	public void testLatticeQueryEmptyPath() throws IOException, InterruptedException, java.util.concurrent.TimeoutException, java.util.concurrent.ExecutionException {
 		ALattice<AInteger> lattice = MaxLattice.create();
-		maxNodeServer = new NodeServer<>(lattice, store, null);
-		
-		// Set an initial value
-		maxNodeServer.getCursor().set(CVMLong.create(42));
+		maxNodeServer = new NodeServer<>(lattice, store);
 		
 		// Launch the server
 		maxNodeServer.launch();
 		assertTrue(maxNodeServer.isRunning());
+
+		// Set a value and sync so it flows through the propagator pipeline
+		maxNodeServer.getCursor().set(CVMLong.create(42));
+		maxNodeServer.getCursor().sync();
+		// Wait for propagator to process (async)
+		Thread.sleep(100);
 		
 		// Get the server address
 		InetSocketAddress serverAddress = maxNodeServer.getHostAddress();
@@ -479,7 +497,7 @@ public class NodeServerTest {
 	public void testAcquireLatticeStructureViaDataRequests() throws IOException, InterruptedException, java.util.concurrent.TimeoutException, java.util.concurrent.ExecutionException {
 		// Use a SetLattice-backed NodeServer with the shared test store
 		ALattice<ASet<ACell>> lattice = SetLattice.create();
-		setNodeServer = new NodeServer<>(lattice, store, null);
+		setNodeServer = new NodeServer<>(lattice, store);
 		
 		// Create a large lattice value (10,000 distinct elements) so that it spans multiple branches
 		ASet<ACell> latticeValue = Sets.empty();
@@ -500,7 +518,8 @@ public class NodeServerTest {
 		assertNotNull(serverAddress, "Server should have a host address after launch");
 		
 		ConvexRemote convex = ConvexRemote.connect(serverAddress);
-		
+		convex.setStore(new MemoryStore());
+
 		try {
 			// Acquire the lattice structure into the client store. This will issue
 			// one or more DATA_REQUEST messages that NodeServer must handle correctly.
@@ -517,6 +536,231 @@ public class NodeServerTest {
 			assertTrue(acquiredSet.contains(CVMLong.create(9_999)));
 		} finally {
 			convex.close();
+		}
+	}
+
+	// ===== P2P NodeInfo advertisement tests =====
+
+	/**
+	 * Test that a NodeServer with URL and signing key publishes NodeInfo
+	 * into the :p2p :nodes lattice on launch.
+	 */
+	@Test
+	public void testNodeInfoPublication() throws IOException, InterruptedException {
+		AKeyPair kp = AKeyPair.generate();
+
+		// Config with public URL
+		NodeConfig cfg = NodeConfig.create(Maps.of(
+			NodeConfig.URL, Strings.create("tcp://peer.example.com:18888"),
+			NodeConfig.PORT, CVMLong.create(-1) // local-only, no network binding
+		));
+
+		NodeServer<Index<Keyword, ACell>> server =
+			new NodeServer<>(Lattice.ROOT, store, cfg);
+		server.setMergeContext(LatticeContext.create(null, kp));
+
+		try {
+			server.launch();
+
+			// Read :p2p :nodes from cursor
+			@SuppressWarnings("unchecked")
+			AHashMap<ACell, SignedData<ACell>> nodes =
+				(AHashMap<ACell, SignedData<ACell>>) PathCursor.create(
+					server.getCursor(),
+					new ACell[] { Keywords.P2P, Keywords.NODES }).get();
+
+			assertNotNull(nodes, ":p2p :nodes should be populated");
+
+			AHashMap<Keyword, ACell> info = P2PLattice.getNodeInfo(nodes, kp.getAccountKey());
+			assertNotNull(info, "NodeInfo should exist for the server's key");
+			assertEquals(Strings.create("tcp://peer.example.com:18888"),
+				((AVector<?>) info.get(Keywords.TRANSPORTS)).get(0));
+			assertEquals(Strings.create("Convex Lattice Node"), info.get(Keywords.TYPE));
+			assertNotNull(info.get(Keywords.VERSION));
+			assertNotNull(info.get(Keywords.TIMESTAMP));
+		} finally {
+			server.close();
+		}
+	}
+
+	/**
+	 * Test that a NodeServer without URL does not publish NodeInfo.
+	 */
+	@Test
+	public void testNoPublicationWithoutURL() throws IOException, InterruptedException {
+		AKeyPair kp = AKeyPair.generate();
+
+		// No URL configured
+		NodeConfig cfg = NodeConfig.create(Maps.of(
+			NodeConfig.PORT, CVMLong.create(-1)
+		));
+
+		NodeServer<Index<Keyword, ACell>> server =
+			new NodeServer<>(Lattice.ROOT, store, cfg);
+		server.setMergeContext(LatticeContext.create(null, kp));
+
+		try {
+			server.launch();
+
+			ACell nodes = PathCursor.create(
+				server.getCursor(),
+				new ACell[] { Keywords.P2P, Keywords.NODES }).get();
+
+			// Should be null (empty/zero) — no publication
+			assertTrue(nodes == null || (nodes instanceof AHashMap && ((AHashMap<?,?>) nodes).isEmpty()),
+				":p2p :nodes should be empty when no URL is configured");
+		} finally {
+			server.close();
+		}
+	}
+
+	/**
+	 * Test that a NodeServer without signing key does not publish NodeInfo.
+	 */
+	@Test
+	public void testNoPublicationWithoutKeyPair() throws IOException, InterruptedException {
+		// URL configured but no signing key (default EMPTY context)
+		NodeConfig cfg = NodeConfig.create(Maps.of(
+			NodeConfig.URL, Strings.create("tcp://peer.example.com:18888"),
+			NodeConfig.PORT, CVMLong.create(-1)
+		));
+
+		NodeServer<Index<Keyword, ACell>> server =
+			new NodeServer<>(Lattice.ROOT, store, cfg);
+		// mergeContext stays LatticeContext.EMPTY — no signing key
+
+		try {
+			server.launch();
+
+			ACell nodes = PathCursor.create(
+				server.getCursor(),
+				new ACell[] { Keywords.P2P, Keywords.NODES }).get();
+
+			assertTrue(nodes == null || (nodes instanceof AHashMap && ((AHashMap<?,?>) nodes).isEmpty()),
+				":p2p :nodes should be empty when no signing key is available");
+		} finally {
+			server.close();
+		}
+	}
+
+	// ===== Gossip relay tests =====
+	//
+	// These tests verify that incoming lattice values reach the propagator.
+	// IMPORTANT: Neither test calls sync() directly. The incoming message path
+	// (processLatticeValue) calls sync() internally after merging — that is
+	// what we are testing. The control test uses cursor.set + sync to prove
+	// the propagator infrastructure itself works.
+
+	/**
+	 * Regression test: incoming LATTICE_VALUE messages must reach the propagator.
+	 *
+	 * <p>When a peer sends a LATTICE_VALUE, processLatticeValue merges it into
+	 * the cursor and calls sync() to notify propagators. Without that internal
+	 * sync(), the merged value dead-ends in the cursor — never persisted, never
+	 * relayed to other peers. Gossip would be one-hop only.
+	 *
+	 * <p>This test sends a LATTICE_VALUE via the network (the actual incoming
+	 * message path) and verifies the propagator receives it. No explicit sync()
+	 * call is made in the test — we rely on processLatticeValue doing it.
+	 */
+	@Test
+	public void testIncomingMergeRelayedToPropagator() throws Exception {
+		ALattice<AInteger> lattice = MaxLattice.create();
+		AStore testStore = new MemoryStore();
+
+		NodeServer<AInteger> node = new NodeServer<>(lattice, testStore);
+
+		try {
+			node.launch();
+
+			LatticePropagator propagator = node.getPropagator();
+			assertNotNull(propagator, "Node should have a propagator after launch");
+
+			// Baseline: propagator has not announced anything yet
+			assertEquals(null, propagator.getLastAnnouncedValue(),
+				"Propagator should have no announced value before any merge");
+
+			// Send a LATTICE_VALUE message via the network.
+			// This exercises the full incoming path:
+			//   network → processLatticeValue → mergeIncoming → sync (internal)
+			// We do NOT call sync() here — processLatticeValue must do it.
+			ConvexRemote convex = ConvexRemote.connect(node.getHostAddress());
+			try {
+				AVector<ACell> emptyPath = Vectors.empty();
+				AVector<?> payload = Vectors.create(MessageTag.LATTICE_VALUE, emptyPath, CVMLong.create(42));
+				Message msg = Message.create(MessageType.LATTICE_VALUE, payload);
+				// Fire-and-forget: LATTICE_VALUE has no request ID, no response expected
+				convex.message(msg);
+
+				// Wait for the chain: message delivery → merge → internal sync → propagator
+				// Keep connection open during wait — closing too early can drop unsent data
+				long deadline = System.currentTimeMillis() + 3000;
+				while (System.currentTimeMillis() < deadline) {
+					if (propagator.getLastAnnouncedValue() != null) break;
+					Thread.sleep(50);
+				}
+			} finally {
+				convex.close();
+			}
+
+			// Cursor should have the merged value
+			assertEquals(CVMLong.create(42), node.getLocalValue(),
+				"Cursor should reflect the incoming LATTICE_VALUE");
+
+			// The propagator must have been notified (by processLatticeValue's sync)
+			assertNotNull(propagator.getLastAnnouncedValue(),
+				"Propagator should be notified after incoming LATTICE_VALUE — " +
+				"if null, incoming merges are not relayed (gossip is broken)");
+		} finally {
+			node.close();
+			testStore.close();
+		}
+	}
+
+	/**
+	 * Control test: cursor.set + explicit sync() relays to the propagator.
+	 *
+	 * <p>Verifies that the propagation infrastructure works correctly when
+	 * triggered via the local write path. This proves that any failure in
+	 * {@link #testIncomingMergeRelayedToPropagator} would be due to a missing
+	 * sync in the incoming message path, not a broken propagator.
+	 */
+	@Test
+	public void testExplicitSyncRelaysToPropagator() throws Exception {
+		ALattice<AInteger> lattice = MaxLattice.create();
+		AStore testStore = new MemoryStore();
+
+		NodeConfig cfg = NodeConfig.create(Maps.of(
+			NodeConfig.PORT, CVMLong.create(-1)
+		));
+		NodeServer<AInteger> node = new NodeServer<>(lattice, testStore, cfg);
+
+		try {
+			node.launch();
+
+			LatticePropagator propagator = node.getPropagator();
+
+			// Local write path: set value directly on cursor, then sync explicitly.
+			// This is how application code drives the node — sync() is the caller's
+			// responsibility (unlike the incoming message path which syncs internally).
+			node.getCursor().set(CVMLong.create(42));
+			node.getCursor().sync();
+
+			// Wait for propagator to process
+			long deadline = System.currentTimeMillis() + 3000;
+			while (System.currentTimeMillis() < deadline) {
+				if (propagator.getLastAnnouncedValue() != null) break;
+				Thread.sleep(50);
+			}
+
+			// Explicit sync should always work — this is the control
+			assertNotNull(propagator.getLastAnnouncedValue(),
+				"Propagator should have announced value after explicit sync");
+			assertEquals(CVMLong.create(42), propagator.getLastAnnouncedValue(),
+				"Propagator's announced value should match synced value");
+		} finally {
+			node.close();
+			testStore.close();
 		}
 	}
 }

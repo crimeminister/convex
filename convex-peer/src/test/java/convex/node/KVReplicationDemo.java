@@ -57,11 +57,11 @@ public class KVReplicationDemo {
 				AStore store = new MemoryStore();
 				stores.add(store);
 
-				NodeServer<?> server = new NodeServer<>(Lattice.ROOT, store, BASE_PORT + i);
+				NodeServer<?> server = new NodeServer<>(Lattice.ROOT, store, NodeConfig.port(BASE_PORT + i));
 				server.launch();
 				servers.add(server);
 
-				KVDatabase db = KVDatabase.create(DB_NAME, kp, "node-" + i);
+				KVDatabase db = KVDatabase.create(DB_NAME, kp, Strings.create("node-" + i));
 				databases.add(db);
 
 				System.out.println("Node " + i + " started on port " + (BASE_PORT + i)
@@ -75,7 +75,7 @@ public class KVReplicationDemo {
 					if (i != j) {
 						Convex peer = ConvexRemote.connect(
 							new InetSocketAddress("localhost", BASE_PORT + j));
-						servers.get(i).addPeer(peer);
+						servers.get(i).getPropagator().addPeer(peer);
 					}
 				}
 			}
@@ -106,18 +106,20 @@ public class KVReplicationDemo {
 			System.out.println("\nPublishing signed replicas to lattice...");
 			for (int i = 0; i < NUM_NODES; i++) {
 				// exportReplica returns {ownerKey → signed({dbName → kvStore})}
-				// which is the OwnerLattice value shape at :kv
+				// which is the OwnerLattice value shape at :kv.
+				// Use merge (not assoc) so concurrent broadcasts don't get clobbered.
 				@SuppressWarnings("unchecked")
 				AHashMap<ACell, ACell> replica =
 					(AHashMap<ACell, ACell>)(AHashMap<?,?>) databases.get(i).exportReplica();
-				servers.get(i).updateLocalPath(replica, Keywords.KV);
+				servers.get(i).getCursor().path(Keywords.KV).merge(replica);
+				servers.get(i).getCursor().sync();
 			}
 
-			// --- Sync network ---
-			System.out.println("Syncing network...");
-			for (NodeServer<?> server : servers) server.sync();
+			// --- Pull from peers ---
+			System.out.println("Pulling from peers...");
+			for (NodeServer<?> server : servers) server.pull();
 			Thread.sleep(500);
-			for (NodeServer<?> server : servers) server.sync();
+			for (NodeServer<?> server : servers) server.pull();
 
 			// --- Verify lattice convergence ---
 			System.out.println("\n=== Lattice Convergence ===");
@@ -162,7 +164,7 @@ public class KVReplicationDemo {
 			// --- Propagator stats ---
 			System.out.println("\n=== Propagator Stats ===");
 			for (int i = 0; i < NUM_NODES; i++) {
-				LatticePropagator<?> p = servers.get(i).getPropagator();
+				LatticePropagator p = servers.get(i).getPropagator();
 				System.out.println("Node " + i + ": "
 					+ p.getBroadcastCount() + " broadcasts, "
 					+ p.getRootSyncCount() + " root syncs");

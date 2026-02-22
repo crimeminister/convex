@@ -1,9 +1,14 @@
 package convex.restapi.mcp;
 
+import static convex.restapi.mcp.McpProtocol.*;
+
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.security.SecureRandom;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,7 +20,6 @@ import convex.core.crypto.AKeyPair;
 import convex.core.crypto.ASignature;
 import convex.core.crypto.Hashing;
 import convex.core.crypto.Ed25519Signature;
-import convex.core.Coin;
 import convex.core.crypto.Providers;
 import convex.core.cvm.AccountStatus;
 import convex.core.cvm.Address;
@@ -23,6 +27,7 @@ import convex.core.cvm.Peer;
 import convex.core.cvm.transactions.ATransaction;
 import convex.core.cvm.transactions.Invoke;
 import convex.core.data.ACell;
+import convex.core.data.ADataStructure;
 import convex.core.data.AHashMap;
 import convex.core.data.AMap;
 import convex.core.data.AString;
@@ -45,7 +50,6 @@ import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.MissingDataException;
 import convex.core.exceptions.ParseException;
-import convex.core.exceptions.ResultException;
 import convex.core.json.JSONReader;
 import convex.core.lang.RT;
 import convex.core.lang.Reader;
@@ -54,8 +58,10 @@ import convex.core.util.Utils;
 import convex.restapi.RESTServer;
 import convex.restapi.api.ABaseAPI;
 import convex.restapi.api.ChainAPI;
+import convex.restapi.auth.AuthMiddleware;
 import convex.restapi.model.JsonRPCRequest;
 import convex.restapi.model.JsonRPCResponse;
+import jakarta.servlet.http.HttpServletResponse;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
 import io.javalin.openapi.HttpMethod;
@@ -66,31 +72,39 @@ import io.javalin.openapi.OpenApiRequestBody;
 import io.javalin.openapi.OpenApiResponse;
 
 /**
- * Minimal MCP JSON-RPC endpoint that follows the core patterns from the Covia Venue
- * implementation, adapted for the Convex REST server.
- * 
- * See: 
- * https://www.jsonrpc.org/specification
- * https://modelcontextprotocol.io/specification/2025-06-18
+ * MCP (Model Context Protocol) implementation for Convex peers.
+ *
+ * <p>Provides JSON-RPC over Streamable HTTP transport with SSE support, exposing
+ * Convex on-chain operations (query, transact, account management, etc.) as MCP
+ * tools.</p>
+ *
+ * <h3>SECURITY — Denial of Service risk</h3>
+ *
+ * <p>MCP is a public endpoint. Every SSE connection holds a virtual thread and TCP
+ * socket. A malicious client can exhaust resources by opening many connections.</p>
+ *
+ * <p>Mitigations in place:</p>
+ * <ul>
+ *   <li>{@code initialize} creates zero server-side state. The session ID returned
+ *       is a correlation token, not stored.</li>
+ *   <li>The only heavy resource ({@link McpConnection}: virtual thread + TCP socket)
+ *       is created on {@code GET /mcp}, bounded by {@link #MAX_CONNECTIONS}.</li>
+ *   <li>Watches are connection-scoped and bounded by {@link #MAX_WATCHES_PER_CONNECTION}.
+ *       Disconnect destroys everything.</li>
+ * </ul>
+ *
+ * <p><b>High-value peers (large stake, critical infrastructure) should normally disable
+ * MCP entirely</b> and leave it to lower-staked proxy or gateway peers that can absorb
+ * DoS risk without threatening consensus participation. MCP is best suited for
+ * dedicated API/gateway peers rather than core validators.</p>
+ *
+ * @see <a href="https://www.jsonrpc.org/specification">JSON-RPC 2.0</a>
+ * @see <a href="https://modelcontextprotocol.io/specification/2025-06-18">MCP Specification</a>
  */
 public class McpAPI extends ABaseAPI {
 
 	private static final Logger log = LoggerFactory.getLogger(McpAPI.class);
 
-	public static final StringShort FIELD_ID = Strings.intern("id");
-	public static final StringShort FIELD_METHOD = Strings.intern("method");
-	public static final StringShort FIELD_PARAMS = Strings.intern("params");
-	public static final StringShort FIELD_NAME = Strings.intern("name");
-	public static final StringShort FIELD_ARGUMENTS = Strings.intern("arguments");
-	public static final StringShort FIELD_RESULT = Strings.intern("result");
-	public static final StringShort FIELD_ERROR = Strings.intern("error");
-	public static final StringShort FIELD_CODE = Strings.intern("code");
-	public static final StringShort FIELD_MESSAGE = Strings.intern("message");
-	public static final StringShort FIELD_CONTENT = Strings.intern("content");
-	public static final StringShort FIELD_STRUCTURED_CONTENT = Strings.intern("structuredContent");
-	public static final StringShort FIELD_TYPE = Strings.intern("type");
-	public static final StringShort FIELD_TEXT = Strings.intern("text");
-	public static final StringShort FIELD_IS_ERROR = Strings.intern("isError");
 	public static final StringShort SERVER_URL_FIELD=Strings.intern("server_url");
 
 	public static final StringShort ARG_SOURCE = Strings.intern("source");
@@ -110,17 +124,48 @@ public class McpAPI extends ABaseAPI {
 	public static final StringShort ARG_CAD3 = Strings.intern("cad3");
 	public static final StringShort ARG_GET_PATH = Strings.intern("getPath");
 	public static final StringShort ARG_NAME = Strings.intern("name");
-	
+	public static final StringShort ARG_PASSPHRASE = Strings.intern("passphrase");
+	public static final StringShort ARG_AUDIENCE = Strings.intern("audience");
+	public static final StringShort ARG_LIFETIME = Strings.intern("lifetime");
+	public static final StringShort ARG_CONFIRM_TOKEN = Strings.intern("confirmToken");
+	public static final StringShort ARG_NEW_PASSPHRASE = Strings.intern("newPassphrase");
+	public static final StringShort ARG_CONTROLLER = Strings.intern("controller");
+	public static final StringShort ARG_TOKEN = Strings.intern("token");
+	public static final StringShort ARG_TO = Strings.intern("to");
+	public static final StringShort ARG_AMOUNT = Strings.intern("amount");
+	public static final StringShort ARG_PATH = Strings.intern("path");
+	public static final StringShort ARG_WATCH_ID = Strings.intern("watchId");
+
+	/** Maximum concurrent McpConnections. Each holds a virtual thread + TCP socket. */
+	public static final int MAX_CONNECTIONS = 1000;
+
+	/** Maximum watches per connection. Caps polling overhead per client. */
+	public static final int MAX_WATCHES_PER_CONNECTION = 16;
+
+	/** Size threshold for queryState responses (bytes). Values larger than this are omitted. */
+	static final long QUERY_STATE_SIZE_THRESHOLD = 4096;
+
+	/** Maximum entries in a batch JSON-RPC request. */
+	public static final int MAX_BATCH_SIZE = 20;
+
+	/** ThreadLocal to make the current Javalin Context available to tool handlers */
+	static final ThreadLocal<Context> currentContext = new ThreadLocal<>();
+
 	public static final StringShort KEY_NETWORK_ID = Strings.intern("networkId");
 	public static final StringShort KEY_PEER_KEY = Strings.intern("peerKey");
 	public static final StringShort KEY_VALUE = Strings.intern("value");
 	public static final StringShort KEY_ERROR_CODE = Strings.intern("errorCode");
 	public static final StringShort KEY_INFO = Strings.intern("info");
 
-	private static final AHashMap<AString, ACell> BASE_RESPONSE = Maps.of("jsonrpc", "2.0");
-	private static final AMap<AString, ACell> EMPTY_MAP = Maps.empty();
 	private final AMap<AString, ACell> serverInfo;
 	private final Map<String, McpTool> tools = new LinkedHashMap<>();
+	private final Map<String, McpPrompt> prompts = new LinkedHashMap<>();
+
+	/** Connection map: session ID → McpConnection (created on GET /mcp) */
+	private final ConcurrentHashMap<String, McpConnection> connections = new ConcurrentHashMap<>();
+
+	/** Convex-specific state watcher */
+	private final ConvexStateWatcher stateWatcher = new ConvexStateWatcher();
 
 	public McpAPI(RESTServer restServer) {
 		super(restServer);
@@ -136,6 +181,7 @@ public class McpAPI extends ABaseAPI {
 		}
 		serverInfo = info;
 		registerTools();
+		new McpPrompts(this).registerAll();
 	}
 
 	public AMap<AString, ACell> getServerInfo() {
@@ -148,8 +194,117 @@ public class McpAPI extends ABaseAPI {
 
 	@Override
 	public void addRoutes(Javalin app) {
+		app.before("/mcp", this::validateOrigin);
 		app.post("/mcp", this::handleMcpRequest);
+		app.get("/mcp", this::handleMcpGet);
+		app.delete("/mcp", this::handleMcpDelete);
 		app.get("/.well-known/mcp", this::getMCPWellKnown);
+	}
+
+	/**
+	 * Validate the Origin header on all MCP requests.
+	 *
+	 * <p>Required by MCP spec 2025-11-25 to prevent DNS rebinding attacks. If the
+	 * {@code Origin} header is present and not allowed, responds with HTTP 403.</p>
+	 *
+	 * <p>Convex peers are public API servers, so all origins are allowed by default.
+	 * Localhost-only deployments should override or configure origin restrictions.</p>
+	 *
+	 * @see <a href="https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#security-warning">MCP Security Warning</a>
+	 */
+	private void validateOrigin(Context ctx) {
+		String origin = ctx.header("Origin");
+		if (origin != null && !isOriginAllowed(origin)) {
+			throw new io.javalin.http.ForbiddenResponse("Forbidden: invalid origin");
+		}
+	}
+
+	/**
+	 * Check if an Origin is allowed for MCP requests.
+	 *
+	 * <p>Public Convex peers allow all origins. Override for localhost-only deployments
+	 * that need DNS rebinding protection.</p>
+	 *
+	 * @param origin The Origin header value
+	 * @return true if the origin is allowed
+	 */
+	protected boolean isOriginAllowed(String origin) {
+		return true;
+	}
+
+	/**
+	 * GET /mcp — Open long-lived SSE stream for server-to-client notifications.
+	 *
+	 * <p>Creates the only server-side resource: a {@link McpConnection} keyed by
+	 * session ID. This is the notification delivery channel for state watches.
+	 * Cleaned up immediately on disconnect.</p>
+	 */
+	private void handleMcpGet(Context ctx) {
+		String accept = ctx.header("Accept");
+		if (accept == null || !accept.contains("text/event-stream")) {
+			ctx.status(405);
+			return;
+		}
+
+		// Enforce global connection limit (soft cap)
+		if (connections.size() >= MAX_CONNECTIONS) {
+			ctx.status(429);
+			return;
+		}
+
+		// Get session ID from header, or generate one
+		String sessionId = ctx.header(HEADER_SESSION_ID);
+		if (sessionId == null) {
+			sessionId = UUID.randomUUID().toString();
+		}
+
+		try {
+			HttpServletResponse res = ctx.res();
+			res.setContentType("text/event-stream");
+			res.setCharacterEncoding("UTF-8");
+			res.setHeader("Cache-Control", "no-cache");
+			res.setHeader("X-Accel-Buffering", "no");
+			res.setHeader(HEADER_SESSION_ID, sessionId);
+			res.flushBuffer();
+
+			PrintWriter writer = res.getWriter();
+			McpConnection conn = new McpConnection(writer);
+			connections.put(sessionId, conn);
+			try {
+				// Keep-alive loop — blocks virtual thread until client disconnects
+				while (!conn.isClosed()) {
+					writer.write(": keepalive\n\n");
+					writer.flush();
+					if (writer.checkError()) break;
+					Thread.sleep(McpProtocol.SSE_KEEPALIVE_MS);
+				}
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			} finally {
+				conn.close();
+				connections.remove(sessionId);
+			}
+		} catch (IOException e) {
+			log.debug("SSE connection setup failed", e);
+		}
+	}
+
+	/**
+	 * DELETE /mcp — Terminate session and close connection.
+	 */
+	private void handleMcpDelete(Context ctx) {
+		String sessionId = ctx.header(HEADER_SESSION_ID);
+		if (sessionId == null) {
+			ctx.status(400);
+			return;
+		}
+		McpConnection conn = connections.remove(sessionId);
+		if (conn != null) {
+			conn.close();
+			ctx.status(200);
+		} else {
+			ctx.status(404);
+		}
 	}
 
 	@OpenApi(path = "/mcp", 
@@ -186,33 +341,78 @@ public class McpAPI extends ABaseAPI {
 										) })
 					})	
 	private void handleMcpRequest(Context ctx) {
-		ctx.contentType(ContentTypes.JSON);
+		currentContext.set(ctx);
 		try {
+			boolean useSSE = acceptsEventStream(ctx);
 			ACell body = JSONReader.read(ctx.bodyInputStream());
+
 			if (body instanceof AMap<?, ?> map) {
+				if (isNotification(map)) {
+					processNotification(map);
+					ctx.status(202).contentType(ContentTypes.JSON);
+					return;
+				}
+
 				AMap<AString, ACell> response = createResponse(map);
-				setContent(ctx, response);
+				sendResponse(ctx, response, useSSE);
 			} else if (body instanceof AVector<?> vector) {
 				long n = vector.count();
 				if (n == 0) {
-					setContent(ctx, protocolError(-32600, "Invalid batch request (empty)"));
+					sendResponse(ctx, protocolError(-32600, "Invalid batch request (empty)"), useSSE);
+					return;
+				}
+				if (n > MAX_BATCH_SIZE) {
+					sendResponse(ctx, protocolError(-32600, "Batch too large (max " + MAX_BATCH_SIZE + ")"), useSSE);
 					return;
 				}
 				AVector<AMap<AString, ACell>> responses = Vectors.empty();
 				for (long i = 0; i < n; i++) {
 					ACell entry = vector.get(i);
 					if (entry instanceof AMap<?, ?> batchMap) {
-						responses = responses.conj(createResponse(batchMap));
+						if (isNotification(batchMap)) {
+							processNotification(batchMap);
+						} else {
+							responses = responses.conj(createResponse(batchMap));
+						}
 					} else {
 						responses = responses.conj(protocolError(-32600, "Invalid Request"));
 					}
 				}
-				setContent(ctx, responses);
+				if (responses.isEmpty()) {
+					ctx.status(202).contentType(ContentTypes.JSON);
+				} else if (useSSE) {
+					// SSE: send each batch response as a separate event
+					sendSseBatchResponse(ctx, responses);
+				} else {
+					ctx.contentType(ContentTypes.JSON);
+					setContent(ctx, responses);
+				}
 			} else {
-				setContent(ctx, protocolError(-32600, "Request must be a JSON object or array"));
+				sendResponse(ctx, protocolError(-32600, "Request must be a JSON object or array"), useSSE);
 			}
 		} catch (ParseException | IOException e) {
+			ctx.contentType(ContentTypes.JSON);
 			setContent(ctx, protocolError(-32700, "Parse error"));
+		} catch (Exception e) {
+			log.warn("Unexpected error handling MCP request", e);
+			ctx.contentType(ContentTypes.JSON);
+			setContent(ctx, protocolError(-32603, "Internal error"));
+		} finally {
+			currentContext.remove();
+		}
+	}
+
+	/**
+	 * Process a notification message (no response expected).
+	 */
+	private void processNotification(AMap<?, ?> request) {
+		AString methodCell = RT.ensureString(request.get(FIELD_METHOD));
+		if (methodCell == null) return;
+		String method = methodCell.toString().trim();
+		// Handle known notifications silently
+		switch (method) {
+			case "notifications/initialized", "notifications/cancelled" -> { /* acknowledged */ }
+			default -> log.debug("Unrecognised MCP notification: {}", method);
 		}
 	}
 
@@ -234,11 +434,20 @@ public class McpAPI extends ABaseAPI {
 		AMap<AString, ACell> result;
 		try {
 			switch (method) {
-				case "initialize" -> result = protocolResult(buildInitializeResult());
+				case "initialize" -> {
+					// Return session ID as correlation token — no state created
+					Context reqCtx = currentContext.get();
+					if (reqCtx != null) {
+						reqCtx.res().setHeader(HEADER_SESSION_ID, UUID.randomUUID().toString());
+					}
+					result = protocolResult(buildInitializeResult());
+				}
 				case "ping" -> result = protocolResult(EMPTY_MAP);
 				case "notifications/initialized" -> result = protocolResult(EMPTY_MAP);
 				case "tools/list" -> result = protocolResult(listTools());
 				case "tools/call" -> result = toolCall(request.get(FIELD_PARAMS));
+				case "prompts/list" -> result = protocolResult(listPrompts());
+				case "prompts/get" -> result = promptGet(request.get(FIELD_PARAMS));
 				default -> result = protocolError(-32601, "Method not found: " + method);
 			}
 		} catch (Exception ex) {
@@ -250,9 +459,12 @@ public class McpAPI extends ABaseAPI {
 	}
 
 	private AMap<AString, ACell> buildInitializeResult() {
-		AMap<AString, ACell> capabilities = Maps.of("tools", EMPTY_MAP);
+		AMap<AString, ACell> capabilities = Maps.of(
+			"tools", EMPTY_MAP,
+			"prompts", EMPTY_MAP
+		);
 		AMap<AString, ACell> result = Maps.of(
-			"protocolVersion", "2025-03-26",
+			"protocolVersion", "2025-06-18",
 			"serverInfo", serverInfo,
 			"capabilities", capabilities
 		);
@@ -269,25 +481,6 @@ public class McpAPI extends ABaseAPI {
 
 	private AMap<AString, ACell> listTools() {
 		return Maps.of("tools", listToolsVector());
-	}
-
-	/* JSON-RPC protocol result */
-	private AMap<AString, ACell> protocolResult(AMap<AString, ACell> result) {
-		return BASE_RESPONSE.assoc(FIELD_RESULT, result);
-	}
-
-	/* JSON-RPC protocol error */
-	private AMap<AString, ACell> protocolError(int code, String message) {
-		AMap<AString, ACell> error = Maps.of(
-			FIELD_CODE, CVMLong.create(code),
-			FIELD_MESSAGE, message
-		);
-		return BASE_RESPONSE.assoc(FIELD_ERROR, error);
-	}
-
-	private AMap<AString, ACell> maybeAttachId(AMap<AString, ACell> response, ACell idCell) {
-		if (idCell == null) return response;
-		return response.assoc(FIELD_ID, idCell);
 	}
 
 	private AMap<AString, ACell> toolCall(ACell paramsCell) {
@@ -314,8 +507,26 @@ public class McpAPI extends ABaseAPI {
 		return tool.handle(arguments);
 	}
 
-	/* Create a Result from a CVM Result */
-	private AMap<AString, ACell> toolResult(Result result) {
+	// ===== Delegating methods for tool extensions (e.g. SigningMcpTools) =====
+
+	/* JSON-RPC protocol error — delegates to McpProtocol */
+	AMap<AString, ACell> protocolError(int code, String message) {
+		return McpProtocol.protocolError(code, message);
+	}
+
+	/* MCP tool success — delegates to McpProtocol */
+	AMap<AString, ACell> toolSuccess(ACell structuredResult) {
+		return McpProtocol.toolSuccess(structuredResult);
+	}
+
+	/* MCP tool error — returns isError result, not JSON-RPC error.
+	 * Per MCP 2025-11-25: tool input validation errors use this so LLMs can self-correct. */
+	AMap<AString, ACell> toolError(String message) {
+		return McpProtocol.toolError(message);
+	}
+
+	/* Create a Result from a CVM Result - package-private for use by tool extensions */
+	AMap<AString, ACell> toolResult(Result result) {
 		AMap<AString, ACell> structured = EMPTY_MAP;
 		ACell value = result.getValue();
 		if (value != null) {
@@ -330,34 +541,6 @@ public class McpAPI extends ABaseAPI {
 			structured = structured.assoc(KEY_INFO, info);
 		}
 		return protocolResult(buildMcpResult(structured, result.isError()));
-	}
-
-	private AMap<AString, ACell> toolSuccess(ACell structuredResult) {
-		AMap<AString, ACell> payload = RT.ensureMap(structuredResult);
-		if (payload == null) payload = EMPTY_MAP;
-		return protocolResult(buildMcpResult(payload, false));
-	}
-
-	/* Create an error result for a tool call (but protocol valid) */
-	private AMap<AString, ACell> toolError(String message) {
-		AMap<AString, ACell> payload = Maps.of(
-			"message", message
-		);
-		return protocolResult(buildMcpResult(payload, true));
-	}
-
-	private AMap<AString, ACell> buildMcpResult(AMap<AString, ACell> structured, boolean isError) {
-		AString jsonText = JSON.print(structured);
-		AMap<AString, ACell> textContent = Maps.of(
-			FIELD_TYPE, "text",
-			FIELD_TEXT, jsonText
-		);
-		AVector<AMap<AString, ACell>> content = Vectors.of(textContent);
-		return Maps.of(
-			FIELD_CONTENT, content,
-			FIELD_STRUCTURED_CONTENT, structured,
-			FIELD_IS_ERROR, isError?CVMBool.TRUE:CVMBool.FALSE
-		);
 	}
 
 	private void registerTools() {
@@ -378,17 +561,57 @@ public class McpAPI extends ABaseAPI {
 		registerTool(new LookupTool());
 		registerTool(new ResolveCNSTool());
 		registerTool(new GetTransactionTool());
+		registerTool(new GetBalanceTool());
+		registerTool(new TransferTool());
+		registerTool(new QueryStateTool());
+		registerTool(new WatchStateTool());
+		registerTool(new UnwatchStateTool());
+
+		// Signing service tools (standard + elevated)
+		new SigningMcpTools(this).registerAll();
 	}
 
-	private void registerTool(McpTool tool) {
+	void registerTool(McpTool tool) {
 		tools.put(tool.getName(), tool);
 	}
 
-	private ATransaction decodeTransaction(Blob hashBlob) throws BadFormatException, MissingDataException {
-		Ref<?> ref = Format.readRef(hashBlob, 0);
-		ACell value = ref.getValue();
+	void registerPrompt(McpPrompt prompt) {
+		prompts.put(prompt.getName(), prompt);
+	}
+
+	private AMap<AString, ACell> listPrompts() {
+		AVector<AMap<AString, ACell>> vec = Vectors.empty();
+		for (McpPrompt prompt : prompts.values()) {
+			vec = vec.conj(prompt.getMetadata());
+		}
+		return Maps.of("prompts", vec);
+	}
+
+	private AMap<AString, ACell> promptGet(ACell paramsCell) {
+		if (!(paramsCell instanceof AMap<?, ?> params)) {
+			return protocolError(-32602, "params must be an object");
+		}
+
+		AString nameCell = RT.ensureString(params.get(FIELD_NAME));
+		if (nameCell == null) return protocolError(-32602, "Prompt name required");
+
+		McpPrompt prompt = prompts.get(nameCell.toString());
+		if (prompt == null) return protocolError(-32601, "Unknown prompt: " + nameCell);
+
+		AMap<AString, ACell> arguments = RT.ensureMap(params.get(FIELD_ARGUMENTS));
+		if (arguments == null) arguments = Maps.empty();
+
+		AVector<AMap<AString, ACell>> messages = prompt.render(arguments);
+		return protocolResult(Maps.of(
+			"description", prompt.getMetadata().get(Strings.create("description")),
+			"messages", messages
+		));
+	}
+
+	private ATransaction decodeTransaction(Blob encodedBlob) throws BadFormatException, MissingDataException {
+		ACell value = server.getStore().decodeRef(encodedBlob).getValue();
 		if (!(value instanceof ATransaction transaction)) {
-			throw new BadFormatException("Value with hash " + hashBlob.toHexString() + " is not a transaction");
+			throw new BadFormatException("Value with data " + encodedBlob.toHexString() + " is not a transaction");
 		}
 		return transaction;
 	}
@@ -402,7 +625,7 @@ public class McpAPI extends ABaseAPI {
 		public AMap<AString, ACell> handle(AMap<AString, ACell> arguments) {
 			AString sourceCell = RT.ensureString(arguments.get(ARG_SOURCE));
 			if (sourceCell == null) {
-				return protocolError(-32602, "Query requires 'source' string");
+				return toolError("Query requires 'source' string");
 			}
 			String source = sourceCell.toString();
 			try {
@@ -432,15 +655,15 @@ public class McpAPI extends ABaseAPI {
 		public AMap<AString, ACell> handle(AMap<AString, ACell> arguments)  {
 			AString sourceCell = RT.ensureString(arguments.get(ARG_SOURCE));
 			if (sourceCell == null) {
-				return protocolError(-32602, "Transact requires 'source' string");
+				return toolError("Transact requires 'source' string");
 			}
 			AString seedCell = RT.ensureString(arguments.get(ARG_SEED));
 			if (seedCell == null) {
-				return protocolError(-32602, "Transact requires 'seed' string");
+				return toolError("Transact requires 'seed' string");
 			}
 			AString addressCell = RT.ensureString(arguments.get(ARG_ADDRESS));
 			if (addressCell == null) {
-				return protocolError(-32602, "Transact requires 'address' string");
+				return toolError("Transact requires 'address' string");
 			}
 			Blob seedBlob = Blob.parse(seedCell);
 			if ((seedBlob == null) || (seedBlob.count() != AKeyPair.SEED_LENGTH)) {
@@ -478,11 +701,11 @@ public class McpAPI extends ABaseAPI {
 		public AMap<AString, ACell> handle(AMap<AString, ACell> arguments) {
 			AString sourceCell = RT.ensureString(arguments.get(ARG_SOURCE));
 			if (sourceCell == null) {
-				return protocolError(-32602, "Prepare requires 'source' string");
+				return toolError("Prepare requires 'source' string");
 			}
 			AString addressCell = RT.ensureString(arguments.get(ARG_ADDRESS));
 			if (addressCell == null) {
-				return protocolError(-32602, "Prepare requires 'address' string");
+				return toolError("Prepare requires 'address' string");
 			}
 			Address address;
 			try {
@@ -517,7 +740,7 @@ public class McpAPI extends ABaseAPI {
 
 			try {
 				ATransaction transaction = Invoke.create(address, sequence, code);
-				transaction = Cells.persist(transaction);
+				transaction = Cells.persist(transaction, server.getStore());
 				Ref<ATransaction> ref = transaction.getRef();
 				String hashHex = SignedData.getMessageForRef(ref).toHexString();
 				String dataHex = Format.encodeMultiCell(transaction, true).toHexString();
@@ -544,7 +767,7 @@ public class McpAPI extends ABaseAPI {
 		public AMap<AString, ACell> handle(AMap<AString, ACell> arguments) {
 			AString valueCell = RT.ensureString(arguments.get(ARG_VALUE));
 			if (valueCell == null) {
-				return protocolError(-32602, "Hash tool requires 'value' string");
+				return toolError("Hash tool requires 'value' string");
 			}
 			String value = valueCell.toString();
 			AString algorithmCell = RT.ensureString(arguments.get(ARG_ALGORITHM));
@@ -616,7 +839,7 @@ public class McpAPI extends ABaseAPI {
 		public AMap<AString, ACell> handle(AMap<AString, ACell> arguments)  {
 			AString hashCell = RT.ensureString(arguments.get(ARG_HASH));
 			if (hashCell == null) {
-				return protocolError(-32602, "Submit requires 'hash' string");
+				return toolError("Submit requires 'hash' string");
 			}
 			Blob hashBlob = Blob.parse(hashCell);
 			if (hashBlob == null) {
@@ -626,7 +849,7 @@ public class McpAPI extends ABaseAPI {
 				ATransaction transaction = decodeTransaction(hashBlob);
 				AString accountKeyCell = RT.ensureString(arguments.get(ARG_ACCOUNT_KEY));
 				if (accountKeyCell == null) {
-					return protocolError(-32602, "Submit requires 'accountKey' string");
+					return toolError("Submit requires 'accountKey' string");
 				}
 				AccountKey accountKey = AccountKey.parse(accountKeyCell.toString());
 				if (accountKey == null) {
@@ -638,7 +861,7 @@ public class McpAPI extends ABaseAPI {
 					signatureCell = RT.ensureString(arguments.get(ARG_SIGNATURE));
 				}
 				if (signatureCell == null) {
-					return protocolError(-32602, "Submit requires 'sig' string with Ed25519 signature");
+					return toolError("Submit requires 'sig' string with Ed25519 signature");
 				}
 				Blob signatureBlob = Blob.parse(signatureCell.toString());
 				if ((signatureBlob == null) || (signatureBlob.count() != Ed25519Signature.SIGNATURE_LENGTH)) {
@@ -663,7 +886,7 @@ public class McpAPI extends ABaseAPI {
 		public AMap<AString, ACell> handle(AMap<AString, ACell> arguments) {
 			AString hashCell = RT.ensureString(arguments.get(ARG_HASH));
 			if (hashCell == null) {
-				return protocolError(-32602, "signAndSubmit requires 'hash' string");
+				return toolError("signAndSubmit requires 'hash' string");
 			}
 			Blob hashBlob = Blob.parse(hashCell);
 			if (hashBlob == null) {
@@ -671,7 +894,7 @@ public class McpAPI extends ABaseAPI {
 			}
 			AString seedCell = RT.ensureString(arguments.get(ARG_SEED));
 			if (seedCell == null) {
-				return protocolError(-32602, "signAndSubmit requires 'seed' string");
+				return toolError("signAndSubmit requires 'seed' string");
 			}
 			Blob seedBlob = Blob.parse(seedCell);
 			if (seedBlob == null || seedBlob.count() != AKeyPair.SEED_LENGTH) {
@@ -715,7 +938,7 @@ public class McpAPI extends ABaseAPI {
 		public AMap<AString, ACell> handle(AMap<AString, ACell> arguments) {
 			AString cvxCell = RT.ensureString(arguments.get(ARG_CVX));
 			if (cvxCell == null) {
-				return protocolError(-32602, "Encode requires 'cvx' string");
+				return toolError("Encode requires 'cvx' string");
 			}
 			try {
 				ACell value = Reader.read(cvxCell.toString());
@@ -740,14 +963,14 @@ public class McpAPI extends ABaseAPI {
 		public AMap<AString, ACell> handle(AMap<AString, ACell> arguments) {
 			AString cad3Cell = RT.ensureString(arguments.get(ARG_CAD3));
 			if (cad3Cell == null) {
-				return protocolError(-32602, "Decode requires 'cad3' string");
+				return toolError("Decode requires 'cad3' string");
 			}
 			Blob cad3Blob = Blob.parse(cad3Cell);
 			if (cad3Blob == null) {
 				return toolError("cad3 must be valid hex data");
 			}
 			try {
-				ACell decoded = Format.decodeMultiCell(cad3Blob);
+				ACell decoded = server.getStore().decodeMultiCell(cad3Blob);
 				AString cvx = RT.print(decoded);
 				AMap<AString, ACell> result = Maps.of(
 					"cvx", cvx == null ? "" : cvx
@@ -807,15 +1030,15 @@ public class McpAPI extends ABaseAPI {
 		public AMap<AString, ACell> handle(AMap<AString, ACell> arguments) {
 			AString publicKeyCell = RT.ensureString(arguments.get(ARG_PUBLIC_KEY));
 			if (publicKeyCell == null) {
-				return protocolError(-32602, "Validate requires 'publicKey' string");
+				return toolError("Validate requires 'publicKey' string");
 			}
 			AString signatureCell = RT.ensureString(arguments.get(ARG_SIGNATURE));
 			if (signatureCell == null) {
-				return protocolError(-32602, "Validate requires 'signature' string");
+				return toolError("Validate requires 'signature' string");
 			}
 			AString bytesCell = RT.ensureString(arguments.get(ARG_BYTES));
 			if (bytesCell == null) {
-				return protocolError(-32602, "Validate requires 'bytes' string");
+				return toolError("Validate requires 'bytes' string");
 			}
 			
 			try {
@@ -862,9 +1085,9 @@ public class McpAPI extends ABaseAPI {
 			return null;
 		}
 		long amt = faucetAmount;
-		// Apply same limit as ChainAPI.faucetRequest
-		if (amt > Coin.GOLD) {
-			amt = Coin.GOLD;
+		long max = restServer.getFaucetMax();
+		if (amt > max) {
+			amt = max;
 		}
 		return faucetClient.transferSync(address, amt);
 	}
@@ -878,20 +1101,20 @@ public class McpAPI extends ABaseAPI {
 		public AMap<AString, ACell> handle(AMap<AString, ACell> arguments)  {
 			AString accountKeyCell = RT.ensureString(arguments.get(ARG_ACCOUNT_KEY));
 			if (accountKeyCell == null) {
-				return protocolError(-32602, "CreateAccount requires 'accountKey' string");
+				return toolError("CreateAccount requires 'accountKey' string");
 			}
-			
+
 			Convex faucetClient = restServer.getFaucet();
 			if (faucetClient == null) {
 				return toolError("Faucet use not authorised on this server");
 			}
-			
+
 			try {
 				AccountKey accountKey = AccountKey.parse(accountKeyCell.toString());
 				if (accountKey == null) {
 					return toolError("Unable to parse accountKey: " + accountKeyCell);
 				}
-				
+
 				ACell faucetCell = arguments.get(ARG_FAUCET);
 				Long faucetAmount = null;
 				if (faucetCell != null) {
@@ -901,29 +1124,175 @@ public class McpAPI extends ABaseAPI {
 					}
 					faucetAmount = faucetLong.longValue();
 				}
-				
-				Address address = faucetClient.createAccountSync(accountKey);
-				
-				// Perform faucet payout if requested
-				if (faucetAmount != null) {
-					Result transferResult = performFaucetPayout(faucetClient, address, faucetAmount);
-					if (transferResult != null && transferResult.isError()) {
-						return toolResult(transferResult);
+
+				// Resolve controller: default *caller* (faucet address), "nil" for self-sovereign
+				AString controllerCell = RT.ensureString(arguments.get(ARG_CONTROLLER));
+				String controllerStr = (controllerCell != null) ? controllerCell.toString() : "*caller*";
+
+				String controllerCVM;
+				if ("nil".equals(controllerStr)) {
+					controllerCVM = null; // no controller — self-sovereign
+				} else if ("*caller*".equals(controllerStr)) {
+					controllerCVM = "#" + faucetClient.getAddress().longValue();
+				} else {
+					// Parse as address literal e.g. "#13"
+					Address cAddr = Address.parse(controllerStr);
+					if (cAddr == null) {
+						return toolError("Invalid controller address: " + controllerStr);
 					}
+					controllerCVM = "#" + cAddr.longValue();
 				}
-				
-				AMap<AString, ACell> result = Maps.of(
+
+				// Build CVM source using deploy pattern
+				String source;
+				if (controllerCVM != null) {
+					source = "(deploy '(do (set-controller " + controllerCVM + ") (set-key 0x" + accountKey.toHexString() + ")))";
+				} else {
+					source = "(create-account 0x" + accountKey.toHexString() + ")";
+				}
+
+				// Add faucet transfer if requested
+				if (faucetAmount != null) {
+					long max = restServer.getFaucetMax();
+					long amt = Math.min(faucetAmount, max);
+					source = "(let [addr " + source + "] (transfer addr " + amt + ") addr)";
+				}
+
+				Result r = faucetClient.transactSync(source);
+				if (r.isError()) {
+					return toolResult(r);
+				}
+
+				Address address = (Address)r.getValue();
+				AMap<AString, ACell> out = Maps.of(
 					"address", CVMLong.create(address.longValue())
 				);
-				return toolSuccess(result);
-			} catch (ResultException e) {
-				return toolResult(e.getResult());
+				ACell info = r.getInfo();
+				if (info != null) out = out.assoc(KEY_INFO, info);
+				return toolSuccess(out);
 			} catch (Exception e) {
 				return toolError("Account creation failed: " + e.getMessage());
 			}
 		}
 	}
 	
+	/**
+	 * Resolves an optional token address from arguments. Returns null for CVM native coin.
+	 */
+	private Address resolveTokenAddress(ACell tokenCell) {
+		if (tokenCell == null) return null;
+		String tokenStr = tokenCell.toString();
+		if (tokenStr.isEmpty() || "nil".equals(tokenStr)) return null;
+		return Address.parse(tokenStr);
+	}
+
+	private class GetBalanceTool extends McpTool {
+		GetBalanceTool() {
+			super(McpTool.loadMetadata("convex/restapi/mcp/tools/getBalance.json"));
+		}
+
+		@Override
+		public AMap<AString, ACell> handle(AMap<AString, ACell> arguments) {
+			try {
+				Address address = resolveAddress(arguments.get(ARG_ADDRESS));
+				if (address == null) {
+					return toolError("getBalance requires 'address'");
+				}
+
+				Address token = resolveTokenAddress(arguments.get(ARG_TOKEN));
+
+				Convex convex = restServer.getConvex();
+				String source;
+				if (token == null) {
+					source = "(balance " + address + ")";
+				} else {
+					source = "(@convex.fungible/balance " + token + " " + address + ")";
+				}
+
+				Result result = convex.querySync(source);
+				if (result.isError()) {
+					return toolResult(result);
+				}
+
+				AMap<AString, ACell> out = Maps.of(
+					"address", CVMLong.create(address.longValue()),
+					"balance", result.getValue()
+				);
+				if (token != null) {
+					out = out.assoc(ARG_TOKEN, CVMLong.create(token.longValue()));
+				}
+				return toolSuccess(out);
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+				return toolError("Tool call interrupted");
+			}
+		}
+	}
+
+	private class TransferTool extends McpTool {
+		TransferTool() {
+			super(McpTool.loadMetadata("convex/restapi/mcp/tools/transfer.json"));
+		}
+
+		@Override
+		public AMap<AString, ACell> handle(AMap<AString, ACell> arguments) {
+			AString seedCell = RT.ensureString(arguments.get(ARG_SEED));
+			if (seedCell == null) {
+				return toolError("transfer requires 'seed' string");
+			}
+			AString addressCell = RT.ensureString(arguments.get(ARG_ADDRESS));
+			if (addressCell == null) {
+				return toolError("transfer requires 'address' string");
+			}
+
+			try {
+				Address from = resolveAddress(addressCell);
+				if (from == null) return toolError("Invalid origin address");
+
+				Address to = resolveAddress(arguments.get(ARG_TO));
+				if (to == null) return toolError("transfer requires 'to' address");
+
+				CVMLong amountCell = CVMLong.parse(arguments.get(ARG_AMOUNT));
+				if (amountCell == null) return toolError("transfer requires 'amount' number");
+				long amount = amountCell.longValue();
+
+				Blob seedBlob = Blob.parse(seedCell);
+				if (seedBlob == null || seedBlob.count() != 32) {
+					return toolError("Invalid seed: expected 32-byte hex string");
+				}
+				AKeyPair kp = AKeyPair.create(seedBlob);
+
+				Address token = resolveTokenAddress(arguments.get(ARG_TOKEN));
+
+				String source;
+				if (token == null) {
+					source = "(transfer " + to + " " + amount + ")";
+				} else {
+					source = "(@convex.fungible/transfer " + token + " " + to + " " + amount + ")";
+				}
+
+				try (Convex client = Convex.connect(server)) {
+					client.setAddress(from);
+					client.setKeyPair(kp);
+					Result r = client.transactSync(source);
+					if (r.isError()) return toolResult(r);
+
+					AMap<AString, ACell> out = Maps.of(
+						"value", r.getValue()
+					);
+					ACell info = r.getInfo();
+					if (info != null) out = out.assoc(KEY_INFO, info);
+					return toolSuccess(out);
+				}
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+				return toolError("Tool call interrupted");
+			} catch (Exception e) {
+				return toolError("Transfer failed: " + e.getMessage());
+			}
+		}
+	}
+
 	private class DescribeAccountTool extends McpTool {
 		DescribeAccountTool() {
 			super(McpTool.loadMetadata("convex/restapi/mcp/tools/describeAccount.json"));
@@ -1142,7 +1511,7 @@ public class McpAPI extends ABaseAPI {
 		public AMap<AString, ACell> handle(AMap<AString, ACell> arguments) {
 			AString hashCell = RT.ensureString(arguments.get(ARG_HASH));
 			if (hashCell == null) {
-				return protocolError(-32602, "getTransaction requires 'hash' string");
+				return toolError("getTransaction requires 'hash' string");
 			}
 
 			Hash h = Hash.parse(hashCell.toString());
@@ -1172,6 +1541,307 @@ public class McpAPI extends ABaseAPI {
 				return toolError("getTransaction failed: " + e.getMessage());
 			}
 		}
+	}
+
+	// ===== State query and watch tools =====
+
+	/** Parsed state path — shared between queryState and watchState. */
+	private record StatePath(AVector<ACell> vec, ACell[] keys, String pathString) {}
+
+	/** Result of resolving a state path — distinguishes "exists with null" from "not found". */
+	private record StateResult(boolean exists, ACell value) {}
+
+	/**
+	 * Parse and validate a 'path' argument as a CVM vector.
+	 * Shared validation for queryState and watchState tools.
+	 * @return parsed path, or null if invalid
+	 */
+	private StatePath parsePath(AMap<AString, ACell> arguments) {
+		AString pathCell = RT.ensureString(arguments.get(ARG_PATH));
+		if (pathCell == null) return null;
+		ACell parsed;
+		try {
+			parsed = Reader.read(pathCell.toString());
+		} catch (Exception e) {
+			return null;
+		}
+		AVector<ACell> pathVec = RT.ensureVector(parsed);
+		if (pathVec == null || pathVec.isEmpty()) return null;
+		int len = (int) pathVec.count();
+		ACell[] keys = new ACell[len];
+		for (int i = 0; i < len; i++) {
+			keys[i] = pathVec.get(i);
+		}
+		return new StatePath(pathVec, keys, pathCell.toString());
+	}
+
+	/**
+	 * Resolve a state path, distinguishing "path exists with null value" from "path not found".
+	 * Uses RT.getIn to navigate to the parent, then containsKey for the final key.
+	 */
+	private StateResult resolveStatePath(ACell[] pathKeys) {
+		ACell state = server.getState();
+		ACell parent = (pathKeys.length == 1)
+			? state
+			: RT.getIn(state, java.util.Arrays.copyOf(pathKeys, pathKeys.length - 1));
+		ACell lastKey = pathKeys[pathKeys.length - 1];
+		if (parent instanceof ADataStructure<?> ds) {
+			boolean exists = ds.containsKey(lastKey);
+			return new StateResult(exists, exists ? RT.get(ds, lastKey) : null);
+		}
+		return new StateResult(false, null);
+	}
+
+	private class QueryStateTool extends McpTool {
+		QueryStateTool() {
+			super(McpTool.loadMetadata("convex/restapi/mcp/tools/queryState.json"));
+		}
+
+		@Override
+		public AMap<AString, ACell> handle(AMap<AString, ACell> arguments) {
+			StatePath path = parsePath(arguments);
+			if (path == null) {
+				return toolError("queryState requires 'path' as a non-empty CVM vector, e.g. '[:accounts 0 :balance]'");
+			}
+
+			StateResult sr = resolveStatePath(path.keys);
+
+			AMap<AString, ACell> out = Maps.of(
+				"exists", CVMBool.of(sr.exists)
+			);
+			if (sr.exists) {
+				long memSize = ACell.getMemorySize(sr.value);
+				if (memSize <= QUERY_STATE_SIZE_THRESHOLD) {
+					// Two representations of the same value, matching REST API convention:
+					// - "value": JSON-friendly form (numbers, strings, arrays, objects)
+					// - "result": CVM printed form preserving type info that JSON loses
+					//   e.g. Address #42 → JSON number 42 vs CVM string "#42"
+					out = out.assoc(KEY_VALUE, sr.value);
+					out = out.assoc(Strings.create("result"), RT.print(sr.value));
+				} else {
+					out = out.assoc(Strings.create("size"), CVMLong.create(memSize));
+				}
+			}
+			return toolSuccess(out);
+		}
+	}
+
+	private class WatchStateTool extends McpTool {
+		WatchStateTool() {
+			super(McpTool.loadMetadata("convex/restapi/mcp/tools/watchState.json"));
+		}
+
+		@Override
+		public AMap<AString, ACell> handle(AMap<AString, ACell> arguments) {
+			StatePath path = parsePath(arguments);
+			if (path == null) {
+				return toolError("watchState requires 'path' as a non-empty CVM vector, e.g. '[:accounts 0 :balance]'");
+			}
+
+			// Require active McpConnection via session ID
+			Context ctx = currentContext.get();
+			String sessionId = (ctx != null) ? ctx.header(HEADER_SESSION_ID) : null;
+			McpConnection conn = (sessionId != null) ? connections.get(sessionId) : null;
+			if (conn == null) {
+				return toolError("watchState requires an active GET /mcp stream");
+			}
+
+			// Enforce per-connection watch limit
+			if (conn.watches.size() >= MAX_WATCHES_PER_CONNECTION) {
+				return toolError("Watch limit exceeded (max " + MAX_WATCHES_PER_CONNECTION + " per connection)");
+			}
+
+			// Resolve current value via RT.getIn (may be null — we watch for it to appear)
+			ACell currentValue = stateWatcher.resolveValue(path.keys);
+			Hash currentHash = Hash.get(currentValue);
+
+			// Register watch on the connection
+			String watchId = conn.addWatch(path.keys, path.vec, path.pathString, currentHash);
+			stateWatcher.ensureRunning();
+
+			// Return initial state
+			AMap<AString, ACell> out = Maps.of(
+				"watchId", watchId
+			);
+			long memSize = ACell.getMemorySize(currentValue);
+			if (memSize <= ConvexStateWatcher.VALUE_SIZE_THRESHOLD) {
+				out = out.assoc(Strings.create("value"), RT.print(currentValue));
+			}
+			return toolSuccess(out);
+		}
+	}
+
+	private class UnwatchStateTool extends McpTool {
+		UnwatchStateTool() {
+			super(McpTool.loadMetadata("convex/restapi/mcp/tools/unwatchState.json"));
+		}
+
+		@Override
+		public AMap<AString, ACell> handle(AMap<AString, ACell> arguments) {
+			AString watchIdCell = RT.ensureString(arguments.get(ARG_WATCH_ID));
+			AString pathCell = RT.ensureString(arguments.get(ARG_PATH));
+			if (watchIdCell == null && pathCell == null) {
+				return toolError("unwatchState requires 'watchId' or 'path'");
+			}
+
+			// Find connection via session ID
+			Context ctx = currentContext.get();
+			String sessionId = (ctx != null) ? ctx.header(HEADER_SESSION_ID) : null;
+			McpConnection conn = (sessionId != null) ? connections.get(sessionId) : null;
+			if (conn == null) {
+				return toolSuccess(Maps.of("removed", CVMLong.ZERO));
+			}
+
+			long removed;
+			if (watchIdCell != null) {
+				removed = conn.removeWatch(watchIdCell.toString()) ? 1 : 0;
+			} else {
+				ACell parsed;
+				try {
+					parsed = Reader.read(pathCell.toString());
+				} catch (Exception e) {
+					return toolError("Failed to parse path: " + e.getMessage());
+				}
+				AVector<ACell> prefixVec = RT.ensureVector(parsed);
+				if (prefixVec == null) {
+					return toolError("path must be a CVM vector");
+				}
+				removed = conn.removeWatchesByPathPrefix(prefixVec);
+			}
+			return toolSuccess(Maps.of("removed", CVMLong.create(removed)));
+		}
+	}
+
+	// ===== Convex state watcher =====
+
+	/**
+	 * Convex-specific state watcher. Polls CVM global state and pushes
+	 * notifications to McpConnections when watched paths change.
+	 *
+	 * <p>Daemon virtual thread. Starts on first watch, exits when no watches remain.</p>
+	 */
+	private class ConvexStateWatcher {
+		static final long POLL_INTERVAL_MS = 1000;
+		static final long VALUE_SIZE_THRESHOLD = 1024;
+
+		private volatile Thread thread;
+		private volatile boolean running;
+
+		synchronized void ensureRunning() {
+			if (running) return;
+			running = true;
+			thread = Thread.ofVirtual().name("convex-state-watcher").start(this::pollLoop);
+		}
+
+		void shutdown() {
+			running = false;
+			Thread t = thread;
+			if (t != null) t.interrupt();
+		}
+
+		ACell resolveValue(ACell[] path) {
+			return RT.getIn(server.getState(), path);
+		}
+
+		private void pollLoop() {
+			try {
+				while (running) {
+					if (!hasAnyWatches()) break;
+					try {
+						checkAllConnections();
+					} catch (Exception e) {
+						log.debug("Error in state watcher poll", e);
+					}
+					Thread.sleep(POLL_INTERVAL_MS);
+				}
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			} finally {
+				running = false;
+				thread = null;
+			}
+		}
+
+		private boolean hasAnyWatches() {
+			for (McpConnection conn : connections.values()) {
+				if (conn.hasWatches()) return true;
+			}
+			return false;
+		}
+
+		private void checkAllConnections() {
+			for (McpConnection conn : connections.values()) {
+				if (conn.isClosed() || !conn.hasWatches()) continue;
+				for (StateWatcher.WatchEntry entry : conn.watches.values()) {
+					try {
+						ACell value = resolveValue(entry.path);
+						Hash currentHash = Hash.get(value);
+						if (!currentHash.equals(entry.lastHash)) {
+							entry.lastHash = currentHash;
+							notifyChange(conn, entry, value);
+						}
+					} catch (Exception e) {
+						log.debug("Error checking watch {}", entry.watchId, e);
+					}
+				}
+			}
+		}
+
+		private void notifyChange(McpConnection conn, StateWatcher.WatchEntry entry, ACell newValue) {
+			var params = Maps.of(
+				"watchId", entry.watchId,
+				"path", entry.pathString,
+				"changed", CVMBool.TRUE
+			);
+
+			long memSize = ACell.getMemorySize(newValue);
+			if (memSize <= VALUE_SIZE_THRESHOLD) {
+				params = params.assoc(Strings.create("value"), RT.print(newValue));
+			}
+
+			var notification = Maps.of(
+				"jsonrpc", "2.0",
+				"method", "notifications/stateChanged",
+				"params", params
+			);
+
+			String json = JSON.print(notification).toString();
+			try {
+				conn.sendEvent("message", json);
+			} catch (Exception e) {
+				log.debug("Failed to send watch notification", e);
+			}
+		}
+	}
+
+	// ===== Response helpers =====
+
+	/**
+	 * Send a JSON-RPC response as either SSE or JSON, depending on client preference.
+	 */
+	private void sendResponse(Context ctx, ACell response, boolean useSSE) {
+		if (useSSE) {
+			McpProtocol.sendResponse(ctx, response, true);
+		} else {
+			ctx.contentType(ContentTypes.JSON);
+			setContent(ctx, response);
+		}
+	}
+
+	/**
+	 * Gets the RESTServer instance. Package-private accessor for tool extensions.
+	 */
+	RESTServer getRESTServer() {
+		return restServer;
+	}
+
+	/**
+	 * Gets the authenticated identity from the current request context, or null if unauthenticated.
+	 */
+	AString getRequestIdentity() {
+		Context ctx = currentContext.get();
+		if (ctx == null) return null;
+		return AuthMiddleware.getIdentity(ctx);
 	}
 
 	private AMap<AString,ACell> WELL_KNOWN=JSON.parse("""

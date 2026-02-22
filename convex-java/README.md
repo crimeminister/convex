@@ -3,7 +3,16 @@
 [![Maven Central](https://img.shields.io/maven-central/v/world.convex/convex-java.svg?label=Maven%20Central)](https://search.maven.org/search?q=world.convex)
 [![javadoc](https://javadoc.io/badge2/world.convex/convex-java/javadoc.svg)](https://javadoc.io/doc/world.convex/convex-java)
 
-The official Java SDK for building applications on the [Convex](https://convex.world) network.
+The official Java SDK for building applications on the [Convex](https://convex.world) decentralised lattice network.
+
+## 📚 Documentation
+
+**Official documentation is available at [docs.convex.world/docs/tutorial/client-sdks/java](https://docs.convex.world/docs/tutorial/client-sdks/java)**
+
+- [Quickstart Guide](https://docs.convex.world/docs/tutorial/client-sdks/java/quickstart) - Build your first Java app
+- [Query Guide](https://docs.convex.world/docs/tutorial/client-sdks/java/queries) - Read network state
+- [Transaction Guide](https://docs.convex.world/docs/tutorial/client-sdks/java/transactions) - Submit transactions
+- [Account Management](https://docs.convex.world/docs/tutorial/client-sdks/java/accounts) - Manage keys and accounts
 
 ## Installation
 
@@ -28,10 +37,10 @@ implementation 'world.convex:convex-java:0.8.2'
 ### Connect to the Network
 
 ```java
-import convex.java.Convex;
+import convex.api.Convex;
 
-// Connect to the public test network
-Convex convex = Convex.connect("https://convex.world");
+// Connect to a public testnet (or run a local peer for development)
+Convex convex = Convex.connect("https://mikera1337-convex-testnet.hf.space");
 ```
 
 ### Create an Account
@@ -83,12 +92,37 @@ cd convex
 mvn install -pl convex-java -am
 ```
 
+## Quick Example
+
+```java
+import convex.api.Convex;
+import convex.core.Result;
+import convex.core.crypto.AKeyPair;
+import convex.core.lang.Reader;
+
+// Connect to a public testnet
+Convex convex = Convex.connect("https://mikera1337-convex-testnet.hf.space");
+
+// Execute a query
+Result result = convex.query(Reader.read("(balance #13)")).get();
+System.out.println("Balance: " + result.getValue());
+
+// Use your account
+AKeyPair keyPair = AKeyPair.generate();
+convex.setKeyPair(keyPair);
+
+// Submit a transaction
+Result txResult = convex.transact(Reader.read("(def my-value 42)")).get();
+System.out.println("Result: " + txResult.getValue());
+```
+
 ## Resources
 
-- [Convex Documentation](https://docs.convex.world)
-- [Javadoc API Reference](https://javadoc.io/doc/world.convex/convex-java)
-- [GitHub Repository](https://github.com/Convex-Dev/convex)
-- [Discord Community](https://discord.com/invite/xfYGq4CT7v)
+- **[Official Documentation](https://docs.convex.world/docs/tutorial/client-sdks/java)** - Complete SDK guide
+- **[Javadoc API Reference](https://javadoc.io/doc/world.convex/convex-java)** - API documentation
+- **[Maven Central](https://search.maven.org/artifact/world.convex/convex-java)** - Releases and versions
+- **[Convex Network](https://convex.world)** - Main website
+- **[Discord Community](https://discord.com/invite/xfYGq4CT7v)** - Get help and share ideas
 
 ## License
 

@@ -32,6 +32,17 @@ public class Do<T extends ACell> extends AFlatMultiOp<T> {
 		super(CVMTag.OP_DO,ops);
 	}
 
+	/**
+	 * Creates a Do op from decoded vector data.
+	 * @param <T> Result type
+	 * @param data Decoded record fields
+	 * @return Do instance
+	 */
+	@SuppressWarnings("unchecked")
+	public static <T extends ACell> Do<T> create(AVector<ACell> data) {
+		return new Do<>((AVector<AOp<ACell>>)(AVector<?>)data);
+	}
+
 	public static <T extends ACell> Do<T> create(AOp<?>... ops) {
 		return new Do<T>(Vectors.create(ops));
 	}
@@ -69,26 +80,6 @@ public class Do<T extends ACell> extends AFlatMultiOp<T> {
 		return bb.check(limit);
 	}
 	
-	/**
-	 * Decodes a Do op from a Blob encoding
-	 * 
-	 * @param <T> Return type of Do
-	 * @param b Blob to read from
-	 * @param pos Start position in Blob (location of tag byte)
-	 * @return New decoded instance
-	 * @throws BadFormatException In the event of any encoding error
-	 */
-	public static <T extends ACell> Do<T> read(Blob b, int pos) throws BadFormatException {
-		int epos=pos;
-
-		AVector<AOp<ACell>> ops = Vectors.read(b, epos);
-		epos+=Cells.getEncodingLength(ops);
-		
-		Do<T> result=create(ops);
-		result.attachEncoding(b.slice(pos, epos));
-		return result;
-	}
-
 	@Override
 	protected AFlatMultiOp<T> recreate(AVector<AOp<ACell>> newOps) {
 		if (newOps==ops) return this; 

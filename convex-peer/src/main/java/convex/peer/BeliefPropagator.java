@@ -46,6 +46,19 @@ import convex.core.util.Utils;
 public class BeliefPropagator extends AThreadedComponent {
 	/**
 	 * Wait period for beliefs received in each iteration of Server Belief Merge loop.
+	 *
+	 * This pause serves two purposes:
+	 * 1. In multi-peer networks: waits for incoming peer beliefs to accumulate before
+	 *    performing a belief merge, reducing the number of merge operations.
+	 * 2. As a side effect: controls the loop period and therefore how frequently
+	 *    maybeGenerateBlocks() is called, acting as a transaction batching delay.
+	 *
+	 * On a single-peer network (or when no remote beliefs arrive), the full wait
+	 * elapses every iteration — even when transactionQueue has pending transactions.
+	 * The actual block publication rate guard is minBlockTime (default 10ms) in
+	 * TransactionHandler.maybeGenerateBlocks().
+	 *
+	 * See TRANSACTION_PATH.md for pipeline analysis and potential improvements.
 	 */
 	private static final long AWAIT_BELIEFS_PAUSE = 30L;
 
@@ -142,7 +155,7 @@ public class BeliefPropagator extends AThreadedComponent {
 			// Persist Belief in all cases, even if we didn't announce
 			// This is mainly in case we get missing data / sync requests for the Belief
 			// This is super cheap if already persisted, so no problem in general for each loop
-			belief=Cells.persist(belief);
+			belief=Cells.persist(belief, server.getStore());
 		} catch (IOException e) {
 			// We might get an error while shutting down, can ignore this
 			if (!server.isLive()) return;
@@ -289,15 +302,21 @@ public class BeliefPropagator extends AThreadedComponent {
 	
 	/**
 	 * Await incoming Belief for all incoming belief merges / potential update. This merges multiple incoming beliefs into a single Belief
-	 * which compacts the number of incoming orders for the upcoming Belief Merge
-	 * 
-	 * @return Incoming Belief, or null if nothing arrived within time window 
+	 * which compacts the number of incoming orders for the upcoming Belief Merge.
+	 *
+	 * This method blocks for up to AWAIT_BELIEFS_PAUSE (30ms) waiting for remote
+	 * peer beliefs. On a single-peer network no beliefs ever arrive, so this always
+	 * waits the full duration — adding 30ms of latency per loop iteration even when
+	 * transactions are pending in the transactionQueue.
+	 *
+	 * @return Incoming Belief, or null if nothing arrived within time window
 	 * @throws InterruptedException
 	 */
 	private Belief awaitBelief() throws InterruptedException {
 		ArrayList<Message> beliefMessages=new ArrayList<>();
-		
-		// if we did a belief merge recently, pause for a bit to await more Beliefs
+
+		// Pause to accumulate incoming beliefs from remote peers before merging.
+		// On a single-peer network this always times out after AWAIT_BELIEFS_PAUSE ms.
 		LoadMonitor.down();
 		Message firstEvent=beliefQueue.poll(AWAIT_BELIEFS_PAUSE, TimeUnit.MILLISECONDS);
 		LoadMonitor.up();
@@ -341,7 +360,7 @@ public class BeliefPropagator extends AThreadedComponent {
 			// Add to map of new Beliefs received for each Peer
 			beliefReceivedCount++;			
 			try {
-				ACell payload=m.getPayload();
+				ACell payload=m.getPayload(getStore());
 				// log.info("Merging Belief message: "+Cells.getHash(payload));
 				Collection<SignedData<Order>> a = Belief.extractOrders(payload);
 				for (SignedData<Order> so:a ) {
@@ -370,7 +389,7 @@ public class BeliefPropagator extends AThreadedComponent {
 						
 						
 						// Ensure we can persist newly received Order
-						so=Cells.persist(so);
+						so=Cells.persist(so, server.getStore());
 						observeOrderUpdate(so);
 						orders.put(key, so);
 						changed=true;
@@ -389,8 +408,10 @@ public class BeliefPropagator extends AThreadedComponent {
 			} catch (MissingDataException e) {
 				log.debug("Missing data in Belief message "+m.getHash());
 				server.getConnectionManager().alertMissing(m,e,null);
+			} catch (BadFormatException e1) {
+				log.debug("Malformed Belief message");
 			}
-		} catch (ClassCastException | BadFormatException e) {
+		} catch (ClassCastException e) {
 			// Bad message from Peer
 			server.getConnectionManager().alertBadMessage(m,Utils.getClassName(e)+" merging Belief!!");
 		}  
@@ -417,7 +438,7 @@ public class BeliefPropagator extends AThreadedComponent {
 
 		// persist the state of the Peer, announcing the new Belief
 		// (ensure we can handle missing data requests etc.)
-		belief=Cells.announce(belief, noveltyHandler);
+		belief=Cells.announce(belief, noveltyHandler, server.getStore());
 		lastFullBroadcastBelief=belief;
 
 		Message msg = createPartialBelief(belief, novelty);
@@ -446,7 +467,7 @@ public class BeliefPropagator extends AThreadedComponent {
 		SignedData<Order> order=belief.getOrders().get(key);
 		if (order==null) return null;
 		
-		order=Cells.announce(order, noveltyHandler);
+		order=Cells.announce(order, noveltyHandler, server.getStore());
 		
 		// Update belief orders with persisted version
 		orders=orders.assoc(key, order);

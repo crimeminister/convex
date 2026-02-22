@@ -8,9 +8,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.function.Consumer;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,22 +16,28 @@ import convex.core.ErrorCodes;
 import convex.core.Result;
 import convex.core.data.ACell;
 import convex.core.data.AVector;
-import convex.core.data.Cells;
 import convex.core.data.Strings;
-import convex.core.data.Vectors;
-import convex.core.data.Hash;
 import convex.core.data.prim.CVMLong;
 import convex.core.exceptions.BadFormatException;
-import convex.core.exceptions.MissingDataException;
 import convex.core.lang.RT;
 import convex.core.message.Message;
-import convex.core.message.MessageTag;
 import convex.core.message.MessageType;
 import convex.core.store.AStore;
+import convex.core.util.Shutdown;
+import convex.core.util.Utils;
+import convex.core.crypto.AKeyPair;
+import convex.core.cvm.Keywords;
+import convex.core.data.AHashMap;
+import convex.core.data.AString;
+import convex.core.data.Keyword;
+import convex.core.data.SignedData;
+import convex.core.data.Vectors;
 import convex.lattice.ALattice;
-import convex.lattice.cursor.ACursor;
-import convex.lattice.cursor.PathCursor;
-import convex.lattice.cursor.Root;
+import convex.lattice.P2PLattice;
+import convex.lattice.LatticeContext;
+import convex.lattice.cursor.ALatticeCursor;
+import convex.lattice.cursor.Cursors;
+import convex.lattice.cursor.RootLatticeCursor;
 import convex.net.AServer;
 import convex.net.impl.netty.NettyServer;
 
@@ -57,43 +60,54 @@ import convex.net.impl.netty.NettyServer;
  * @param <V> The type of lattice values managed by this node server
  */
 public class NodeServer<V extends ACell> implements Closeable {
-	
+
 	private static final Logger log = LoggerFactory.getLogger(NodeServer.class.getName());
-	
+
 	/**
 	 * The lattice instance that defines merge semantics for values
 	 */
 	private final ALattice<V> lattice;
-	
+
+	/**
+	 * Configuration for this node server
+	 */
+	private final NodeConfig config;
+
 	/**
 	 * Cursor for the current local lattice value
 	 */
-	private final ACursor<V> cursor;
-	
+	private final RootLatticeCursor<V> cursor;
+
 	/**
 	 * Network server instance for handling connections
 	 */
 	private AServer networkServer;
-	
+
 	/**
-	 * Store for persisting and retrieving lattice values
+	 * Store for this server. Used for inbound message decoding and data requests.
+	 * May be the same store as the propagator's store (typical single-propagator case)
+	 * or a different store if the operator chooses a different topology.
 	 */
 	private final AStore store;
 
 	/**
-	 * Automatic lattice propagator for broadcasting updates
+	 * Propagators for persistence and broadcast. Index 0 is the primary propagator
+	 * (if present) — NodeServer sets a merge callback on it to feed store-backed
+	 * refs into the cursor. Additional propagators handle public/backup broadcast.
 	 */
-	private LatticePropagator<V> propagator;
+	private final List<LatticePropagator> propagators = new ArrayList<>();
+
+	/**
+	 * Context used for all merge operations. Carries signing key and owner
+	 * verifier through the lattice hierarchy. Default is EMPTY (no signing,
+	 * no owner verification).
+	 */
+	private LatticeContext mergeContext = LatticeContext.EMPTY;
 
 	/**
 	 * Message receiver action for handling incoming lattice sync messages
 	 */
-	private Consumer<Message> receiveAction;
-
-	/**
-	 * Set of connected peer Convex instances (maintains persistent connections)
-	 */
-	private Set<Convex> peerNodes;
+	private final java.util.function.Consumer<Message> receiveAction;
 
 	/**
 	 * Port this server is listening on
@@ -104,32 +118,46 @@ public class NodeServer<V extends ACell> implements Closeable {
 	 * Whether the server is currently running
 	 */
 	private boolean running = false;
-	
+
 	/**
-	 * Creates a new NodeServer instance for the specified lattice.
-	 * 
+	 * Creates a new NodeServer with the specified lattice, store and configuration.
+	 *
 	 * @param lattice The lattice instance defining merge semantics
-	 * @param store The store for persisting lattice values
-	 * @param port The port to listen on (null for default/random port)
+	 * @param store The store for inbound message decoding and data requests
+	 * @param config Configuration (or null for defaults)
 	 */
-	public NodeServer(ALattice<V> lattice, AStore store, Integer port) {
+	public NodeServer(ALattice<V> lattice, AStore store, NodeConfig config) {
 		this.lattice = lattice;
 		this.store = store;
-		this.port = port;
-		
-		// Initialize value cursor with lattice zero value
-		V initialValue = lattice.zero();
-		this.cursor = Root.create(initialValue);
-		
-		this.peerNodes = new java.util.HashSet<>();
-		
+		this.config = (config != null) ? config : NodeConfig.create();
+		this.port = this.config.getPort();
+		this.cursor = Cursors.createLattice(lattice);
+
+		// Hook sync callback: cursor.sync() triggers all propagators
+		this.cursor.onSync(value -> {
+			for (LatticePropagator p : propagators) {
+				p.triggerBroadcast(value);
+			}
+			return value;
+		});
+
 		// Initialize receive action for handling incoming messages
 		this.receiveAction = this::handleIncomingMessage;
-		
+
 		// Network server will be created in launch() method
 		this.networkServer = null;
 	}
-	
+
+	/**
+	 * Creates a new NodeServer instance with default configuration.
+	 *
+	 * @param lattice The lattice instance defining merge semantics
+	 * @param store The store for persisting lattice values
+	 */
+	public NodeServer(ALattice<V> lattice, AStore store) {
+		this(lattice, store, (NodeConfig) null);
+	}
+
 	/**
 	 * Launches the node server, binding to the configured port and starting
 	 * network listeners and automatic propagation.
@@ -137,6 +165,7 @@ public class NodeServer<V extends ACell> implements Closeable {
 	 * @throws IOException If an IO error occurs during launch
 	 * @throws InterruptedException If the operation is interrupted
 	 */
+	@SuppressWarnings("unchecked")
 	public void launch() throws IOException, InterruptedException {
 		if (running) {
 			throw new IllegalStateException("NodeServer is already running");
@@ -144,38 +173,126 @@ public class NodeServer<V extends ACell> implements Closeable {
 
 		log.debug("Launching NodeServer on port {}", port);
 
-		// Create Netty server if not already created
-		if (networkServer == null) {
-			networkServer = new NettyServer(port);
-			// Set the receive action for handling incoming messages
-			((NettyServer) networkServer).setReceiveAction(receiveAction);
+		// Create primary propagator if none have been added
+		if (propagators.isEmpty() && store != null) {
+			LatticeConnectionManager connectionManager = new LatticeConnectionManager(store);
+			LatticePropagator primary = new LatticePropagator(store, connectionManager);
+			if (!config.isPersist()) {
+				primary.setPersistInterval(-1); // disable setRootData
+			}
+			propagators.add(primary);
 		}
 
-		// Configure and launch network server
-		if (port != null) {
-			networkServer.setPort(port);
+		// Wire merge callback on primary propagator: feeds store-backed refs
+		// into the cursor via lattice merge, preventing OOM from strong refs
+		if (!propagators.isEmpty()) {
+			propagators.get(0).setMergeCallback(persisted -> {
+				cursor.updateAndGet(current -> {
+					@SuppressWarnings("unchecked")
+					V merged = lattice.merge(mergeContext, current, (V) persisted);
+					return merged;
+				});
+			});
 		}
-		networkServer.launch();
-		port = networkServer.getPort();
+
+		// Restore from primary propagator's store if configured
+		if (config.isRestore() && !propagators.isEmpty()) {
+			ACell restored = propagators.get(0).restore();
+			if (restored != null) {
+				cursor.set((V) restored);
+				log.info("Restored lattice value from store");
+			}
+		}
+
+		// Create and launch network server unless port is negative (local-only mode)
+		boolean localOnly = (port != null && port < 0);
+		if (!localOnly) {
+			if (networkServer == null) {
+				networkServer = new NettyServer(port);
+				// Set the receive action for handling incoming messages
+				networkServer.setReceiveAction(receiveAction);
+			}
+
+			if (port != null) {
+				networkServer.setPort(port);
+			}
+			networkServer.launch();
+			port = networkServer.getPort();
+		}
 
 		running = true;
 
-		// Start automatic lattice propagator
-		propagator = new LatticePropagator<>(this, store);
-		propagator.start();
+		// Register shutdown hook to persist before Etch closes its files
+		Shutdown.addHook(Shutdown.SERVER, this::shutdownPersist);
+
+		// Start all propagator threads
+		for (LatticePropagator p : propagators) {
+			p.start();
+		}
+
+		// Publish node info if publicly accessible
+		publishNodeInfo();
 
 		log.debug("NodeServer started successfully on port {}", port);
 	}
-	
+
+	/**
+	 * Publishes this node's info into the {@code :p2p :nodes} lattice if the node
+	 * is publicly accessible (URL configured) and has a signing key.
+	 *
+	 * <p>Only advertises when both conditions are met:
+	 * <ul>
+	 *   <li>A public URL is configured (never localhost or private addresses)</li>
+	 *   <li>A signing key is available in the merge context</li>
+	 * </ul>
+	 */
+	private void publishNodeInfo() {
+		// Only advertise if we have a public URL
+		AString url = config.getURL();
+		if (url == null) return;
+
+		// Only advertise if we have a signing key
+		AKeyPair keyPair = mergeContext.getSigningKey();
+		if (keyPair == null) return;
+
+		AString type = Strings.create("Convex Lattice Node");
+		String versionStr = Utils.getVersion();
+		AString version = Strings.create(versionStr != null ? versionStr : "unknown");
+
+		AHashMap<Keyword, ACell> nodeInfo = P2PLattice.createNodeInfo(
+			Vectors.of(url), type, version, null);
+
+		AHashMap<ACell, SignedData<ACell>> entry = P2PLattice.createSignedEntry(keyPair, nodeInfo);
+
+		// Navigate to :p2p :nodes and merge the signed entry
+		cursor.path(Keywords.P2P, Keywords.NODES).merge(entry);
+
+		log.info("Published NodeInfo: url={}, type={}, version={}", url, type, version);
+	}
+
 	/**
 	 * Handles an incoming message from a peer node.
 	 * Supports PING, LATTICE_QUERY, LATTICE_VALUE, and DATA_REQUEST message types.
-	 * 
+	 *
 	 * @param message The incoming message
 	 */
 	private void handleIncomingMessage(Message message) {
 		log.debug("Received message from peer: {}", message);
-		
+
+		try {
+			// Decode message payload using node's store before processing
+			message.getPayload(store);
+		} catch (Exception e) {
+			log.warn("Failed to decode incoming message: {}", e.getMessage());
+			try {
+				ACell id = message.getRequestID(); // safe: returns null if undecoded
+				message.returnMessage(Message.createResult(Result.fromException(e).withID(id)));
+			} catch (Exception e2) {
+				// best effort -- connection may be bad
+			}
+			return;
+		}
+
 		try {
 			MessageType type = message.getType();
 			switch (type) {
@@ -195,35 +312,45 @@ public class NodeServer<V extends ACell> implements Closeable {
 				log.debug("Unhandled message type: {}", type);
 				break;
 			}
-		} catch (BadFormatException e) {
-			log.warn("Bad format in message: {}", message, e);
 		} catch (Exception e) {
-			log.warn("Error handling incoming message", e);
+			log.warn("Error handling message: {}", e.getMessage());
+			try {
+				ACell id = message.getRequestID();
+				if (id != null) {
+					message.returnResult(Result.fromException(e));
+				}
+			} catch (Exception e2) {
+				// best effort
+			}
 		}
 	}
-	
+
 	/**
 	 * Processes a PING message by responding with a RESULT containing the same ID.
-	 * 
+	 *
 	 * @param message The PING message
 	 */
 	private void processPing(Message message) {
-		ACell id = message.getID();
+		ACell id = message.getRequestID();
 		if (id == null) {
 			log.warn("PING message missing ID");
 			return;
 		}
-		
+
 		Result result = Result.create(id, Strings.create("PONG"));
 		message.returnResult(result);
 		log.debug("Responded to PING with ID: {}", id);
 	}
-	
+
 	/**
 	 * Processes a LATTICE_QUERY message by returning the value at the specified path.
-	 * 
-	 * Payload format: [:LQ id [*path*]]
-	 * 
+	 *
+	 * <p>Returns the most recently announced (store-backed) value rather than the
+	 * live cursor, so that subsequent DATA_REQUESTs can resolve child cells from
+	 * the same store. Never announces directly — that is the propagator's job.
+	 *
+	 * <p>Payload format: [:LQ id [*path*]]
+	 *
 	 * @param message The LATTICE_QUERY message
 	 * @throws BadFormatException If message format is invalid
 	 */
@@ -231,40 +358,38 @@ public class NodeServer<V extends ACell> implements Closeable {
 		AVector<?> payload = RT.ensureVector(message.getPayload());
 		if (payload == null || payload.count() < 2) {
 			log.warn("Invalid LATTICE_QUERY message format");
-			Result error = Result.create(message.getID(), Strings.create("Invalid LATTICE_QUERY format"), ErrorCodes.ARGUMENT);
+			Result error = Result.create(message.getRequestID(), Strings.create("Invalid LATTICE_QUERY format"), ErrorCodes.ARGUMENT);
 			message.returnResult(error);
 			return;
 		}
-		
+
 		ACell id = payload.get(1);
 		AVector<?> pathVector = RT.ensureVector(payload.count() > 2 ? payload.get(2) : null);
-		
-		// Convert path to array if it's a vector
-		ACell[] path;
-		if (pathVector != null) {
-			path=pathVector.toCellArray();
+
+		// Use the last announced value — already persisted in the store, so
+		// DATA_REQUEST can resolve any child cells the requester needs
+		ACell announced = propagators.isEmpty() ? null : propagators.get(0).getLastAnnouncedValue();
+		ACell valueAtPath;
+		if (pathVector != null && pathVector.count() > 0) {
+			valueAtPath = RT.getIn(announced, pathVector.toCellArray());
 		} else {
-			// Empty path means root with empty cell array
-			path = Cells.EMPTY_ARRAY;
+			valueAtPath = announced;
 		}
-		
-		// Get the value at the path
-		V valueAtPath = cursor.get(path);
-		
+
 		Result result = Result.create(id, valueAtPath);
-		// System.out.println("Lattice query: "+result);
 		message.returnResult(result);
-		log.debug("Responded to LATTICE_QUERY at path with length: {}", path.length);
+		log.debug("Responded to LATTICE_QUERY at path with length: {}",
+			(pathVector != null) ? pathVector.count() : 0);
 	}
-	
+
 	/**
 	 * Processes a DATA_REQUEST message by responding with available data from the store.
 	 * Missing data is signaled by null values in the response, which encode to NULL_ENCODING.
-	 * 
+	 *
 	 * This method is compatible with convex.peer.Server's handling of missing data requests.
-	 * 
+	 *
 	 * Payload format: [:DR id hash1 hash2 ...]
-	 * 
+	 *
 	 * @param message The DATA_REQUEST message
 	 * @throws BadFormatException If message format is invalid
 	 */
@@ -286,19 +411,20 @@ public class NodeServer<V extends ACell> implements Closeable {
 			log.warn("Unable to deliver missing data due to exception:", e);
 		}
 	}
-	
+
 	/**
-	 * Processes a LATTICE_VALUE message with automatic missing data recovery.
+	 * Processes an incoming LATTICE_VALUE message from a peer.
 	 *
-	 * Uses speculative merge in a forked cursor to detect missing data,
-	 * then pulls only what's needed before committing the merge.
+	 * <p>Navigates to the target path via {@code cursor.path()}, merges the
+	 * received value, then calls {@code cursor.sync()} to notify propagators. The
+	 * sync is cheap (non-blocking queue offer) and the {@code LatestUpdateQueue}
+	 * coalesces rapid incoming merges, so high-velocity messages are safe.
 	 *
-	 * Payload format: [:LV [*path*] value]
+	 * <p>Payload format: [:LV [*path*] value]
 	 *
 	 * @param message The LATTICE_VALUE message
 	 * @throws BadFormatException If message format is invalid
 	 */
-	@SuppressWarnings("unchecked")
 	private void processLatticeValue(Message message) throws BadFormatException {
 		AVector<?> payload = RT.ensureVector(message.getPayload());
 		if (payload == null || payload.count() < 2) {
@@ -314,25 +440,16 @@ public class NodeServer<V extends ACell> implements Closeable {
 			return;
 		}
 
-		// Convert path to array
+		// Navigate to target path and merge
 		ACell[] path = extractPath(pathCell);
+		ALatticeCursor<ACell> target = cursor.path(path);
+		mergeIncoming(target, value);
 
-		// Get sub-lattice at path for validation
-		ALattice<?> subLattice = lattice.path(path);
-		if (subLattice == null && path.length > 0) {
-			log.warn("Invalid path for LATTICE_VALUE: path length {}", path.length);
-			return;
-		}
-
-		// Merge with fork + acquire pattern
-		if (path.length == 0) {
-			// Root merge: use fork pattern for automatic recovery
-			V receivedValue = (V) value;
-			mergeValueWithAcquire(receivedValue, message);
-		} else {
-			// Path-specific merge: use existing logic with acquire fallback
-			mergePathWithAcquire(path, value, message);
-		}
+		// Notify propagators that cursor state has changed. This is non-blocking:
+		// cursor.sync() offers the current snapshot to each propagator's LatestUpdateQueue,
+		// which coalesces rapid incoming merges into a single latest value. The
+		// propagator decides when to actually broadcast based on MIN_BROADCAST_DELAY.
+		cursor.sync();
 	}
 
 	/**
@@ -362,339 +479,83 @@ public class NodeServer<V extends ACell> implements Closeable {
 	}
 
 	/**
-	 * Attempts to merge a value at root, forking the cursor to detect missing data
-	 * and acquiring it automatically before committing the merge.
+	 * Merges an incoming value into a lattice cursor.
 	 *
-	 * This implements the "speculative fork + acquire" pattern:
-	 * 1. Fork the cursor (cheap, copy-on-write)
-	 * 2. Attempt merge in fork
-	 * 3. If MissingDataException => acquire missing cells
-	 * 4. Retry merge after acquisition
-	 * 5. Commit successful merge to main cursor
-	 * 6. Trigger immediate delta broadcast
+	 * <p>Does not notify propagators — the caller is responsible for calling
+	 * {@code cursor.sync()} after the merge if relay is needed. This keeps merge
+	 * and propagation as separate concerns.
 	 *
-	 * @param receivedValue Value to merge
-	 * @param message Original message (for tracking sender)
-	 */
-	private void mergeValueWithAcquire(V receivedValue, Message message) {
-		try {
-			// Validate foreign value
-			if (!lattice.checkForeign(receivedValue)) {
-				log.debug("Rejected invalid foreign lattice value");
-				return;
-			}
-
-			// Attempt merge with automatic acquisition on missing data
-			V merged = mergeValueWithRetry(receivedValue, 3);
-			if (merged != null) {
-				cursor.set(merged);
-				log.debug("Merged lattice value successfully");
-
-				// Trigger immediate delta broadcast
-				if (propagator != null) {
-					propagator.triggerBroadcast();
-				}
-			}
-		} catch (Exception e) {
-			log.warn("Error during lattice merge with acquire", e);
-		}
-	}
-
-	/**
-	 * Merges a value with automatic retry on missing data.
-	 *
-	 * @param receivedValue Value to merge
-	 * @param maxRetries Maximum number of acquisition retries
-	 * @return Merged value, or null if merge failed
-	 */
-	private V mergeValueWithRetry(V receivedValue, int maxRetries) {
-		int attempt = 0;
-		while (attempt < maxRetries) {
-			try {
-				// Attempt merge
-				V currentValue = cursor.get();
-				V merged = lattice.merge(currentValue, receivedValue);
-
-				// Try to persist (triggers MissingDataException if data missing)
-				merged = Cells.persist(merged);
-				return merged;
-
-			} catch (MissingDataException e) {
-				attempt++;
-				log.debug("Missing data in lattice merge (attempt {}): {}, acquiring...",
-					attempt, e.getMissingHash());
-
-				// Acquire missing data from peers
-				ACell acquired = acquireFromPeers(e.getMissingHash());
-				if (acquired == null) {
-					log.warn("Could not acquire missing data after {} attempts: {}",
-						attempt, e.getMissingHash());
-					return null;
-				}
-
-				log.debug("Acquired missing data, retrying merge");
-				// Loop will retry merge
-
-			} catch (IOException e) {
-				log.warn("IO error during lattice merge", e);
-				return null;
-			}
-		}
-
-		log.warn("Failed to merge after {} acquisition attempts", maxRetries);
-		return null;
-	}
-
-	/**
-	 * Merges a value at a specific path with acquire fallback.
-	 *
-	 * @param path Path array
-	 * @param value Value to merge at path
-	 * @param message Original message
+	 * @param <T> Type of cursor value
+	 * @param target Lattice cursor at the merge target (from {@code cursor.path(...)})
+	 * @param value Value to merge
 	 */
 	@SuppressWarnings("unchecked")
-	private void mergePathWithAcquire(ACell[] path, ACell value, Message message) {
+	private <T extends ACell> void mergeIncoming(ALatticeCursor<T> target, ACell value) {
 		try {
-			// Get sub-lattice at path
-			ALattice<?> subLattice = lattice.path(path);
-			PathCursor<ACell> pathCursor = PathCursor.create(cursor, path);
-			ACell currentValueAtPath = pathCursor.get();
-
-			boolean merged = false;
-
-			// Check foreign value using sub-lattice
-			if (subLattice != null) {
-				ALattice<ACell> typedSubLattice = (ALattice<ACell>) subLattice;
-				if (!typedSubLattice.checkForeign(value)) {
-					log.debug("Rejected invalid foreign lattice value at path");
-					return;
-				}
-
-				// Attempt merge with retry on missing data
-				ACell mergedValue = mergePathValueWithRetry(typedSubLattice, currentValueAtPath, value, 3);
-				if (mergedValue != null) {
-					pathCursor.set(mergedValue);
-					log.debug("Merged lattice value at path with length: {}", path.length);
-					merged = true;
-				}
-			} else {
-				// No sub-lattice, just set the value
-				pathCursor.set(value);
-				log.debug("Set lattice value at path with length: {}", path.length);
-				merged = true;
-			}
-
-			// Trigger immediate delta broadcast after successful merge
-			if (merged && propagator != null) {
-				propagator.triggerBroadcast();
-			}
+			target.merge((T) value);
 		} catch (Exception e) {
-			log.warn("Error during path merge with acquire", e);
+			log.warn("Error during lattice merge", e);
 		}
 	}
 
 	/**
-	 * Merges a value at path with automatic retry on missing data.
+	 * Pulls the latest lattice value from a specific peer and merges it locally.
 	 *
-	 * @param subLattice Sub-lattice for merge
-	 * @param currentValue Current value at path
-	 * @param receivedValue Received value to merge
-	 * @param maxRetries Maximum acquisition retries
-	 * @return Merged value, or null if failed
-	 */
-	private ACell mergePathValueWithRetry(ALattice<ACell> subLattice, ACell currentValue,
-	                                       ACell receivedValue, int maxRetries) {
-		int attempt = 0;
-		while (attempt < maxRetries) {
-			try {
-				// Attempt merge
-				ACell merged = subLattice.merge(currentValue, receivedValue);
-				merged = Cells.persist(merged);
-				return merged;
-
-			} catch (MissingDataException e) {
-				attempt++;
-				log.debug("Missing data in path merge (attempt {}): {}, acquiring...",
-					attempt, e.getMissingHash());
-
-				ACell acquired = acquireFromPeers(e.getMissingHash());
-				if (acquired == null) {
-					log.warn("Could not acquire missing data: {}", e.getMissingHash());
-					return null;
-				}
-
-				log.debug("Acquired missing data, retrying merge");
-				// Loop will retry
-
-			} catch (IOException e) {
-				log.warn("IO error during path merge", e);
-				return null;
-			}
-		}
-
-		return null;
-	}
-
-	/**
-	 * Acquires missing data from connected peers.
+	 * <p>Delegates to the primary propagator which acquires the full value tree
+	 * into its store, feeds it into the cursor via the merge callback, and queues
+	 * it for broadcast to other peers.
 	 *
-	 * Tries each peer in turn until the data is successfully acquired.
-	 *
-	 * @param missingHash Hash of missing data
-	 * @return Acquired cell, or null if not found
-	 */
-	private ACell acquireFromPeers(Hash missingHash) {
-		for (Convex peer : peerNodes) {
-			if (peer == null || !peer.isConnected()) continue;
-
-			try {
-				// Use Convex.acquire() to pull missing data
-				ACell acquired = peer.acquire(missingHash).get(5, TimeUnit.SECONDS);
-				log.debug("Acquired missing data from peer {}: {}",
-					peer.getHostAddress(), missingHash);
-				return acquired;
-			} catch (Exception e) {
-				// Try next peer
-				log.trace("Could not acquire from peer {}: {}",
-					peer.getHostAddress(), e.getMessage());
-			}
-		}
-
-		log.warn("Could not acquire missing data from any peer: {}", missingHash);
-		return null;
-	}
-	
-	/**
-	 * Syncs lattice value with a remote peer node using the provided Convex connection.
-	 * 
 	 * @param convex Convex connection to the peer node
-	 * @return Future that completes when sync is done, returning the merged value
+	 * @return CompletableFuture that completes with the current cursor value after merge
 	 */
-	public CompletableFuture<V> syncWithPeer(Convex convex) {
-		// Use the sync method which handles the LATTICE_QUERY
-		return sync(convex);
-	}
-	
-	/**
-	 * Syncs with a target node by requesting its root lattice value and merging it.
-	 * 
-	 * Uses the provided Convex connection to send a LATTICE_QUERY with an empty path (root),
-	 * receives the result, merges it with the local value, and returns the merged value.
-	 * 
-	 * @param convex Convex connection to the target node
-	 * @return CompletableFuture that completes with the merged value after sync, or fails if sync fails
-	 */
-	public CompletableFuture<V> sync(Convex convex) {
-		if (convex == null) {
-			return CompletableFuture.failedFuture(new IllegalArgumentException("Convex connection cannot be null"));
+	public CompletableFuture<V> pull(Convex convex) {
+		if (propagators.isEmpty()) {
+			return CompletableFuture.failedFuture(new IllegalStateException("No propagators configured"));
 		}
-		
-		log.debug("Syncing with target node: {}", convex.getHostAddress());
-		
-		return CompletableFuture.supplyAsync(() -> {
-			try {
-				// Check if connection is still valid
-				if (!convex.isConnected()) {
-					throw new RuntimeException("Convex connection is not connected");
-				}
-				
-				// Create LATTICE_QUERY message with empty path (root)
-				// Payload format: [:LQ id []]
-				CVMLong queryId = CVMLong.create(System.currentTimeMillis());
-				AVector<ACell> emptyPath = Vectors.empty();
-				AVector<?> queryPayload = Vectors.create(MessageTag.LATTICE_QUERY, queryId, emptyPath);
-				Message queryMessage = Message.create(MessageType.LATTICE_QUERY, queryPayload);
-				
-				// Send query and wait for result with timeout
-				CompletableFuture<Result> resultFuture = convex.message(queryMessage);
-				Result result = resultFuture.get(10, TimeUnit.SECONDS);
-				
-				// Check if result is an error
-				if (result.isError()) {
-					String errorMsg = result.getValue() != null ? result.getValue().toString() : "Unknown error";
-					log.warn("Sync failed with error: {}", errorMsg);
-					throw new RuntimeException("Sync failed: " + errorMsg);
-				}
-				
-				// Get the received value and merge it
-				ACell receivedValue = result.getValue();
-				
-				// Cast and merge the value
-				@SuppressWarnings("unchecked")
-				V typedValue = (V) receivedValue;
-				V merged = mergeValue(typedValue);
-				
-				log.debug("Sync completed successfully with target node: {}", convex.getHostAddress());
-				return merged;
-				
-			} catch (TimeoutException e) {
-				log.warn("Sync timeout with target node: {}", convex.getHostAddress(), e);
-				throw new RuntimeException("Sync timeout: " + e.getMessage(), e);
-			} catch (InterruptedException e) {
-				Thread.currentThread().interrupt();
-				log.warn("Sync interrupted with target node: {}", convex.getHostAddress(), e);
-				throw new RuntimeException("Sync interrupted", e);
-			} catch (Exception e) {
-				log.warn("Sync failed with target node: {}", convex.getHostAddress(), e);
-				throw new RuntimeException("Sync failed: " + e.getMessage(), e);
-			}
-		});
+		// Delegate to primary propagator; return cursor value after merge callback has run
+		return propagators.get(0).pull(convex).thenApply(v -> cursor.get());
 	}
-	
+
 	/**
-	 * Syncs with all connected peer nodes.
-	 * 
-	 * Calls sync(convex) for each connected peer Convex instance and waits for all to complete.
-	 * 
-	 * @return true if all syncs completed successfully, false otherwise
+	 * Pulls the latest lattice value from all connected peers and merges locally.
+	 *
+	 * <p>Delegates to the primary propagator which queries each peer, acquires
+	 * full value trees, and merges via the merge callback.
+	 *
+	 * @return true if all pulls completed successfully, false otherwise
 	 */
-	public boolean sync() {
-		Set<Convex> peers = getPeerNodes();
-		
-		if (peers.isEmpty()) {
-			log.debug("No peer nodes to sync with");
+	public boolean pull() {
+		if (propagators.isEmpty()) {
+			log.debug("No propagators configured — cannot pull");
 			return true;
 		}
-		
-		log.debug("Syncing with {} peer nodes", peers.size());
-		
-		// Create sync futures for all peers
-		List<CompletableFuture<V>> syncFutures = new ArrayList<>();
-		for (Convex peer : peers) {
-			// Only sync with connected peers
-			if (peer != null && peer.isConnected()) {
-				syncFutures.add(sync(peer));
-			} else {
-				log.debug("Skipping disconnected peer: {}", peer);
-			}
-		}
-		
-		if (syncFutures.isEmpty()) {
-			log.debug("No connected peers to sync with");
-			return true;
-		}
-		
-		// Wait for all syncs to complete (or fail)
-		CompletableFuture<Void> allSyncs = CompletableFuture.allOf(
-			syncFutures.toArray(new CompletableFuture[0])
-		);
-		
-		// Log completion status
-		try {	
-			allSyncs.join();
+
+		try {
+			propagators.get(0).pull().get(30, TimeUnit.SECONDS);
+			// Sync cursor so the full merged state (not just individual pulled
+			// values) gets announced — ensures LATTICE_QUERY returns current data
+			cursor.sync();
 			return true;
 		} catch (Exception e) {
-			log.warn("Sync failed with error: {}", e.getMessage());
+			log.warn("Pull failed: {}", e.getMessage());
 			return false;
 		}
 	}
-	
+
+	/**
+	 * @deprecated Use {@link #pull(Convex)} instead
+	 */
+	@Deprecated
+	public CompletableFuture<V> syncWithPeer(Convex convex) {
+		return pull(convex);
+	}
+
 	/**
 	 * Updates the local lattice value by merging with a received value.
-	 * 
+	 *
 	 * This method performs an atomic merge operation using the cursor's
 	 * updateAndGet method, ensuring thread-safe updates.
-	 * 
+	 *
 	 * @param receivedValue The value received from a peer
 	 * @return The merged value, or null if merge was not performed (e.g., invalid foreign value)
 	 */
@@ -702,137 +563,73 @@ public class NodeServer<V extends ACell> implements Closeable {
 		if (receivedValue == null) {
 			return null;
 		}
-		
+
 		// Validate foreign value before attempting merge
 		if (!lattice.checkForeign(receivedValue)) {
 			log.debug("Rejected invalid foreign lattice value");
 			return null;
 		}
-		
-		// Atomically update the cursor by merging the current value with the received value
-		// This ensures thread-safe updates even if multiple threads are merging concurrently
-		V merged = cursor.updateAndGet(currentValue -> {
-			V newValue= lattice.merge(currentValue, receivedValue);
-			// if (currentValue!=newValue) System.out.println("NodeServer Merge:\n"+currentValue+" => "+newValue);
-			return newValue;
-		});
-		
-		log.debug("Merged lattice value atomically");
-		
-		// TODO: Store new value in store if it's a new hash
-		// This would involve checking if the merged value's hash is already in the store
-		
-		return merged;
+
+		return cursor.merge(receivedValue);
 	}
-	
+
 	/**
-	 * Broadcasts the current lattice value to all connected peer nodes.
-	 */
-	public void broadcastValue() {
-		V currentValue = cursor.get();
-		if (currentValue == null) {
-			log.debug("No value to broadcast");
-			return;
-		}
-		
-		log.debug("Broadcasting lattice value to {} peers", peerNodes.size());
-		
-		// Send LATTICE_VALUE message to all connected peers
-		for (Convex peer : peerNodes) {
-			if (peer != null && peer.isConnected()) {
-				try {
-					// Create LATTICE_VALUE message with empty path (root) and current value
-					// Payload format: [:LV [] value]
-					AVector<ACell> emptyPath = Vectors.empty();
-					AVector<?> valuePayload = Vectors.create(MessageTag.LATTICE_VALUE, emptyPath, currentValue);
-					Message valueMessage = Message.create(MessageType.LATTICE_VALUE, valuePayload);
-					
-					// Send message asynchronously (fire and forget)
-					peer.message(valueMessage);
-					log.debug("Broadcasted lattice value to peer: {}", peer.getHostAddress());
-				} catch (Exception e) {
-					log.debug("Failed to broadcast to peer: {}", peer.getHostAddress(), e);
-				}
-			}
-		}
-	}
-	
-	/**
-	 * Adds a peer Convex connection.
-	 * 
+	 * Adds a peer connection to the primary propagator.
+	 *
 	 * @param convex Convex connection to the peer node
+	 * @deprecated Use {@code getPropagator().addPeer(convex)} directly
 	 */
+	@Deprecated
 	public void addPeer(Convex convex) {
-		if (convex == null) {
-			log.warn("Attempted to add null peer connection");
+		if (propagators.isEmpty()) {
+			log.warn("Cannot add peer: no propagators configured");
 			return;
 		}
-		peerNodes.add(convex);
-		log.debug("Added peer: {}", convex.getHostAddress());
+		propagators.get(0).addPeer(convex);
 	}
-	
+
 	/**
-	 * Removes a peer Convex connection.
-	 * 
+	 * Removes a peer connection from the primary propagator.
+	 *
 	 * @param convex Convex connection to remove
+	 * @deprecated Use {@code getPropagator().removePeer(convex)} directly
 	 */
+	@Deprecated
 	public void removePeer(Convex convex) {
-		if (convex == null) {
-			return;
-		}
-		boolean removed = peerNodes.remove(convex);
-		if (removed) {
-			log.debug("Removed peer: {}", convex.getHostAddress());
-		}
+		if (propagators.isEmpty()) return;
+		propagators.get(0).removePeer(convex);
 	}
-	
+
 	/**
 	 * Gets the current local lattice value.
-	 * 
+	 *
 	 * @return Current local lattice value
 	 */
 	public V getLocalValue() {
 		return cursor.get();
 	}
-	
+
 	/**
 	 * Gets the cursor for the lattice value.
-	 * 
+	 *
 	 * @return The value cursor
 	 */
-	public ACursor<V> getCursor() {
+	public ALatticeCursor<V> getCursor() {
 		return cursor;
 	}
 
 	/**
-	 * Updates the local lattice value and triggers an immediate delta broadcast.
+	 * Sets the merge context used for all lattice merge operations.
+	 * The context carries signing keys and owner verification through the
+	 * lattice hierarchy (e.g. OwnerLattice, SignedLattice).
 	 *
-	 * This is the recommended way to update the root lattice value from local code,
-	 * as it ensures the change is immediately propagated to all connected peers.
-	 *
-	 * @param newValue The new lattice value to set
+	 * @param context Merge context (must not be null — use LatticeContext.EMPTY for default)
 	 */
-	public void updateLocal(V newValue) {
-		cursor.set(newValue);
-		if (propagator != null) {
-			propagator.triggerBroadcast();
-		}
-	}
-
-	/**
-	 * Updates the local lattice value at a specific path and triggers an immediate delta broadcast.
-	 *
-	 * This is the recommended way to update path-specific values from local code,
-	 * as it ensures the change is immediately propagated to all connected peers.
-	 *
-	 * @param value The value to set at the path
-	 * @param path Path keys (varargs)
-	 */
-	public void updateLocalPath(ACell value, ACell... path) {
-		cursor.set(value, path);
-		if (propagator != null) {
-			propagator.triggerBroadcast();
-		}
+	public void setMergeContext(LatticeContext context) {
+		if (context == null) throw new IllegalArgumentException("Use LatticeContext.EMPTY instead of null");
+		this.mergeContext = context;
+		// Propagate to lattice cursor so path-navigated cursors inherit it
+		cursor.withContext(context);
 	}
 
 	/**
@@ -843,10 +640,10 @@ public class NodeServer<V extends ACell> implements Closeable {
 	public Integer getPort() {
 		return port;
 	}
-	
+
 	/**
 	 * Gets the host address this server is bound to.
-	 * 
+	 *
 	 * @return The host address, or null if server is not launched
 	 */
 	public InetSocketAddress getHostAddress() {
@@ -855,50 +652,119 @@ public class NodeServer<V extends ACell> implements Closeable {
 		}
 		return null;
 	}
-	
+
 	/**
 	 * Gets the store instance used by this server.
-	 * 
+	 *
 	 * @return Store instance
 	 */
 	public AStore getStore() {
 		return store;
 	}
-	
+
+	/**
+	 * Gets the configuration for this server.
+	 *
+	 * @return NodeConfig instance
+	 */
+	public NodeConfig getConfig() {
+		return config;
+	}
+
 	/**
 	 * Gets the lattice instance used by this server.
-	 * 
+	 *
 	 * @return Lattice instance
 	 */
 	public ALattice<V> getLattice() {
 		return lattice;
 	}
-	
+
 	/**
 	 * Checks if the server is currently running.
-	 * 
+	 *
 	 * @return true if running, false otherwise
 	 */
 	public boolean isRunning() {
 		return running;
 	}
-	
+
 	/**
-	 * Gets the set of connected peer Convex instances.
+	 * Gets the set of connected peer Convex instances from the primary propagator.
 	 *
-	 * @return Set of peer Convex connections
+	 * @return Set of peer Convex connections (defensive copy)
+	 * @deprecated Use {@code getPropagator().getPeers()} directly
 	 */
+	@Deprecated
 	public Set<Convex> getPeerNodes() {
-		return new java.util.HashSet<>(peerNodes);
+		if (propagators.isEmpty()) return java.util.Collections.emptySet();
+		return propagators.get(0).getPeers();
 	}
 
 	/**
-	 * Gets the automatic lattice propagator instance.
+	 * Gets the connection manager from the primary propagator.
 	 *
-	 * @return LatticePropagator instance, or null if server is not launched
+	 * @return LatticeConnectionManager instance, or null if no propagators
+	 * @deprecated Access via {@code getPropagator().getConnectionManager()} directly
 	 */
-	public LatticePropagator<V> getPropagator() {
-		return propagator;
+	@Deprecated
+	public LatticeConnectionManager getConnectionManager() {
+		return propagators.isEmpty() ? null : propagators.get(0).getConnectionManager();
+	}
+
+	/**
+	 * Gets the primary propagator (index 0).
+	 *
+	 * @return Primary LatticePropagator instance, or null if none configured
+	 */
+	public LatticePropagator getPropagator() {
+		return propagators.isEmpty() ? null : propagators.get(0);
+	}
+
+	/**
+	 * Gets all propagators managed by this server.
+	 *
+	 * @return List of propagators (index 0 is primary if present)
+	 */
+	public List<LatticePropagator> getPropagators() {
+		return propagators;
+	}
+
+	/**
+	 * Adds a propagator to this server. The first added propagator becomes the
+	 * primary (index 0) — NodeServer will set a merge callback on it during
+	 * launch to feed store-backed refs into the cursor.
+	 *
+	 * @param propagator The propagator to add
+	 */
+	public void addPropagator(LatticePropagator propagator) {
+		propagators.add(propagator);
+	}
+
+	/**
+	 * Persists the given lattice value to the primary propagator's store.
+	 * Delegates to the primary propagator's explicit persist method.
+	 *
+	 * @param value The lattice value to persist
+	 * @throws IOException If an IO error occurs during persistence
+	 */
+	public void persistSnapshot(ACell value) throws IOException {
+		if (!config.isPersist()) return;
+		if (propagators.isEmpty()) return;
+		propagators.get(0).persist(value);
+	}
+
+	/**
+	 * Persists final state during JVM shutdown, before Etch closes its files.
+	 * Called by the {@link Shutdown} hook at {@link Shutdown#SERVER} priority.
+	 */
+	private void shutdownPersist() {
+		if (!running) return;
+		try {
+			close();
+		} catch (IOException e) {
+			log.warn("Error during shutdown persist", e);
+		}
 	}
 
 	@Override
@@ -911,28 +777,18 @@ public class NodeServer<V extends ACell> implements Closeable {
 
 		running = false;
 
-		// Stop automatic propagator first
-		if (propagator != null) {
-			propagator.close();
+		// Final sync: trigger all propagators with current value and wait for drain.
+		// This guarantees persistence on the primary propagator (announce + setRootData
+		// + mergeCallback). Broadcast to peers is best-effort.
+		V snapshot = cursor.get();
+		for (LatticePropagator p : propagators) {
+			p.triggerAndClose(snapshot);
 		}
 
 		if (networkServer != null) {
 			networkServer.close();
 		}
 
-		// Close all peer connections
-		for (Convex peer : peerNodes) {
-			if (peer != null) {
-				try {
-					peer.close();
-					log.trace("Closed peer connection: {}", peer.getHostAddress());
-				} catch (Exception e) {
-					log.warn("Error closing peer connection: {}", peer.getHostAddress(), e);
-				}
-			}
-		}
-		peerNodes.clear();
 		log.debug("NodeServer closed");
 	}
 }
-
