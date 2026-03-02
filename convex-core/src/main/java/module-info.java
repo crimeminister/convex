@@ -54,12 +54,14 @@ module convex.core {
 	exports convex.core.json;
 	exports convex.auth.did;
 	exports convex.auth.jwt;
+	exports convex.auth.ucan;
 	exports convex.etch;
 	exports convex.lattice;
 	exports convex.lattice.generic;
 	exports convex.lattice.cursor;
 	exports convex.lattice.data;
 	exports convex.lattice.fs;
+	exports convex.lattice.fs.impl;
 	exports convex.lattice.kv;
 
 	requires transitive org.antlr.antlr4.runtime;

@@ -17,7 +17,6 @@ import convex.core.data.impl.StringStore;
 import convex.core.data.prim.CVMBool;
 import convex.core.data.prim.CVMChar;
 import convex.core.data.util.BlobBuilder;
-import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.Panic;
 import convex.core.lang.RT;
 import convex.core.util.Utils;
@@ -39,6 +38,8 @@ public class Strings {
 	public static final StringShort BAD_SIGNATURE = StringShort.create("Bad Signature!");
 	public static final StringShort BAD_FORMAT = StringShort.create("Bad Message Format!");
 	public static final StringShort SERVER_LOADED = StringShort.create("Trx overload");
+	public static final StringShort UNRECOGNISED_MESSAGE_TYPE = StringShort.create("Unrecognised message type");
+	public static final StringShort UNEXPECTED_RESULT = StringShort.create("Unexpected result message");
 	
 
 	public static final int MAX_ENCODING_LENGTH = Math.max(StringShort.MAX_ENCODING_LENGTH,StringTree.MAX_ENCODING_LENGTH);

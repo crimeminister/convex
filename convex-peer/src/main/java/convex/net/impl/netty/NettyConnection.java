@@ -16,7 +16,7 @@ import convex.core.data.Vectors;
 import convex.core.message.Message;
 import convex.core.message.MessageType;
 import convex.core.util.Shutdown;
-import convex.net.AConnection;
+import convex.core.message.AConnection;
 import convex.peer.Config;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.Channel;
@@ -31,6 +31,7 @@ import io.netty.channel.WriteBufferWaterMark;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
+import io.netty.util.concurrent.DefaultThreadFactory;
 
 public class NettyConnection extends AConnection {
 
@@ -68,7 +69,9 @@ public class NettyConnection extends AConnection {
 				return workerGroup;
 			// Worker group handles NIO I/O for all connections. 2 threads is sufficient
 			// since actual message processing happens on virtual threads.
-			workerGroup = new MultiThreadIoEventLoopGroup(2, NioIoHandler.newFactory());
+			// Daemon threads allow the JVM to exit when all user threads finish.
+			DefaultThreadFactory tf = new DefaultThreadFactory("convex-netty", true);
+			workerGroup = new MultiThreadIoEventLoopGroup(2, tf, NioIoHandler.newFactory());
 
 			Shutdown.addHook(Shutdown.CONNECTION, () -> {
 				EventLoopGroup wg = workerGroup;
@@ -129,6 +132,9 @@ public class NettyConnection extends AConnection {
 
 		NettyConnection client = new NettyConnection(chan,inbound);
 
+		// Set connection on inbound handler so received messages can route responses back
+		inbound.setConnection(client);
+
 		// Pipeline: writability handler triggers drain, inbound handler decodes, outbound handler encodes
 		f.channel().pipeline().addLast(
 			new ChannelInboundHandlerAdapter() {
@@ -155,10 +161,15 @@ public class NettyConnection extends AConnection {
 	/**
 	 * Sends a message, blocking until the message can be queued or timeout.
 	 * Safe to call from virtual threads.
+	 *
+	 * <p>This is an outbound client connection, so blocking with a bounded
+	 * timeout is acceptable — the caller's virtual thread parks while the
+	 * outbound queue drains.</p>
 	 */
 	@Override
 	public boolean sendMessage(Message m) {
-		if (!channel.isActive()) return false;
+		Channel ch = channel;
+		if (ch == null || !ch.isActive()) return false;
 		try {
 			boolean queued = outbound.offer(m, Config.DEFAULT_CLIENT_TIMEOUT,
 				TimeUnit.MILLISECONDS);
@@ -171,11 +182,12 @@ public class NettyConnection extends AConnection {
 	}
 
 	/**
-	 * Tries to send a message without blocking. Returns immediately.
+	 * Non-blocking send. Returns immediately if the outbound queue is full.
 	 */
 	@Override
 	public boolean trySendMessage(Message m) {
-		if (!channel.isActive()) return false;
+		Channel ch = channel;
+		if (ch == null || !ch.isActive()) return false;
 		boolean queued = outbound.offer(m);
 		if (queued) flushPending();
 		return queued;
@@ -185,7 +197,9 @@ public class NettyConnection extends AConnection {
 	 * Schedule a drain on the Netty event loop.
 	 */
 	private void flushPending() {
-		channel.eventLoop().execute(this::doFlush);
+		Channel ch = channel;
+		if (ch == null) return;
+		ch.eventLoop().execute(this::doFlush);
 	}
 
 	/**
@@ -197,15 +211,17 @@ public class NettyConnection extends AConnection {
 	 * syscall overhead dramatically under load.
 	 */
 	private void doFlush() {
+		Channel ch = channel;
+		if (ch == null) return;
 		int count = 0;
-		while (channel.isWritable() && channel.isActive()) {
+		while (ch.isWritable() && ch.isActive()) {
 			Message m = outbound.poll();
 			if (m == null) break;
-			channel.write(m);
+			ch.write(m);
 			count++;
 		}
 		if (count > 0) {
-			channel.flush();
+			ch.flush();
 		}
 	}
 

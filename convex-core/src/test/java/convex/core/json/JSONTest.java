@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import java.io.IOException;
 import java.math.BigInteger;
@@ -40,6 +41,24 @@ import convex.core.util.JSON;
 import convex.core.util.Utils;
 
 public class JSONTest {
+
+	/** Quick test function for error messages */
+	public static void main(String[] args) {
+		String[] inputs = {
+			"{\"a\":{\"b\":", "{\"a\":{", "{\"a\":[}", "[1,2,",
+			"{\"a\": }", "}{", "{\"a\":\"b\"}}", "", "{true: 1}",
+			"{\n  \"a\": 1,\n  \"b\": }\n}",
+		};
+		for (String input : inputs) {
+			try { JSON5Reader.read(input); System.out.println("  OK: \"" + input + "\"");
+			} catch (ParseException e) { System.out.println("  \"" + input + "\" => " + e.getMessage()); }
+		}
+		System.out.println("--- JSONReader ---");
+		for (String input : inputs) {
+			try { JSONReader.read(input); System.out.println("  OK: \"" + input + "\"");
+			} catch (ParseException e) { System.out.println("  \"" + input + "\" => " + e.getMessage()); }
+		}
+	}
 
 	@Test public void testPrint() {
 		assertEquals("null",JSON.toString(null));
@@ -160,18 +179,50 @@ public class JSONTest {
 		assertEquals(Maps.of("[\"\" 3]",4), RT.cvm(JSON.json(Maps.of(Vectors.of("",3),4))));
 	}
 	
-	@Test 
+	@Test
 	public void testJSONObjects() {
 		assertEquals(Maps.of("1",2), JSONReader.read("{\"1\" : 2}"));
 		assertEquals(CVMLong.ONE,JSONReader.read("1"));
 		assertNull(JSONReader.read("  null"));
 		assertEquals(Strings.COLON,JSONReader.read("\":\""));
 		assertEquals(Vectors.of(1,2),JSONReader.read("[1,2]"));
-		
-		JSONReader.read("{\"a\":[{\"b\":\"c\"},2]}");
-		
-		assertThrows(ParseException.class,()->JSONReader.readObject("[]")); // not an object
 
+		JSONReader.read("{\"a\":[{\"b\":\"c\"},2]}");
+
+		assertThrows(ParseException.class,()->JSONReader.readObject("[]")); // not an object
+	}
+
+	/**
+	 * Malformed JSON via JSONReader must throw ParseException, never internal errors.
+	 * Same ANTLR listener unwinding issue as JSON5Reader.
+	 */
+	@Test
+	public void testMalformedJSONReaderNeverThrowsInternalError() {
+		String[] malformed = {
+			"{\"a\":{\"b\":",
+			"{\"a\":{",
+			"{}}}",
+			"{\"a\":\"b\"}}",
+			"}{",
+			"{",
+			"}",
+			"",
+			"   ",
+			"{\"a\":[}",
+			"[{]",
+			"{\"a\":{\"b\":{\"c\":",
+		};
+
+		for (String input : malformed) {
+			try {
+				JSONReader.read(input);
+			} catch (ParseException e) {
+				// Expected
+			} catch (Exception e) {
+				fail("JSONReader.read(\"" + input + "\") threw " + e.getClass().getSimpleName()
+					+ " instead of ParseException: " + e.getMessage());
+			}
+		}
 	}
 	
 	@Test 
@@ -263,7 +314,84 @@ public class JSONTest {
 		JSON.parseJSON5(s);
 	}
 	
-	@Test 
+	@Test
+	public void testJSON5NestedObjects() {
+		// Nested objects — regression tests for JSON5Reader stack handling
+		assertEquals(
+			Maps.of(Strings.create("a"), Maps.of(Strings.create("b"), Strings.create("c"))),
+			JSON.parseJSON5("{\"a\":{\"b\":\"c\"}}")
+		);
+
+		// Nested with trailing space in string value
+		assertNotNull(JSON.parseJSON5("{\"x\":{\"y\":\"hello \"}}"));
+
+		// Multiple keys in inner object
+		assertNotNull(JSON.parseJSON5("{\"op\":\"test\",\"input\":{\"a\":\"1\",\"b\":\"2\"}}"));
+
+		// Triple nesting
+		assertNotNull(JSON.parseJSON5("{\"a\":{\"b\":{\"c\":\"d\"}}}"));
+
+		// Realistic invoke payload (the pattern that triggered NoSuchElementException in production)
+		String invoke = "{\"operation\":\"jvm:stringConcat\",\"input\":{\"first\":\"Hello \",\"second\":\"World!\"}}";
+		ACell result = JSON.parseJSON5(invoke);
+		assertNotNull(result);
+	}
+
+	/**
+	 * Malformed JSON must always throw ParseException, never NoSuchElementException
+	 * or other internal errors. The JSON5Reader uses a stack-based listener and
+	 * ANTLR error recovery can cause unbalanced enter/exit events.
+	 */
+	@Test
+	public void testMalformedJSONNeverThrowsInternalError() {
+		String[] malformed = {
+			// Extra closing braces — could cause extra exitObj without matching enterObj
+			"{\"a\":\"b\"}}",
+			"{}}}",
+			"{\"a\":{\"b\":\"c\"}}}",
+			"[1,2]]}",
+			// Mismatched braces/brackets
+			"{\"a\":[}",
+			"[{]",
+			"{]",
+			"[}",
+			// Truncated nested objects
+			"{\"a\":{\"b\":",
+			"{\"a\":{",
+			"{\"a\":[1,",
+			// Random garbage mixed with structure
+			"}{",
+			"][",
+			"}}{{",
+			"]][[",
+			// Empty and whitespace-only
+			"",
+			"   ",
+			// Lone delimiters
+			"}",
+			"]",
+			":",
+			",",
+			// Deeply nested unclosed
+			"{{{",
+			"[[[",
+			"{\"a\":{\"b\":{\"c\":",
+		};
+
+		for (String input : malformed) {
+			try {
+				JSON.parseJSON5(input);
+				// If it parses without error, that's fine (some of these might be valid edge cases)
+			} catch (ParseException e) {
+				// Expected — malformed input should throw ParseException
+			} catch (Exception e) {
+				fail("parseJSON5(\"" + input + "\") threw " + e.getClass().getSimpleName()
+					+ " instead of ParseException: " + e.getMessage());
+			}
+		}
+	}
+
+	@Test
 	public void testJSON5Example() throws IOException {
 		String json5=Utils.readString(Utils.getResourceAsStream("/utils/test.json5"));
 		

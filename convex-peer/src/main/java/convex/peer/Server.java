@@ -38,14 +38,15 @@ import convex.core.data.Keyword;
 import convex.core.data.Maps;
 import convex.core.data.Ref;
 import convex.core.data.SignedData;
+import convex.core.data.AString;
 import convex.core.data.Strings;
 import convex.core.data.Vectors;
 import convex.core.data.prim.CVMLong;
-import convex.core.exceptions.BadFormatException;
 import convex.core.exceptions.InvalidDataException;
 import convex.core.exceptions.MissingDataException;
 import convex.core.init.Init;
 import convex.core.lang.RT;
+import convex.core.message.AConnection;
 import convex.core.message.Message;
 import convex.core.message.MessageType;
 import convex.core.store.AStore;
@@ -132,6 +133,11 @@ public class Server implements Closeable {
 	 * Executes read-only queries against the latest consensus state, independently of transaction processing.
 	 */
 	protected final QueryHandler queryHandler=new QueryHandler(this);
+
+	/**
+	 * Verifies untrusted inbound connections via server-initiated challenge/response.
+	 */
+	private final InboundVerifier inboundVerifier = new InboundVerifier(this);
 
 	/**
 	 * Pre-allocated retry predicates for backpressure. These are returned by
@@ -239,9 +245,9 @@ public class Server implements Closeable {
 			}
 			
 			Hash beliefHash=RT.ensureHash(status.get(Keywords.BELIEF));
-			AccountKey remotePeerKey=RT.ensureAccountKey(Keywords.PEER);
+			AccountKey remotePeerKey=RT.ensureAccountKey(status.get(Keywords.PEER));
 			Hash genesisHash=RT.ensureHash(status.get(Keywords.GENESIS));
-			Hash stateHash=RT.ensureHash(Keywords.STATE);
+			Hash stateHash=RT.ensureHash(status.get(Keywords.STATE));
 			
 			if (genesisHash==null) {
 				throw new LaunchException("Remote peer did not provide genesis hash");
@@ -441,22 +447,24 @@ public class Server implements Closeable {
 			case CHALLENGE:
 				processChallenge(m);
 				return null;
-			case RESPONSE:
-				processResponse(m);
-				return null;
 			case GOODBYE:
 				processClose(m);
 				return null;
 			case STATUS:
 				processStatus(m);
 				return null;
+			case PING:
+				processPing(m);
+				return null;
 			case COMMAND:
 				return null;
 			case RESULT:
-				log.debug("unexpected Result received");
+				// Check if this is a response to a server-initiated verification
+				if (inboundVerifier.handleResult(m)) return null;
+				returnError(m,ErrorCodes.UNEXPECTED,Strings.UNEXPECTED_RESULT);
 				return null;
 			default:
-				log.debug("Unrecognised message type: {}", type);
+				returnError(m,ErrorCodes.FORMAT,Strings.UNRECOGNISED_MESSAGE_TYPE);
 				return null;
 			}
 		} catch (MissingDataException e) {
@@ -523,6 +531,19 @@ public class Server implements Closeable {
 	}
 
 	/**
+	 * Best-effort error return to the sender of a message.
+	 * Silently ignores failures (message may not have a return handler or ID).
+	 */
+	private boolean returnError(Message m, Keyword errorCode, AString message) {
+		try {
+			return m.returnResult(Result.error(errorCode, message).withSource(SourceCodes.PEER));
+		} catch (Exception e) {
+			// best effort — some message types don't have return handlers
+			return false;
+		}
+	}
+
+	/**
 	 * Gets the number of belief broadcasts made by this Peer
 	 * @return Count of broadcasts from this Server instance
 	 */
@@ -558,6 +579,15 @@ public class Server implements Closeable {
 		return offered;
 	}
 	
+	/**
+	 * Responds to a PING with the peer's current timestamp.
+	 */
+	protected void processPing(Message m) {
+		ACell id = m.getRequestID();
+		if (id == null) return;
+		m.returnResult(Result.create(id, CVMLong.create(Utils.getCurrentTimestamp())));
+	}
+
 	protected void processStatus(Message m) {
 		// We can ignore payload
 		ACell reply = getStatusData();
@@ -610,20 +640,30 @@ public class Server implements Closeable {
 
 	private void processChallenge(Message m) {
 		manager.processChallenge(m, getPeer());
+		// If they're verifying us, also try to verify them
+		AConnection conn = m.getConnection();
+		if (conn != null) inboundVerifier.maybeStart(conn);
 	}
 
-	protected void processResponse(Message m) throws BadFormatException {
-		manager.processResponse(m, getPeer());
-	}
 
 
 	/**
-	 * Process an incoming message that represents a Belief
+	 * Process an incoming message that represents a Belief.
+	 * Trusted connections go to the main queue; untrusted go to a small
+	 * best-effort queue and trigger server-initiated verification.
 	 * @param m Belief message to process
 	 */
 	protected void processBelief(Message m) {
-		if (!propagator.queueBelief(m)) {
-			log.warn("Incoming belief queue full");
+		AConnection conn=m.getConnection();
+		if (conn==null || conn.isTrusted()) {
+			// Trusted or local (ConvexLocal) — main queue
+			if (!propagator.queueBelief(m)) {
+				log.warn("Incoming belief queue full");
+			}
+		} else {
+			// Untrusted inbound — best-effort queue, trigger verification
+			propagator.queueUntrustedBelief(m);
+			inboundVerifier.maybeStart(conn);
 		}
 	}
 
@@ -633,6 +673,11 @@ public class Server implements Closeable {
 	 */
 	public Integer getPort() {
 		return nio.getPort();
+	}
+
+	/** Returns the number of active inbound client connections. */
+	public int getInboundConnectionCount() {
+		return nio.getClientConnectionCount();
 	}
 
 	/**
@@ -770,6 +815,16 @@ public class Server implements Closeable {
 		return manager;
 	}
 
+	/** Number of inbound connections successfully verified since startup. */
+	public long getInboundVerifiedCount() {
+		return inboundVerifier.getVerifiedCount();
+	}
+
+	/** Number of inbound verifications currently in progress. */
+	public int getInboundPendingVerifications() {
+		return inboundVerifier.getPendingCount();
+	}
+
 	public HashMap<Keyword, Object> getConfig() {
 		return config;
 	}
@@ -783,10 +838,15 @@ public class Server implements Closeable {
 	}
 
 	/**
-	 * Sets the desired host name for this Server
-	 * @param string Desired host name String, e.g. "my-domain.com:12345"
+	 * Sets the desired URL for this Server. Bare host:port values will be
+	 * normalised to tcp:// URLs, e.g. "my-domain.com:12345" becomes
+	 * "tcp://my-domain.com:12345".
+	 * @param string Desired URL String
 	 */
 	public void setHostname(String string) {
+		if (string!=null && !string.contains("://")) {
+			string = "tcp://" + string;
+		}
 		config.put(Keywords.URL, string);
 	}
 

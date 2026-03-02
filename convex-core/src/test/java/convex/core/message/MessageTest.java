@@ -1,6 +1,7 @@
 package convex.core.message;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -186,7 +187,7 @@ public class MessageTest {
 	
 	@Test public void testCoreDefExtension() throws BadFormatException {
 		// This was a regression at one point where Local was badly re-encoded
-		Message m=Message.create(null,Reader.read("#[e645]"));
+		Message m=Message.create((MessageType)null,Reader.read("#[e645]"));
 		doMessageTest(m);
 	}
 	
@@ -264,6 +265,149 @@ public class MessageTest {
 		assertEquals(RT.cvm(3),received.getID());
 	}
 
+	// ---- Connection integration tests ----
+
+	@Test public void testLocalConnection() {
+		// LocalConnection paired channel delivers messages to the paired end's handler
+		java.util.concurrent.atomic.AtomicReference<Message> received = new java.util.concurrent.atomic.AtomicReference<>();
+		LocalConnection clientEnd = LocalConnection.create(m -> {
+			received.set(m);
+			return true;
+		});
+
+		assertNull(clientEnd.getRemoteAddress());
+		assertFalse(clientEnd.isClosed());
+		assertFalse(clientEnd.isTrusted());
+		assertEquals(0, clientEnd.getReceivedCount());
+
+		// Sending from client end delivers to handler via paired end
+		Message result = Message.createResult(Result.create(CVMLong.ONE, CVMLong.create(42), null));
+		assertTrue(clientEnd.sendMessage(result));
+		assertNotNull(received.get());
+		assertEquals(result.getPayload(), received.get().getPayload());
+
+		// Received message carries the paired end's connection
+		assertSame(clientEnd.getPaired(), received.get().getConnection());
+
+		// close is a no-op
+		clientEnd.close();
+		assertFalse(clientEnd.isClosed());
+	}
+
+	@Test public void testLocalConnectionBidirectional() {
+		// Both ends of a pair can send and receive
+		java.util.concurrent.atomic.AtomicReference<Message> receivedAtA = new java.util.concurrent.atomic.AtomicReference<>();
+		java.util.concurrent.atomic.AtomicReference<Message> receivedAtB = new java.util.concurrent.atomic.AtomicReference<>();
+		LocalConnection endA = LocalConnection.createPair(
+			m -> { receivedAtA.set(m); return true; },
+			m -> { receivedAtB.set(m); return true; }
+		);
+		LocalConnection endB = endA.getPaired();
+
+		// Send from A → received at B (via B's handler)
+		Message m1 = Message.createResult(Result.create(CVMLong.ONE, CVMLong.create(1), null));
+		assertTrue(endA.sendMessage(m1));
+		assertNotNull(receivedAtB.get());
+		assertSame(endB, receivedAtB.get().getConnection());
+
+		// Send from B → received at A (via A's handler)
+		Message m2 = Message.createResult(Result.create(CVMLong.create(2), CVMLong.create(2), null));
+		assertTrue(endB.sendMessage(m2));
+		assertNotNull(receivedAtA.get());
+		assertSame(endA, receivedAtA.get().getConnection());
+	}
+
+	@Test public void testLocalConnectionReturnOnly() {
+		// Return-only pair: client end can send, but paired end (no handler on client) cannot
+		LocalConnection clientEnd = LocalConnection.create(m -> true);
+		LocalConnection serverEnd = clientEnd.getPaired();
+
+		// Client can send (to server's handler)
+		assertTrue(clientEnd.sendMessage(Message.createResult(Result.create(CVMLong.ONE, CVMLong.ONE, null))));
+
+		// Server cannot send back via sendMessage (client has null handler)
+		assertFalse(serverEnd.sendMessage(Message.createResult(Result.create(CVMLong.ONE, CVMLong.ONE, null))));
+	}
+
+	@Test public void testMessageWithConnection() throws BadFormatException {
+		// Message.withConnection() sets the connection for return routing
+		java.util.concurrent.atomic.AtomicReference<Message> received = new java.util.concurrent.atomic.AtomicReference<>();
+		LocalConnection clientEnd = LocalConnection.create(m -> {
+			received.set(m);
+			return true;
+		});
+
+		Message m = Message.createQuery(1, "(+ 1 2)", Address.ZERO);
+		assertNull(m.getConnection());
+
+		Message mc = m.withConnection(clientEnd);
+		assertSame(clientEnd, mc.getConnection());
+		assertSame(mc, mc.withConnection(clientEnd)); // same connection, same message
+
+		// returnResult should route through the connection to the handler
+		Result r = Result.create(CVMLong.ONE, CVMLong.create(3), null);
+		mc.returnResult(r);
+		assertNotNull(received.get());
+		assertEquals(MessageType.RESULT, received.get().getType());
+	}
+
+	@Test public void testReturnMessageUsesConnection() {
+		// returnMessage routes through the connection
+		java.util.concurrent.atomic.AtomicBoolean connUsed = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+		LocalConnection clientEnd = LocalConnection.create(m -> { connUsed.set(true); return true; });
+
+		Message m = Message.createQuery(1, "(+ 1 2)", Address.ZERO);
+		Message mc = m.withConnection(clientEnd);
+
+		Message result = Message.createResult(Result.create(CVMLong.ONE, CVMLong.create(3), null));
+		mc.returnMessage(result);
+
+		assertTrue(connUsed.get(), "Connection should be used for return routing");
+	}
+
+	@Test public void testCloseConnectionActuallyCloses() {
+		java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean(false);
+		AConnection conn = new AConnection() {
+			@Override public boolean sendMessage(Message msg) { return true; }
+			@Override public boolean trySendMessage(Message msg) { return true; }
+			@Override public java.net.InetSocketAddress getRemoteAddress() { return null; }
+			@Override public boolean isClosed() { return closed.get(); }
+			@Override public void close() { closed.set(true); }
+			@Override public long getReceivedCount() { return 0; }
+		};
+
+		Message m = Message.createQuery(1, "1", Address.ZERO).withConnection(conn);
+		assertSame(conn, m.getConnection());
+
+		m.closeConnection();
+		assertTrue(closed.get(), "closeConnection() should close the underlying connection");
+		assertNull(m.getConnection(), "Connection should be null after close");
+	}
+
+	@Test public void testCreateWithConnection() throws BadFormatException {
+		// Message.create(AConnection, Blob) creates a message with connection set
+		LocalConnection conn = LocalConnection.create(m -> true);
+		Message m = Message.createQuery(1, "(+ 2 3)", Address.ZERO);
+		Blob data = m.getMessageData();
+
+		Message m2 = Message.create(conn, data);
+		assertSame(conn, m2.getConnection());
+
+		// Payload should decode correctly
+		m2.getPayload(null);
+		assertEquals(m.getPayload(), m2.getPayload());
+		assertEquals(MessageType.QUERY, m2.getType());
+	}
+
+	@Test public void testConnectionTrust() {
+		LocalConnection conn = LocalConnection.create(m -> true);
+		assertFalse(conn.isTrusted());
+
+		conn.setTrustedKey(KP.getAccountKey());
+		assertTrue(conn.isTrusted());
+	}
+
 	/**
 	 * Generic tests for any valid message
 	 * @param m Message to test
@@ -295,7 +439,7 @@ public class MessageTest {
 
 			// Test store-based decode round-trip
 			ACell dp=Samples.TEST_STORE.decodeMultiCell(data);
-			Message m2=Message.create(null, dp);
+			Message m2=Message.create((MessageType)null, dp);
 
 			assertEquals(type,m2.getType());
 			assertEquals(id,m2.getID());

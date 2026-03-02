@@ -4,108 +4,123 @@
 
 Convex main repository is structured as a multi-module Maven project.
 
-## Automated Builds
+## CI Workflows
 
-### Snapshot Builds (develop branch)
+Three GitHub Actions workflows handle continuous integration:
 
-Every push to the `develop` branch triggers an automated snapshot build:
-- Builds and tests the project
-- Creates/updates a `snapshot-develop` pre-release on GitHub
-- Uploads `convex.jar` with current version and commit info
-- ⚠️ Marked as pre-release (unstable, for development/testing only)
+### Build (`build.yml`)
 
-Access: [Snapshot Release](https://github.com/Convex-Dev/convex/releases/tag/snapshot-develop)
+Runs on every push to any branch. Builds the project and runs all tests.
 
-### Release Builds (tagged versions)
+### Release (`release.yml`)
 
-Pushing a tag matching `*.*.*` (e.g., `0.8.3`) triggers an automated release build:
-- Builds and tests the project
-- Extracts changelog from CHANGELOG.md
-- Creates a stable GitHub Release
-- Uploads `convex.jar` as a release asset
-- Marked as stable production release
+Triggered when a version tag is pushed (e.g. `0.8.3`). Builds, tests, and creates a GitHub Release with `convex.jar` attached.
 
-See "Release preparation" section below for the full release process.
+### Docker (`docker.yml`)
 
+Builds a Docker image and pushes to Docker Hub. Triggered automatically when a GitHub Release is published, or manually via workflow dispatch for snapshot builds.
 
-## Release preparation
+- Release: pushes `convexlive/convex:<version>` and `convexlive/convex:latest`
+- Snapshot: go to Actions > Docker > Run workflow, set tag to `snapshot`
 
-### Ensure clean build
+Requires two secrets configured in the GitHub repository:
 
-```
-mvn -B clean verify
-```
+- `DOCKERHUB_USERNAME` — Docker Hub username
+- `DOCKERHUB_TOKEN` — Docker Hub access token (not password)
 
-Remember to test headless (i.e. no GUI) e.g. with CI server.
+## Release process
 
-### Update CHANGELOG
+### 1. Ensure clean build
 
-Make sure `CHANGELOG.md` is fully up to date before deploy
-
-- Finalise CHANGELOG for current version
-- Annotate with date
-- Commit to release branch
-
-### Merge to master
-
-Switch to `master` branch.
-
-Merge `develop` as a merge commit (“If a fast-forward, create a merge commit” in Eclipse)
-
-### Set version information
-
-Set the version number for the new version to be released
-
-```
-mvn versions:set -DnewVersion='0.8.2' -DartifactId=* -DgroupId=*
+```bash
+mvn -B clean install
 ```
 
-Commit as "Prepare for Release 0.8.2"
+All tests must pass, including headless (no GUI) — the CI server runs on headless Linux.
 
-### Tag and push release
+### 2. Update CHANGELOG
 
-Tag the release commit and push to trigger automated build:
+- Finalise the `CHANGELOG.md` section for the current version
+- Annotate with the release date
+- Commit to `develop`
+
+### 3. Merge to master
+
+```bash
+git checkout master
+git merge develop --no-ff
+```
+
+### 4. Set version
+
+```bash
+mvn versions:set -DnewVersion='0.8.3'
+git add -A && git commit -m "Prepare for Release 0.8.3"
+```
+
+### 5. Tag and push
 
 ```bash
 git tag 0.8.3
+git push origin master
 git push origin 0.8.3
 ```
 
-This will trigger the GitHub Actions release workflow which:
-- Builds and tests the project (`mvn -B clean verify`)
-- Extracts changelog for this version from CHANGELOG.md
-- Creates a GitHub Release with the changelog
-- Uploads `convex.jar` as a release asset
+This triggers the release workflow which builds, tests, and creates a GitHub Release with `convex.jar` attached.
 
-The JAR will be available as a GitHub Release asset named `convex-{version}.jar`
+### 6. Confirm GitHub Release is live
 
-### Manual deploy to Maven Central (if needed)
+**Wait for the release workflow to complete successfully** before proceeding. Check at:
+
+https://github.com/Convex-Dev/convex/releases
+
+Verify:
+- Release status is not draft/pre-release
+- `convex.jar` is attached as an asset
+- Changelog content is correct
+
+If the workflow fails, fix the issue, re-tag, and re-push. Do **not** proceed to Maven Central until the GitHub Release is confirmed live.
+
+### 7. Deploy to Maven Central
+
+Only after confirming the GitHub Release is live:
 
 ```bash
-mvn -B clean verify
+git checkout master
 mvn deploy -Prelease
 ```
 
-### Prepare for next develop version
+This signs all artifacts with GPG and uploads to Maven Central via the Sonatype Central Publishing plugin. Requires GPG signing key and Maven Central credentials configured locally.
 
-- Merge `master` back into `develop` (again no FF)
-- Create new CHANGELOG "Unreleased" section for next version
-- Run `mvn versions:set -DnewVersion='0.8.3-SNAPSHOT'` for next snapshot version as required 
+### 8. Prepare next development version
 
-## Docker build
+```bash
+git checkout develop
+git merge master --no-ff
+mvn versions:set -DnewVersion='0.8.4-SNAPSHOT'
+```
 
-To build a peer container using docker in the current directory from the provided `Dockerfile`
+- Add new "Unreleased" section to `CHANGELOG.md`
+- Commit and push `develop`
+
+## Docker
+
+The `Dockerfile` is a self-contained multi-stage build. No pre-built artifacts needed.
+
+### Local Docker build
 
 ```bash
 docker build -t convexlive/convex:latest .
 ```
 
-To deploy to docker hub:
+### Push to Docker Hub
 
+```bash
+docker login -u convexlive docker.io
+docker push convexlive/convex:latest
 ```
-docker login -u "convexlive" docker.io
-docker push convexlive/convex
-```
+
+Or use the automated Docker workflow as described in "CI Workflows" above.
 
 ## JPackage Build
 

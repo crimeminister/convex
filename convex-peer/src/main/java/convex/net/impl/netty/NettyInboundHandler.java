@@ -14,6 +14,7 @@ import convex.core.cpos.CPoSConstants;
 import convex.core.data.Blob;
 import convex.core.data.Strings;
 import convex.core.exceptions.BadFormatException;
+import convex.core.message.AConnection;
 import convex.core.message.Message;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -46,9 +47,9 @@ class NettyInboundHandler extends ByteToMessageDecoder {
 	private final Function<Message, Predicate<Message>> deliver;
 
 	/**
-	 * Action to send a result back to the client on this channel.
+	 * Connection associated with this handler. Set for server-side inbound channels.
 	 */
-	private final Predicate<Message> returnAction;
+	private AConnection connection;
 
 	/**
 	 * Count of complete messages decoded on this channel.
@@ -68,11 +69,10 @@ class NettyInboundHandler extends ByteToMessageDecoder {
 	 *
 	 * @param deliver  Dispatch function. Returns null if the message was accepted,
 	 *                 or a blocking retry predicate if the queue was full.
-	 * @param returnAction Action to send results back to the client on this channel.
+	 * @param returnAction Unused, kept for compatibility (will be removed)
 	 */
 	public NettyInboundHandler(Function<Message, Predicate<Message>> deliver, Predicate<Message> returnAction)  {
 		this.deliver=deliver;
-		this.returnAction=returnAction;
 	}
 
 	@Override
@@ -83,6 +83,15 @@ class NettyInboundHandler extends ByteToMessageDecoder {
 
 	public long getReceivedCount() {
 		return receivedCount;
+	}
+
+	/**
+	 * Sets the AConnection for this handler. Messages decoded on this channel
+	 * will carry this connection for return routing and trust checks.
+	 * @param conn Connection to associate with decoded messages
+	 */
+	void setConnection(AConnection conn) {
+		this.connection = conn;
 	}
 
 	@Override
@@ -137,7 +146,10 @@ class NettyInboundHandler extends ByteToMessageDecoder {
 			in.readBytes(messageData);
 			receivedCount++;
 
-			Message m=Message.create(returnAction,null,Blob.wrap(messageData));
+			AConnection conn=connection;
+		Message m = (conn!=null)
+			? Message.create(conn, Blob.wrap(messageData))
+			: Message.create(Blob.wrap(messageData));
 			out.add(m);
 			Predicate<Message> retry = deliver.apply(m);
 			if (retry != null) {

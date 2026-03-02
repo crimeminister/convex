@@ -64,7 +64,17 @@ public class RESTAPITest extends ARESTTest {
 			HttpResponse<String> res = post(API_PATH+"/transaction/prepare", "");
 			assertEquals(400, res.statusCode());
 		}
-		
+
+		{ // should be a bad request with unparseable CVX source
+			AMap<AString,ACell> req=Maps.of(
+					"address",Init.GENESIS_ADDRESS,
+					"source","]bad");
+			HttpResponse<String> res = post(API_PATH+"/transaction/prepare", JSON.toStringPretty(req));
+			assertEquals(400, res.statusCode());
+			assertTrue(res.body().contains("Could not parse source code"),
+				"Response should contain parse error: "+res.body());
+		}
+
 		{ // prepare should work
 			AMap<AString,ACell> req=Maps.of(
 					"address",Init.GENESIS_ADDRESS,
@@ -129,6 +139,14 @@ public class RESTAPITest extends ARESTTest {
 			assertEquals(400, res.statusCode());
 		}
 
+		{ // should be a bad request with unparseable source code
+			String tx = JSON.toStringPretty(Maps.of("address", Init.GENESIS_ADDRESS, "source", "((", "seed", KP.getSeed()));
+			HttpResponse<String> res = post(API_PATH+"/transact", tx);
+			assertEquals(400, res.statusCode());
+			assertTrue(res.body().contains("Could not parse source code"),
+				"Response should contain parse error: "+res.body());
+		}
+
 		{ // should execute successfully on genesis account
 			String tx=JSON.toStringPretty(Maps.of("address",Init.GENESIS_ADDRESS,"source","(* 2 3)","seed",KP.getSeed()));
 			HttpResponse<String> res = post(API_PATH+"/transact", tx);
@@ -157,6 +175,14 @@ public class RESTAPITest extends ARESTTest {
 		assertCad3RoundTrip("nil", "00");
 		assertCad3RoundTrip("[]", "8000");
 		assertCad3RoundTrip("()", "8100");
+
+		{ // malformed CVX in encode should return 400
+			String payload = "{ \"data\": \"((\" }";
+			HttpResponse<String> res = post(API_PATH + "/data/encode", payload);
+			assertEquals(400, res.statusCode());
+			assertTrue(res.body().contains("Could not parse CVX data"),
+				"Response should contain parse error: "+res.body());
+		}
 	}
 
 	private void assertCad3RoundTrip(String cvxLiteral, String expectedHex) throws IOException, InterruptedException {
@@ -498,9 +524,9 @@ public class RESTAPITest extends ARESTTest {
 	@Test public void testAdversarialInputs() throws IOException, InterruptedException {
 		// Test various malformed and adversarial inputs
 
-		{ // Extremely long source code
+		{ // Long source code (under body size limit but still large)
 			StringBuilder longSource = new StringBuilder("(+ 1");
-			for (int i = 0; i < 10000; i++) {
+			for (int i = 0; i < 1000; i++) {
 				longSource.append(" 1");
 			}
 			longSource.append(")");
