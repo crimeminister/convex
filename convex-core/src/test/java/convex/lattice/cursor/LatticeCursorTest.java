@@ -10,21 +10,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.Test;
 
 import convex.core.crypto.AKeyPair;
+import convex.core.cvm.Keywords;
 import convex.core.data.ACell;
 import convex.core.data.AHashMap;
 import convex.core.data.ASet;
 import convex.core.data.AString;
 import convex.core.data.AVector;
 import convex.core.data.Index;
-import convex.core.data.SignedData;
-import convex.core.cvm.Keywords;
 import convex.core.data.Keyword;
 import convex.core.data.Maps;
 import convex.core.data.Sets;
+import convex.core.data.SignedData;
 import convex.core.data.Strings;
 import convex.core.data.prim.AInteger;
 import convex.core.data.prim.CVMLong;
-import convex.core.lang.RT;
 import convex.lattice.ALattice;
 import convex.lattice.Lattice;
 import convex.lattice.LatticeContext;
@@ -219,6 +218,88 @@ public class LatticeCursorTest {
 		ASet<CVMLong> forkValue = fork1.get();
 		assertTrue(forkValue.contains(CVMLong.ONE), "Fork should have A");
 		assertTrue(forkValue.contains(CVMLong.create(2)), "Fork should have B after sync");
+	}
+
+	@Test
+	public void testSyncPreservesConcurrentWrites() throws InterruptedException {
+		// Regression for a race where sync() was unconditionally overwriting the
+		// local cursor with its own (possibly stale) snapshot, clobbering writes
+		// made by other threads during sync. The fix uses CAS-first-then-merge.
+		//
+		// Reproduction strategy: N writer threads continuously add unique values
+		// while M syncer threads continuously sync. With the buggy code, writes
+		// landing between sync's read and sync's set are clobbered. The larger
+		// the thread count and iteration count, the higher the probability a
+		// write falls in the vulnerable window.
+		SetLattice<CVMLong> lattice = SetLattice.create();
+		RootLatticeCursor<ASet<CVMLong>> root = Cursors.createLattice(lattice, Sets.empty());
+		ALatticeCursor<ASet<CVMLong>> fork = root.fork();
+
+		final int writerCount = 4;
+		final int perWriter = 2000;
+		final int syncerCount = 2;
+		final java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+		final java.util.concurrent.atomic.AtomicReference<Throwable> error =
+			new java.util.concurrent.atomic.AtomicReference<>();
+		final java.util.concurrent.atomic.AtomicBoolean writersDone =
+			new java.util.concurrent.atomic.AtomicBoolean(false);
+		java.util.List<Thread> threads = new java.util.ArrayList<>();
+
+		// Writers: each adds [writerId*perWriter, writerId*perWriter+perWriter)
+		for (int w = 0; w < writerCount; w++) {
+			final int writerId = w;
+			Thread t = new Thread(() -> {
+				try {
+					start.await();
+					for (int i = 0; i < perWriter; i++) {
+						final long v = writerId * perWriter + i;
+						fork.updateAndGet(set -> set.include(CVMLong.create(v)));
+					}
+				} catch (Throwable ex) { error.set(ex); }
+			});
+			threads.add(t);
+		}
+
+		// Syncers: call sync() in a tight loop until writers finish
+		for (int s = 0; s < syncerCount; s++) {
+			Thread t = new Thread(() -> {
+				try {
+					start.await();
+					while (!writersDone.get()) {
+						fork.sync();
+					}
+				} catch (Throwable ex) { error.set(ex); }
+			});
+			threads.add(t);
+		}
+
+		for (Thread t : threads) t.start();
+		start.countDown();
+
+		// Wait for writers only
+		for (int i = 0; i < writerCount; i++) threads.get(i).join();
+		writersDone.set(true);
+
+		// Wait for syncers
+		for (int i = writerCount; i < threads.size(); i++) threads.get(i).join();
+
+		// Final sync to propagate anything still in-flight
+		fork.sync();
+
+		if (error.get() != null) throw new AssertionError("Thread failure", error.get());
+
+		// Every value any writer added must be present
+		ASet<CVMLong> finalFork = fork.get();
+		ASet<CVMLong> finalRoot = root.get();
+		int totalValues = writerCount * perWriter;
+		int forkMissing = 0, rootMissing = 0;
+		for (int i = 0; i < totalValues; i++) {
+			CVMLong v = CVMLong.create(i);
+			if (!finalFork.contains(v)) forkMissing++;
+			if (!finalRoot.contains(v)) rootMissing++;
+		}
+		assertEquals(0, forkMissing, "Fork lost " + forkMissing + "/" + totalValues + " writes");
+		assertEquals(0, rootMissing, "Root lost " + rootMissing + "/" + totalValues + " writes");
 	}
 
 	@Test
