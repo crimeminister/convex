@@ -16,7 +16,6 @@ import convex.core.data.Blobs;
 import convex.core.data.Hash;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
-import picocli.CommandLine.ScopeType;
 
 
 /**
@@ -57,9 +56,8 @@ public class KeyGenerate extends AKeyCommand {
 			description="BIP39 passphrase. If not provided, will be requested from user (or assumed blank in non-interactive mode).")
 	private String passphrase;
 	
-	@Option(names = { "-p","--keypass" }, 
-			defaultValue = "${env:CONVEX_KEY_PASSWORD}", 
-			scope = ScopeType.INHERIT, 
+	@Option(names = { "-p","--keypass" },
+			defaultValue = "${env:CONVEX_KEY_PASSWORD}",
 			description = "Key pair password for generated key. Can specify with CONVEX_KEY_PASSWORD.")
 	protected char[] keyPassword;
 
@@ -70,8 +68,11 @@ public class KeyGenerate extends AKeyCommand {
 			}
 			
 			String mnemonic=BIP39.createSecureMnemonic(words);
-			inform("BIP39 mnemonic generated with "+words+" words:");
-			inform(mnemonic);
+			// A suppressed mnemonic is unrecoverable, so show it regardless of verbosity:
+			// level 0 is never gated, fixing -v0 silently discarding it. Kept on stderr so
+			// stdout stays the stable public-key contract; machine capture is #581 (--json). (#583)
+			inform(0, "BIP39 mnemonic generated with "+words+" words:");
+			inform(0, mnemonic);
 			if (passphrase==null) {
 				if (isInteractive()) {
 					passphrase=new String(readPassword("Enter BIP39 passphrase: "));
@@ -105,7 +106,7 @@ public class KeyGenerate extends AKeyCommand {
 			}
 			return AKeyPair.create(h.toFlatBlob());
 		} else {
-			throw new CLIError(ExitCodes.USAGE,"Unsupprted key generation type: "+type);
+			throw new CLIError(ExitCodes.USAGE,"Unsupported key generation type: "+type);
 		}
 	}
 	
@@ -117,30 +118,32 @@ public class KeyGenerate extends AKeyCommand {
 			return;
 		}
 		
+		storeMixin.ensureKeyStore();
+
+		if (keyPassword==null) {
+			if (isInteractive()) {
+				keyPassword=readPassword("Enter password for generated key(s): ");
+			} else if (isParanoid()) {
+				throw new CLIError(ExitCodes.USAGE,
+					"Password required in strict security mode. Use --keypass or CONVEX_KEY_PASSWORD environment variable.");
+			} else {
+				informWarning("No password provided - using empty password for key encryption.");
+				keyPassword = new char[0];
+			}
+		}
+
 		for ( int index = 0; index < count; index ++) {
 			AKeyPair kp=generateKeyPair();
-			
-            String publicKeyHexString =  kp.getAccountKey().toHexString();
-			storeMixin.ensureKeyStore();
-			
+
+			String publicKeyHexString =  kp.getAccountKey().toHexString();
 			inform("Generated key pair with public key: 0x"+kp.getAccountKey().toChecksumHex());
 
-			if (keyPassword==null) {
-				if (isInteractive()) {
-					keyPassword=readPassword("Enter password for generated key: ");
-				} else if (isParanoid()) {
-					throw new CLIError(ExitCodes.USAGE,
-						"Password required in strict security mode. Use --keypass or CONVEX_KEY_PASSWORD environment variable.");
-				} else {
-					informWarning("No password provided - using empty password for key encryption.");
-					keyPassword = new char[0];
-				}
-			}
-
-			storeMixin.addKeyPairToStore(kp, keyPassword); 
-			println(publicKeyHexString); // Output generated public key		
-			Arrays.fill(keyPassword, 'p');
+			storeMixin.addKeyPairToStore(kp, keyPassword);
+			println(publicKeyHexString); // Output generated public key
 		}
+		// Wipe the password only after ALL keys are stored, otherwise keys 2..n
+		// would be encrypted with the wiped buffer contents
+		Arrays.fill(keyPassword, 'p');
 		storeMixin.saveKeyStore();
 		informSuccess(count+ " key(s) generated and saved in store "+storeMixin.getStorePath());
 	}

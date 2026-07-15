@@ -23,6 +23,7 @@ public class Keywords {
 
 	// configuration parameters
 	public static final Keyword STORE = Keyword.intern("store");
+	public static final Keyword PROTOCOL_VERSION = Keyword.intern("protocol-version");
 	public static final Keyword RESTORE = Keyword.intern("restore");
 	public static final Keyword RECALC = Keyword.intern("recalc");
 
@@ -108,6 +109,9 @@ public class Keywords {
 
 
 	public static final Keyword OUTGOING_CONNECTIONS = Keyword.intern("outgoing-connections");
+	public static final Keyword MAX_CONNECTIONS = Keyword.intern("max-connections");
+	public static final Keyword ALLOWED_ORIGINS = Keyword.intern("allowed-origins");
+	public static final Keyword ALLOW_HTTP_SEEDS = Keyword.intern("allow-http-seeds");
 	public static final Keyword AUTO_MANAGE = Keyword.intern("auto-manage");
 	public static final Keyword TIMEOUT = Keyword.intern("timeout");
 	public static final Keyword EVENT_HOOK = Keyword.intern("event-hook");

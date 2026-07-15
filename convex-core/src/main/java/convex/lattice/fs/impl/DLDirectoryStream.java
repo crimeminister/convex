@@ -15,9 +15,14 @@ import convex.lattice.fs.DLPath;
 
 public class DLDirectoryStream implements DirectoryStream<Path> {
 
+	/**
+	 * Iterator over the directory's live entries. Deleted children are recorded as
+	 * tombstones in the parent node's separate POS_TOMBS index, not in the live entries,
+	 * so this map already contains exactly the visible children.
+	 */
 	public class DIterator implements Iterator<Path> {
 		long pos=0;
-		
+
 		@Override
 		public boolean hasNext() {
 			return pos<dirs.count();

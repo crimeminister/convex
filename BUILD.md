@@ -10,18 +10,20 @@ Three GitHub Actions workflows handle continuous integration:
 
 ### Build (`build.yml`)
 
-Runs on every push to any branch. Builds the project and runs all tests.
+Runs on every push to any branch, and on pull requests (including from forks). Builds the project and runs all tests. Superseded runs on the same branch/PR are cancelled automatically.
 
 ### Release (`release.yml`)
 
-Triggered when a version tag is pushed (e.g. `0.8.3`). Builds, tests, and creates a GitHub Release with `convex.jar` attached.
+Triggered when a version tag is pushed (e.g. `0.8.3`). Builds, tests, and creates a GitHub Release with `convex.jar` attached. A follow-on `docker` job then builds and pushes `convexlive/convex:<version>` and `convexlive/convex:latest` to Docker Hub.
+
+(The Docker build must be a job inside this workflow: releases created with the workflow `GITHUB_TOKEN` do not fire `release: [published]` events, so a separate workflow triggered on release publication would never run.)
 
 ### Docker (`docker.yml`)
 
-Builds a Docker image and pushes to Docker Hub. Triggered automatically when a GitHub Release is published, or manually via workflow dispatch for snapshot builds.
+Manual-dispatch only: builds a Docker image and pushes a single tag to Docker Hub. Use for snapshot builds or ad-hoc re-publishing.
 
-- Release: pushes `convexlive/convex:<version>` and `convexlive/convex:latest`
 - Snapshot: go to Actions > Docker > Run workflow, set tag to `snapshot`
+- Or via CLI: `gh workflow run docker.yml --ref <branch-or-tag> -f tag=<tag>`
 
 Requires two secrets configured in the GitHub repository:
 
@@ -37,6 +39,13 @@ mvn -B clean install
 ```
 
 All tests must pass, including headless (no GUI) — the CI server runs on headless Linux.
+
+Also confirm the latest CI run on `develop` is green before proceeding (a local build
+does not exercise the headless-Linux environment the release workflow uses):
+
+```bash
+gh run list --branch develop --limit 1
+```
 
 ### 2. Update CHANGELOG
 
@@ -57,17 +66,43 @@ The `pull --ff-only` on both branches ensures you're not merging a stale local d
 ### 4. Set version
 
 ```bash
-mvn versions:set -DnewVersion='0.8.4'
+mvn versions:set -DnewVersion='0.8.4' -DgenerateBackupPoms=false
 git add pom.xml '**/pom.xml' && git commit -m "Prepare for Release 0.8.4"
 ```
 
 `mvn versions:set` only rewrites `pom.xml` files — stage those explicitly rather than `git add -A`, which would sweep in any unrelated working-tree changes (stray `.env` files, editor scratch files, partial WIP).
 
-### 5. Smoke test the built jar
+As part of the same version-bump commit, also update:
+
+- **`project.build.outputTimestamp`** in the parent `pom.xml` — set to the current UTC
+  time (e.g. `2026-04-18T16:08:52Z`). This is frozen for reproducible builds and must
+  be refreshed each release, otherwise the new artifacts carry the previous release's
+  timestamp.
+- **Module README install snippets** — the Maven/Gradle `<version>` examples in the
+  module `README.md` files should reference the new release version:
+
+  ```bash
+  # from the repo root (Git Bash / Linux / macOS)
+  grep -rl --include=README.md "<previous-version>" . | xargs sed -i 's/<previous-version>/<new-version>/g'
+  ```
+
+- **Downstream docs and website** (separate repos) also hardcode the version and must be bumped in
+  lockstep, otherwise onboarding goes stale:
+  - **`design`** — `convex-java` Maven/Gradle coordinates and `releases/download/<version>/convex.jar`
+    URLs under `docs/tutorial/**` (note: release tags have **no** `v` prefix).
+  - **`convex.world`** — the displayed release version in `src/components/Footer.tsx` (the software release, e.g. `v0.8.7` — not to be confused with the on-chain protocol version).
+
+### 5. Rebuild and smoke test the built jar
+
+**Rebuild first** — the jar from step 1 was built *before* `versions:set`, so it still
+carries the snapshot version. Smoke-testing it would validate the wrong artifact:
 
 ```bash
+mvn -B clean install
 java -jar convex-integration/target/convex.jar --version
 ```
+
+Verify the reported version is the release version (e.g. `0.8.4`, not `-SNAPSHOT`).
 
 Quick last-line-of-defence check: the uberjar launches, main class resolves, CLI wiring is intact. Maven Central publishes are irrevocable, so catch uberjar class-path regressions now.
 
@@ -91,12 +126,21 @@ Verify:
 - Release status is not draft/pre-release
 - `convex.jar` is attached as an asset
 - Changelog content is correct (not the fallback "See CHANGELOG.md for details" — if that shows, the changelog section header didn't match the tag and the workflow should have failed; investigate).
+- Docker images pushed: `convexlive/convex:<version>` and a freshly-updated `latest` at https://hub.docker.com/r/convexlive/convex/tags
 
 Do **not** proceed to Maven Central until the GitHub Release is confirmed live.
 
 #### If the release workflow fails
 
-Fix the underlying issue on master, then delete and re-push the tag:
+First check whether the failure is transient (e.g. a flaky test, runner hiccup) or a
+real problem with the commit. For a transient failure, re-run the failed jobs on the
+same tag — no tag surgery needed:
+
+```bash
+gh run rerun <run-id> --failed
+```
+
+For a real problem, fix the underlying issue on master, then delete and re-push the tag:
 
 ```bash
 # Delete locally and on remote
@@ -126,7 +170,7 @@ This signs all artifacts with GPG and uploads to Maven Central via the Sonatype 
 ```bash
 git checkout develop
 git merge master --no-ff
-mvn versions:set -DnewVersion='0.8.5-SNAPSHOT'
+mvn versions:set -DnewVersion='0.8.5-SNAPSHOT' -DgenerateBackupPoms=false
 git add pom.xml '**/pom.xml' && git commit -m "Prepare for next development cycle (0.8.5-SNAPSHOT)"
 ```
 

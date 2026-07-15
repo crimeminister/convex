@@ -31,28 +31,29 @@ import convex.core.message.MessageType;
 import convex.core.store.AStore;
 import convex.core.util.LatestUpdateQueue;
 import convex.core.util.Utils;
+import convex.lattice.cursor.Root;
 
 /**
  * Self-contained component for propagating lattice values.
  *
  * <p>A LatticePropagator handles the complete output pipeline for a lattice node:
  * announce to store (writes cells + tracks novelty), set root data (persistence),
- * invoke merge callback (feed store-backed refs to cursor), and broadcast deltas
- * to peers.
+ * and broadcast deltas to peers. Snapshot processing returns the store-backed
+ * value to its caller; it does not mutate a cursor through a side callback.
  *
  * <p>A LatticePropagator owns:
  * <ul>
  *   <li>An {@link AStore} — for delta tracking (announce/novelty detection),
  *       persistence (setRootData), and security boundary (DATA_REQUEST resolution).</li>
  *   <li>A {@link LatticeConnectionManager} — outbound peer connections and broadcast.</li>
- *   <li>An optional merge callback — called after announce with the store-backed value.
- *       Set by NodeServer on the primary propagator to feed store-backed refs into
- *       the cursor via lattice merge.</li>
+ *   <li>A temporary merge callback used only by the explicit pull path to hand an
+ *       acquired peer value back to NodeServer.</li>
  *   <li>A background thread — event-driven processing loop with periodic root sync.</li>
  * </ul>
  *
  * <p>The propagator has no knowledge of cursors or lattices. Values are pushed in
- * via {@link #triggerBroadcast(ACell)}. The merge callback is a plain
+ * via {@link #triggerBroadcast(ACell)}. For synchronous snapshots the caller owns
+ * installation of the returned value. The pull callback is a plain
  * {@code Consumer<ACell>} — NodeServer owns the merge logic.
  *
  * <p>The store also serves as the <b>security boundary</b>: peer connections are configured
@@ -110,12 +111,11 @@ public class LatticePropagator implements Closeable {
 	private final LatestUpdateQueue<ACell> triggerQueue = new LatestUpdateQueue<>();
 
 	/**
-	 * Merge callback — called after announce with the store-backed value.
-	 * Set by NodeServer on the primary propagator to feed store-backed refs
-	 * into the cursor via lattice merge.
+	 * Temporary pull callback — called after an explicitly pulled value has been
+	 * acquired into this propagator's store. Snapshot processing never invokes it.
 	 *
 	 * <p>The propagator has no knowledge of cursors or lattices — it just calls
-	 * this Consumer with the announced value. NodeServer owns the merge logic.
+	 * this Consumer with the acquired value. NodeServer owns the merge logic.
 	 */
 	private Consumer<ACell> mergeCallback;
 
@@ -128,34 +128,63 @@ public class LatticePropagator implements Closeable {
 	private long persistInterval = 30_000L;
 
 	/**
-	 * Last value that was announced to the store
+	 * Cursor holding the last value announced to this propagator's store.
+	 *
+	 * <p>This is the propagator's cached view of what it has published — the
+	 * filtered, store-backed snapshot it most recently announced. LATTICE_QUERY
+	 * responses are served from this cursor, so peers only see data this
+	 * propagator has actually committed (and whose cells the store can resolve
+	 * via DATA_REQUEST).
+	 *
+	 * <p>Each propagator owns its own announced cursor; secondary propagators
+	 * with filters publish a different (filtered) view from the primary, which
+	 * is the security boundary for cross-propagator data segregation.
 	 */
-	private ACell lastAnnouncedValue;
+	private final Root<ACell> announcedCursor = new Root<>();
 
 	/**
-	 * Last value that was triggered (used for periodic root sync)
+	 * Last value that was triggered (used for periodic root sync). Volatile
+	 * because it may be written by the caller's thread (synchronous commit
+	 * path) and read by the background propagation thread.
 	 */
 	private volatile ACell lastTriggeredValue;
 
 	/**
-	 * Timestamp of last broadcast
+	 * Timestamp of last broadcast. Volatile for cross-thread visibility — the
+	 * caller's thread (synchronous commit path) and the background propagation
+	 * thread may both read and write this.
 	 */
-	private long lastBroadcastTime = 0L;
+	private volatile long lastBroadcastTime = 0L;
 
 	/**
-	 * Timestamp of last root sync broadcast
+	 * Timestamp of last root sync broadcast (background thread only).
 	 */
 	private long lastRootSyncTime = 0L;
 
 	/**
-	 * Count of broadcasts sent
+	 * Count of broadcasts sent. Atomic because both the caller's thread and
+	 * the background thread may increment.
 	 */
-	private long broadcastCount = 0L;
+	private final java.util.concurrent.atomic.AtomicLong broadcastCount = new java.util.concurrent.atomic.AtomicLong();
 
 	/**
 	 * Count of root sync broadcasts sent
 	 */
 	private long rootSyncCount = 0L;
+
+	/**
+	 * Serialises all store-writing pipelines through this propagator. The
+	 * propagator is the sole live writer of {@code setRootData} on its store
+	 * (see {@code PERSISTENCE.md} — sole-writer invariant), and pipelines
+	 * must not interleave: an older snapshot's {@code setRootData} landing
+	 * after a newer snapshot's would silently demote the root pointer and
+	 * break the durability promise of {@code cursor.sync()}. {@link
+	 * #processSnapshot} and {@link #persist} both acquire this lock so the
+	 * caller's thread (sync hook), the background propagation thread (pull,
+	 * drain), and explicit persistence calls run their full pipelines
+	 * sequentially.
+	 */
+	private final Object writeLock = new Object();
 
 	/**
 	 * Creates a new LatticePropagator with the given store and connection manager.
@@ -183,15 +212,15 @@ public class LatticePropagator implements Closeable {
 	// ========== Configuration ==========
 
 	/**
-	 * Sets the merge callback, called after announce with the store-backed value.
+	 * Sets the temporary callback used to merge explicitly pulled values.
 	 *
 	 * <p>Typically set by NodeServer on the primary propagator:
 	 * <pre>{@code
-	 * propagator.setMergeCallback(persisted ->
-	 *     cursor.updateAndGet(current -> lattice.merge(persisted, current)));
+	 * propagator.setMergeCallback(acquired ->
+	 *     cursor.updateAndGet(current -> lattice.merge(current, acquired)));
 	 * }</pre>
 	 *
-	 * @param callback Consumer receiving the store-backed value after announce,
+	 * @param callback Consumer receiving a store-backed value after pull acquisition,
 	 *                 or null to disable
 	 */
 	public void setMergeCallback(Consumer<ACell> callback) {
@@ -277,8 +306,33 @@ public class LatticePropagator implements Closeable {
 	}
 
 	public boolean isRunning() { return running; }
-	public long getBroadcastCount() { return broadcastCount; }
-	public ACell getLastAnnouncedValue() { return lastAnnouncedValue; }
+	public long getBroadcastCount() { return broadcastCount.get(); }
+	public ACell getLastAnnouncedValue() { return announcedCursor.get(); }
+
+	/**
+	 * Future completing with the next value announced by this propagator.
+	 *
+	 * <p>Gives callers something to wait on for propagation: capture the future
+	 * <em>before</em> triggering the change, then {@code get(timeout)} — no
+	 * sleep-polling on {@link #getLastAnnouncedValue()} required. Each announce
+	 * completes the current future and installs a fresh one, so the returned
+	 * future always reflects an announce that happens after the call.
+	 *
+	 * @return Future for the next announced (store-backed) value
+	 */
+	public CompletableFuture<ACell> nextAnnounce() { return nextAnnounceFuture; }
+
+	/**
+	 * Future for the next announce. Swapped under {@link #writeLock} in
+	 * {@link #processSnapshot}, completed outside it (dependent actions must
+	 * not run while holding the pipeline lock).
+	 */
+	private volatile CompletableFuture<ACell> nextAnnounceFuture = new CompletableFuture<>();
+	/**
+	 * Cursor holding the last value announced by this propagator. See
+	 * {@link #announcedCursor} for ownership and security semantics.
+	 */
+	public Root<ACell> getAnnouncedCursor() { return announcedCursor; }
 	public long getLastBroadcastTime() { return lastBroadcastTime; }
 	public long getLastRootSyncTime() { return lastRootSyncTime; }
 	public long getRootSyncCount() { return rootSyncCount; }
@@ -295,10 +349,11 @@ public class LatticePropagator implements Closeable {
 		}
 
 		running = true;
-		lastAnnouncedValue = null;
+		announcedCursor.set(null);
 		lastTriggeredValue = null;
 		lastBroadcastTime = 0L;
 		lastRootSyncTime = 0L;
+		broadcastCount.set(0L);
 
 		propagationThread = new Thread(this::propagationLoop, "Lattice propagator thread");
 		propagationThread.setDaemon(true);
@@ -341,6 +396,18 @@ public class LatticePropagator implements Closeable {
 			propagationThread = null;
 		}
 
+		// Drain any values the loop did not consume. The loop's exit check
+		// (running || !queue.isEmpty()) can observe running==false before the
+		// final value above lands in the queue, and exit without processing it —
+		// which would silently lose the last writes on a clean shutdown.
+		// processSnapshot is callable from any thread (serialised by writeLock),
+		// so this drain is safe even if the thread had to be abandoned after the
+		// join timeout.
+		ACell remaining;
+		while ((remaining = triggerQueue.poll()) != null) {
+			processSnapshotSafe(remaining);
+		}
+
 		log.debug("LatticePropagator closed (sent {} delta broadcasts, {} root syncs)",
 			broadcastCount, rootSyncCount);
 	}
@@ -375,7 +442,7 @@ public class LatticePropagator implements Closeable {
 
 	/**
 	 * Main propagation loop. Processes values from the trigger queue through
-	 * the full output pipeline: announce, setRootData, mergeCallback, broadcast.
+	 * the full output pipeline: announce, setRootData, broadcast.
 	 *
 	 * <p>When {@code running} is false, switches to drain mode: processes
 	 * remaining queued values without waiting, then exits.
@@ -393,7 +460,7 @@ public class LatticePropagator implements Closeable {
 				}
 
 				if (value != null) {
-					processValue(value);
+					processSnapshotSafe(value);
 				}
 
 				// Periodic root sync only while running
@@ -405,7 +472,7 @@ public class LatticePropagator implements Closeable {
 				// Drain remaining items before exiting
 				ACell remaining;
 				while ((remaining = triggerQueue.poll()) != null) {
-					processValue(remaining);
+					processSnapshotSafe(remaining);
 				}
 				break;
 			} catch (Exception e) {
@@ -417,21 +484,48 @@ public class LatticePropagator implements Closeable {
 	}
 
 	/**
+	 * Background-thread wrapper around {@link #processSnapshot}. IOException
+	 * is logged rather than propagated — the background path is best-effort
+	 * (callers who need durability errors should call {@link #processSnapshot}
+	 * directly).
+	 */
+	private void processSnapshotSafe(ACell value) {
+		try {
+			processSnapshot(value);
+		} catch (IOException e) {
+			log.warn("Error processing lattice value", e);
+		}
+	}
+
+	/**
 	 * Processes a single lattice value through the full output pipeline:
 	 * <ol>
 	 *   <li>Announce to store — writes cells, collects novelty for delta encoding</li>
 	 *   <li>Set root data — anchor for restore (if persist enabled)</li>
-	 *   <li>Merge callback — feed store-backed value back to cursor (if set)</li>
 	 *   <li>Broadcast delta to peers (if peers exist and delay elapsed)</li>
 	 * </ol>
 	 *
 	 * <p>Announce always runs (for delta tracking and store-backed refs).
-	 * setRootData is gated by {@link #persistInterval}. The merge callback
-	 * is gated by whether it was set (primary propagator only). Broadcast
-	 * is gated by peer existence and minimum delay.
+	 * setRootData is gated by {@link #persistInterval}. Broadcast is gated by
+	 * peer existence and minimum delay. The returned value is the sole handoff
+	 * back to a synchronous caller; the pull merge callback is not invoked.
+	 *
+	 * <p>Callable from any thread. The background propagation loop calls this
+	 * for queued triggers; for synchronous commit, NodeServer's sync callback
+	 * calls this directly on the caller's thread for the primary propagator.
+	 * Pipelines are serialised by {@link #writeLock} — see field javadoc for
+	 * the sole-writer invariant.
+	 *
+	 * @param value Snapshot to process (must not be null)
+	 * @return The announced (store-backed) value
+	 * @throws IOException If announce or setRootData fails
 	 */
-	private void processValue(ACell value) {
-		try {
+	public ACell processSnapshot(ACell value) throws IOException {
+		CompletableFuture<ACell> announceFuture;
+		synchronized (writeLock) {
+			// Track latest snapshot for periodic root sync (used by background thread)
+			lastTriggeredValue = value;
+
 			// 1. Announce to store (writes cells, collects novelty for delta)
 			ArrayList<ACell> novelty = new ArrayList<>();
 			Consumer<Ref<ACell>> noveltyHandler = r -> novelty.add(r.getValue());
@@ -442,12 +536,7 @@ public class LatticePropagator implements Closeable {
 				store.setRootData(value);
 			}
 
-			// 3. Merge callback (feed store-backed value back to cursor)
-			if (mergeCallback != null) {
-				mergeCallback.accept(value);
-			}
-
-			// 4. Broadcast to peers (only if peers exist and delay elapsed)
+			// 3. Broadcast to peers (only if peers exist and delay elapsed)
 			long currentTime = Utils.getCurrentTimestamp();
 			if (!connectionManager.getPeers().isEmpty()
 					&& currentTime >= lastBroadcastTime + MIN_BROADCAST_DELAY) {
@@ -461,14 +550,17 @@ public class LatticePropagator implements Closeable {
 				Message message = Message.create(MessageType.LATTICE_VALUE, payload, deltaData);
 				connectionManager.broadcast(message);
 				lastBroadcastTime = currentTime;
-				broadcastCount++;
+				broadcastCount.incrementAndGet();
 			}
 
-			lastAnnouncedValue = value;
+			announcedCursor.set(value);
 
-		} catch (IOException e) {
-			log.warn("Error processing lattice value", e);
+			// Swap the announce future under the lock; complete it outside
+			announceFuture = nextAnnounceFuture;
+			nextAnnounceFuture = new CompletableFuture<>();
 		}
+		announceFuture.complete(value);
+		return value;
 	}
 
 	// ========== Root Sync ==========
@@ -506,12 +598,14 @@ public class LatticePropagator implements Closeable {
 	void persist(ACell value) {
 		if (value == null) return;
 		if (!store.isPersistent()) return;
-		try {
-			value = Cells.announce(value, r -> {}, store);
-			store.setRootData(value);
-			log.debug("Persisted lattice snapshot to store");
-		} catch (IOException e) {
-			log.warn("Error persisting lattice snapshot", e);
+		synchronized (writeLock) {
+			try {
+				value = Cells.announce(value, r -> {}, store);
+				store.setRootData(value);
+				log.debug("Persisted lattice snapshot to store");
+			} catch (IOException e) {
+				log.warn("Error persisting lattice snapshot", e);
+			}
 		}
 	}
 
@@ -613,6 +707,6 @@ public class LatticePropagator implements Closeable {
 		}
 
 		return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-			.thenApply(v -> lastAnnouncedValue);
+			.thenApply(v -> announcedCursor.get());
 	}
 }

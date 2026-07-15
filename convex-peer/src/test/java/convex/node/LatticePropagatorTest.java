@@ -1,10 +1,12 @@
 package convex.node;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
 
 import org.junit.jupiter.api.AfterEach;
@@ -23,6 +25,7 @@ import convex.core.data.prim.CVMLong;
 import convex.core.lang.RT;
 import convex.core.store.AStore;
 import convex.core.store.MemoryStore;
+import convex.etch.EtchStore;
 import convex.lattice.ALattice;
 import convex.lattice.Lattice;
 
@@ -46,8 +49,10 @@ public class LatticePropagatorTest {
 		store1 = new MemoryStore();
 		store2 = new MemoryStore();
 
-		server1 = new NodeServer<>(lattice, store1, NodeConfig.port(19600));
-		server2 = new NodeServer<>(lattice, store2, NodeConfig.port(19601));
+		// Port 0 = OS-assigned free ports, avoiding bind collisions on busy CI runners.
+		// Peer connections below use getHostAddress(), which reflects the actual ports.
+		server1 = new NodeServer<>(lattice, store1, NodeConfig.port(0));
+		server2 = new NodeServer<>(lattice, store2, NodeConfig.port(0));
 
 		// Launch both servers
 		server1.launch();
@@ -101,6 +106,24 @@ public class LatticePropagatorTest {
 	}
 
 	/**
+	 * Outbound snapshot processing returns the store-backed value to its caller.
+	 * It must not also feed that value back through the pull merge callback: the
+	 * root cursor's synchronous sync path owns installation of the returned value.
+	 */
+	@Test
+	public void testProcessSnapshotDoesNotInvokeMergeCallback() throws IOException {
+		MemoryStore store = new MemoryStore();
+		LatticePropagator propagator = new LatticePropagator(store);
+		int[] callbackCount = new int[1];
+		propagator.setMergeCallback(value -> callbackCount[0]++);
+
+		ACell value = CVMLong.create(42);
+		assertEquals(value, propagator.processSnapshot(value));
+		assertEquals(0, callbackCount[0],
+			"processSnapshot must return its result rather than merge it through a side callback");
+	}
+
+	/**
 	 * Tests that automatic propagation broadcasts updates to connected peers.
 	 *
 	 * This test verifies that:
@@ -128,8 +151,8 @@ public class LatticePropagatorTest {
 		}
 		Index<Hash, ACell> updatedDataIndex = dataIndex.assoc(valueHash, testValue);
 		server2.getCursor().assoc(dataKeyword, updatedDataIndex);
+		// Synchronous commit: sync() returns after primary announce + setRootData
 		server2.getCursor().sync();
-		Thread.sleep(100); // Let propagator process the sync
 
 		// Pull from server2 into server1
 		assertTrue(server1.pull(), "Pull should complete successfully");
@@ -137,6 +160,61 @@ public class LatticePropagatorTest {
 		// Verify server1 received the value from server2
 		assertEquals(testValue, RT.getIn(server1.getLocalValue(), dataKeyword, valueHash),
 			"Server1 should have received the value broadcast from server2");
+	}
+
+	/**
+	 * Regression test for the shutdown durability race: triggerAndClose sets
+	 * running=false before offering the final value, so the propagation loop
+	 * can observe running==false with an empty queue and exit without ever
+	 * consuming the value — silently losing the last writes on a clean
+	 * shutdown (seen as an intermittent NodeServerPersistenceTest failure on
+	 * CI).
+	 *
+	 * <p>The window is a few instructions wide and cannot be hit reliably by
+	 * brute force, so this test constructs the post-race state directly (loop
+	 * already exited, final value offered afterwards) and asserts the contract:
+	 * the value must still be processed before triggerAndClose returns, via
+	 * the closing thread's post-join drain.
+	 */
+	@Test
+	public void testTriggerAndCloseDrainsAfterLoopExit() throws Exception {
+		LatticePropagator propagator = new LatticePropagator(new MemoryStore());
+		propagator.start();
+
+		// Force the propagation loop to terminate while triggerAndClose still
+		// sees a propagator to shut down (running false, thread field non-null)
+		Field runningField = LatticePropagator.class.getDeclaredField("running");
+		runningField.setAccessible(true);
+		runningField.setBoolean(propagator, false);
+		Field threadField = LatticePropagator.class.getDeclaredField("propagationThread");
+		threadField.setAccessible(true);
+		Thread worker = (Thread) threadField.get(propagator);
+		worker.interrupt(); // wake from poll; loop drains (empty queue) and exits
+		worker.join(10_000);
+		assertFalse(worker.isAlive(), "Propagation loop should have exited");
+
+		// The final value is offered to a queue no thread will ever read;
+		// only the closing thread's drain can process it
+		ACell finalValue = CVMLong.create(424242);
+		propagator.triggerAndClose(finalValue);
+		assertEquals(finalValue, propagator.getLastAnnouncedValue(),
+			"Final value must be announced even when the loop exited before the offer");
+	}
+
+	/**
+	 * As above, but with a persistent store: the final value must be durable
+	 * (readable as root data) once triggerAndClose returns.
+	 */
+	@Test
+	public void testTriggerAndClosePersistsFinalValue() throws IOException {
+		try (EtchStore store = EtchStore.createTemp("propagator-close")) {
+			LatticePropagator propagator = new LatticePropagator(store);
+			propagator.start();
+			ACell finalValue = CVMLong.create(12345);
+			propagator.triggerAndClose(finalValue);
+			assertEquals(finalValue, store.getRootData(),
+				"Final value must be persisted as root data before triggerAndClose returns");
+		}
 	}
 
 	/**
@@ -160,8 +238,8 @@ public class LatticePropagatorTest {
 			}
 			Index<Hash, ACell> updatedDataIndex = dataIndex.assoc(valueHash, testValue);
 			server1.getCursor().assoc(dataKeyword, updatedDataIndex);
+			// Synchronous commit: sync() returns after primary announce + setRootData
 			server1.getCursor().sync();
-			Thread.sleep(100); // Let propagator process the sync
 
 			// Pull from server1 into server2
 			assertTrue(server2.pull(), "Pull should complete successfully for update " + (i + 1));

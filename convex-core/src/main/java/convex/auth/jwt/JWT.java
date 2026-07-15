@@ -94,11 +94,11 @@ public class JWT {
 			if (dot2 < 0) return null;
 
 			String headerB64 = s.substring(0, dot1);
-			AMap<AString,ACell> header = RT.ensureMap(JSON.parse(Strings.wrap(decoder.decode(headerB64))));
+			AMap<AString,ACell> header = RT.castMap(JSON.parse(Strings.wrap(decoder.decode(headerB64))));
 			if (header == null) return null;
 
 			String claimsB64 = s.substring(dot1 + 1, dot2);
-			AMap<AString,ACell> claims = RT.ensureMap(JSON.parse(Strings.wrap(decoder.decode(claimsB64))));
+			AMap<AString,ACell> claims = RT.castMap(JSON.parse(Strings.wrap(decoder.decode(claimsB64))));
 			if (claims == null) return null;
 
 			String sigB64 = s.substring(dot2 + 1);
@@ -126,6 +126,12 @@ public class JWT {
 	/** Get the raw signature bytes */
 	public byte[] getSignatureBytes() { return signatureBytes; }
 
+	/**
+	 * Get the signing input: the base64url {@code header.payload} portion of the JWT,
+	 * i.e. exactly the bytes (UTF-8) covered by the signature.
+	 */
+	public String getSigningInput() { return signingInput; }
+
 	/** Get the algorithm from the header (e.g. "EdDSA", "RS256", "HS256") */
 	public String getAlgorithm() {
 		AString alg = RT.ensureString(header.get(ALG));
@@ -141,8 +147,16 @@ public class JWT {
 	// ========== Instance verification methods ==========
 
 	/**
-	 * Verify this JWT as a self-issued EdDSA token.
-	 * Extracts the public key from the {@code kid} header (multikey format).
+	 * Verify this JWT as a self-issued EdDSA token, taking the public key from the
+	 * {@code kid} header (multikey format).
+	 *
+	 * <p><b>SECURITY WARNING:</b> this trusts the {@code kid} header to supply the
+	 * verification key, so a valid result only proves "signed by whoever is named in
+	 * {@code kid}" — which the sender chooses. Do NOT use this where an identity claim
+	 * ({@code iss}, {@code sub}, ...) is trusted unless you separately bind that claim to
+	 * the signing key (e.g. require {@code sub == did:key(kid)}). For tokens whose identity
+	 * is itself a key (did:key), verify against the key derived from that claim using
+	 * {@link #verifyEdDSA(AccountKey)} instead.</p>
 	 *
 	 * @return true if signature is valid
 	 */
@@ -373,6 +387,12 @@ public class JWT {
 	 *
 	 * Extracts the public key from the {@code kid} header parameter (multikey format),
 	 * verifies the Ed25519 signature, and returns the parsed claims map.
+	 *
+	 * <p><b>SECURITY WARNING:</b> the {@code kid} header is sender-controlled, so this only
+	 * proves the token was signed by the key named in {@code kid}. Do NOT trust any identity
+	 * claim from the returned map unless you bind it to the signing key. Prefer
+	 * {@link #verifyPublic(AString, AccountKey)} against a key you trust out-of-band, or the
+	 * key derived from the identity claim itself. See {@link #verifyEdDSA()}.</p>
 	 *
 	 * @param jwt The encoded JWT string
 	 * @return Claims map if signature is valid, or null if verification fails
